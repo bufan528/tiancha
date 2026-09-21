@@ -1,0 +1,28 @@
+{
+  "dimensions": [
+    { "key": "market_growth", "name": "市场空间与增速", "weight": 20 },
+    { "key": "policy_env", "name": "政策与监管环境", "weight": 15 },
+    { "key": "competition", "name": "竞争格局与壁垒", "weight": 15 },
+    { "key": "tech_maturity", "name": "技术成熟度与趋势", "weight": 15 },
+    { "key": "commercialization", "name": "商业化与产业链", "weight": 15 },
+    { "key": "exit_env", "name": "退出与资本环境", "weight": 10 },
+    { "key": "risk_level", "name": "风险因素（逆向）", "weight": 10 }
+  ],
+  "anchors": {
+    "generic": "9-10=显著优于行业基准；7-8=明确正面；5-6=中性/有分歧；3-4=偏负面；0-2=重大风险或证据缺失。",
+    "market_growth": "9-10=TAM>千亿且未来CAGR>25%；7-8=TAM数百亿级且CAGR15-25%；5-6=百亿级个位数增长；3-4=成熟存量；0-2=萎缩/无规模",
+    "policy_env": "9-10=国家战略明确鼓励且监管清晰；7-8=地方/行业政策支持；5-6=中性；3-4=监管收紧预期；0-2=政策打压/合规红线",
+    "competition": "9-10=壁垒极高格局未定先发红利；7-8=有一定壁垒头部初现；5-6=混战；3-4=巨头垄断难切入；0-2=无壁垒同质化",
+    "tech_maturity": "9-10=路线确定且仍在快速迭代；7-8=已商业化有优化空间；5-6=技术路线有分歧；3-4=中试/早期；0-2=原理性失败风险",
+    "commercialization": "9-10=已放量付费意愿强毛利高；7-8=标杆客户落地；5-6=PoC阶段；3-4=商业模式未验证；0-2=无付费场景",
+    "exit_env": "9-10=明确IPO通道+一二级倒挂收窄；7-8=可预期退出；5-6=一般；3-4=通道狭窄；0-2=退出无望",
+    "risk_level": "9-10=风险低且可控；7-8=主要风险可缓释；5-6=风险中等；3-4=风险偏高；0-2=致命/不可逆风险"
+  },
+  "grades": [
+    { "min": 80, "grade": "A", "label": "核心储备", "action": "进入reserve，优先深度研究与尽调" },
+    { "min": 65, "grade": "B", "label": "重点关注", "action": "进入reserve，持续跟踪" },
+    { "min": 50, "grade": "C", "label": "观察", "action": "不进储备库(watch)，积累证据再评" },
+    { "min": 0, "grade": "D", "label": "暂缓", "action": "parked，归档备查" }
+  ],
+  "thresholds": { "enter_pool": 65 }
+}

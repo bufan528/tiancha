@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>调研报告</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">投研工作台</span>
+  <nav>
+    <a href="/index.html">对话工作台</a>
+    <a href="/pool.html">储备库</a>
+    <a href="/industry.html">行业档案</a>
+    <a href="/materials.html">材料库</a>
+    <a href="/research.html">调研报告</a>
+    <a href="/planning.html">研究规划</a>
+  </nav>
+</header>
+<main class="container">
+  <h1>调研报告</h1>
+  <div id="list"></div>
+</main>
+<script src="/app.js"></script>
+<script>
+api.get("/api/research").then((d) => {
+  const box = document.getElementById("list");
+  if (!d.items.length) { box.innerHTML = '<div class="card muted">暂无报告。可在对话工作台要求「写一份人形机器人调研报告」。</div>'; return; }
+  for (const it of d.items) {
+    const c = api.el("div", "card");
+    c.innerHTML = `<h2>${it.title ?? "(未命名报告)"}</h2>
+      <p class="muted">${it.industry ?? ""} · ${it.createdAt ?? ""}</p>
+      <pre>${it.body ?? "(正文待生成)"}</pre>`;
+    box.appendChild(c);
+  }
+});
+</script>
+</body>
+</html>

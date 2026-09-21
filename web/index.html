@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>投研工作台 · 对话</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">投研工作台</span>
+  <nav>
+    <a href="/index.html">对话工作台</a>
+    <a href="/pool.html">储备库</a>
+    <a href="/industry.html">行业档案</a>
+    <a href="/materials.html">材料库</a>
+    <a href="/research.html">调研报告</a>
+    <a href="/planning.html">研究规划</a>
+  </nav>
+</header>
+<main class="container">
+  <h1>对话工作台</h1>
+  <div class="workbench">
+    <section class="card">
+      <div class="chat-log" id="chatLog">
+        <div class="bubble sys">你好，我是一级市场投研助手。试试：「帮我分析刚录入的人形机器人研报并打分」。未配置 DOUBAO_API_KEY 时使用 offline-mock 演示。</div>
+      </div>
+      <div class="composer">
+        <textarea id="input" placeholder="输入投研需求，回车发送（Shift+回车换行）"></textarea>
+        <button id="send">发送</button>
+      </div>
+    </section>
+    <aside class="card">
+      <h2>工具调用轨迹</h2>
+      <div class="tooltrace" id="trace"><div class="muted">暂无</div></div>
+    </aside>
+  </div>
+</main>
+<script src="/app.js"></script>
+<script>
+const log = document.getElementById("chatLog");
+const trace = document.getElementById("trace");
+const input = document.getElementById("input");
+const send = document.getElementById("send");
+
+function bubble(text, cls) {
+  const b = api.el("div", "bubble " + cls, text);
+  log.appendChild(b);
+  log.scrollTop = log.scrollHeight;
+  return b;
+}
+function traceStep(name, args, err) {
+  trace.innerHTML = "";
+  const s = api.el("div", "step" + (err ? " err" : ""));
+  s.textContent = `▸ ${name} ${args ? JSON.stringify(args) : ""}`;
+  trace.appendChild(s);
+}
+
+async function sendChat() {
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  send.disabled = true;
+  bubble(text, "user");
+  const a = bubble("", "assistant");
+  trace.innerHTML = "";
+
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: text }),
+  });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let acc = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split("\n\n");
+    buf = parts.pop();
+    for (const part of parts) {
+      const line = part.trim();
+      if (!line.startsWith("data:")) continue;
+      const ev = JSON.parse(line.slice(5).trim());
+      if (ev.type === "text") { acc += ev.delta; a.textContent = acc; log.scrollTop = log.scrollHeight; }
+      else if (ev.type === "tool") traceStep(ev.name, ev.args, ev.status === "end" && ev.isError);
+      else if (ev.type === "done") { a.textContent = ev.reply || acc; }
+      else if (ev.type === "error") { bubble("错误：" + ev.message, "sys"); }
+    }
+  }
+  send.disabled = false;
+  input.focus();
+}
+
+send.onclick = sendChat;
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+</script>
+</body>
+</html>

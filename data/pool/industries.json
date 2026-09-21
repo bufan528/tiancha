@@ -1,0 +1,72 @@
+[
+  {
+    "name": "人形机器人",
+    "status": "reserve",
+    "grade": "A",
+    "score": 84,
+    "updatedAt": "2026-09-18",
+    "scores": [
+      {
+        "dimension": "market_growth",
+        "score": 9,
+        "reason": "TAM 千亿级、CAGR>40%",
+        "at": "2026-09-18"
+      },
+      {
+        "dimension": "policy_env",
+        "score": 8,
+        "reason": "国家智能制造战略鼓励",
+        "at": "2026-09-18"
+      },
+      {
+        "dimension": "competition",
+        "score": 7,
+        "reason": "格局未定、国产链初现",
+        "at": "2026-09-18"
+      },
+      {
+        "dimension": "tech_maturity",
+        "score": 8,
+        "reason": "整机路线确定、持续迭代",
+        "at": "2026-09-18"
+      },
+      {
+        "dimension": "commercialization",
+        "score": 7,
+        "reason": "标杆客户落地、未规模放量",
+        "at": "2026-09-18"
+      },
+      {
+        "dimension": "exit_env",
+        "score": 8,
+        "reason": "科创板/港股通道明确",
+        "at": "2026-09-18"
+      },
+      {
+        "dimension": "risk_level",
+        "score": 7,
+        "reason": "主要风险可控",
+        "at": "2026-09-18"
+      }
+    ],
+    "tags": [
+      "硬件",
+      "AI",
+      "自动化"
+    ],
+    "note": "种子行业，待新研报触发重打分"
+  },
+  {
+    "name": "固态电池",
+    "status": "watch",
+    "grade": "C",
+    "score": 58,
+    "updatedAt": "2026-09-10",
+    "scores": [],
+    "tags": [
+      "新能源",
+      "材料"
+    ],
+    "note": "观察中，等待量产爬坡证据"
+  }
+]

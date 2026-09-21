@@ -1,0 +1,19 @@
+{
+  "name": "@tiancha/research",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tiancha research kernel: domain / ports / storage / runtime / migration. Depends only on node builtins (structural ports; never imports coding-agent).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx src/**/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

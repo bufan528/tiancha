@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>储备库</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">投研工作台</span>
+  <nav>
+    <a href="/index.html">对话工作台</a>
+    <a href="/pool.html">储备库</a>
+    <a href="/industry.html">行业档案</a>
+    <a href="/materials.html">材料库</a>
+    <a href="/research.html">调研报告</a>
+    <a href="/planning.html">研究规划</a>
+  </nav>
+</header>
+<main class="container">
+  <h1>投资储备库</h1>
+  <div class="card">
+    <table>
+      <thead><tr><th>行业</th><th>评分</th><th>评级</th><th>状态</th><th>标签</th><th>更新时间</th><th>备注</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+<script src="/app.js"></script>
+<script>
+api.get("/api/pool").then((d) => {
+  const tb = document.getElementById("rows");
+  tb.innerHTML = "";
+  for (const it of d.items) {
+    const tr = document.createElement("tr");
+    const bar = `<div class="bar"><span style="width:${it.score ?? 0}%"></span></div><div class="muted">${it.score ?? "-"}</div>`;
+    tr.innerHTML = `<td><a href="/industry.html?name=${encodeURIComponent(it.name)}">${it.name}</a></td>
+      <td style="min-width:90px">${bar}</td>
+      <td><span class="${api.gradeClass(it.grade)}">${it.grade ?? "-"}</span></td>
+      <td><span class="badge">${it.status}</span></td>
+      <td>${(it.tags || []).join(" / ")}</td>
+      <td>${it.updatedAt ?? "-"}</td>
+      <td class="muted">${it.note ?? ""}</td>`;
+    tb.appendChild(tr);
+  }
+});
+</script>
+</body>
+</html>

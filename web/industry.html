@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>行业档案</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">投研工作台</span>
+  <nav>
+    <a href="/index.html">对话工作台</a>
+    <a href="/pool.html">储备库</a>
+    <a href="/industry.html">行业档案</a>
+    <a href="/materials.html">材料库</a>
+    <a href="/research.html">调研报告</a>
+    <a href="/planning.html">研究规划</a>
+  </nav>
+</header>
+<main class="container">
+  <h1>行业档案</h1>
+  <div class="card">
+    <div class="grid2">
+      <label>选择行业
+        <select id="sel" style="width:100%;padding:6px"></select>
+      </label>
+    </div>
+  </div>
+  <div id="detail"></div>
+</main>
+<script src="/app.js"></script>
+<script>
+const sel = document.getElementById("sel");
+const detail = document.getElementById("detail");
+
+function render(ind) {
+  detail.innerHTML = "";
+  if (!ind) { detail.innerHTML = '<div class="card muted">未找到该行业</div>'; return; }
+  const card = document.createElement("div");
+  card.className = "card";
+  let rows = "";
+  for (const s of ind.scores || []) {
+    rows += `<tr><td>${s.dimension}</td><td>${s.score}</td><td class="muted">${s.reason} <span class="muted">(${s.at})</span></td></tr>`;
+  }
+  card.innerHTML = `
+    <h2>${ind.name} <span class="${api.gradeClass(ind.grade)}">${ind.grade ?? "-"}</span>
+      <span class="badge">${ind.status}</span></h2>
+    <div class="bar" style="margin:8px 0"><span style="width:${ind.score ?? 0}%"></span></div>
+    <h3 class="muted" style="font-size:13px">七维评分留痕</h3>
+    <table><thead><tr><th>维度</th><th>子分</th><th>依据</th></tr></thead><tbody>${rows || '<tr><td colspan=3 class="muted">暂无评分</td></tr>'}</tbody></table>
+    <p class="muted" style="margin-top:10px">${ind.note ?? ""}</p>`;
+  detail.appendChild(card);
+}
+
+api.get("/api/pool").then((d) => {
+  sel.innerHTML = "";
+  for (const it of d.items) {
+    const o = document.createElement("option");
+    o.value = it.name; o.textContent = it.name;
+    sel.appendChild(o);
+  }
+  const q = new URLSearchParams(location.search).get("name");
+  if (q) sel.value = q;
+  load();
+});
+sel.onchange = load;
+function load() {
+  const name = sel.value;
+  if (!name) return;
+  api.get("/api/industry/" + encodeURIComponent(name)).then(render);
+}
+</script>
+</body>
+</html>

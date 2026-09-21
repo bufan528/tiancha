@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>材料库</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">投研工作台</span>
+  <nav>
+    <a href="/index.html">对话工作台</a>
+    <a href="/pool.html">储备库</a>
+    <a href="/industry.html">行业档案</a>
+    <a href="/materials.html">材料库</a>
+    <a href="/research.html">调研报告</a>
+    <a href="/planning.html">研究规划</a>
+  </nav>
+</header>
+<main class="container">
+  <h1>材料库</h1>
+  <div class="card">
+    <table>
+      <thead><tr><th>ID</th><th>标题</th><th>来源</th><th>关联行业</th><th>录入时间</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+<script src="/app.js"></script>
+<script>
+api.get("/api/materials").then((d) => {
+  const tb = document.getElementById("rows");
+  tb.innerHTML = "";
+  if (!d.items.length) tb.innerHTML = '<tr><td colspan="5" class="muted">暂无材料，可通过对话 material_ingest 或上传录入。</td></tr>';
+  for (const it of d.items) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="muted">${it.id}</td><td>${it.title}</td>
+      <td><span class="badge">${it.sourceType}</span></td>
+      <td>${it.industry ?? "-"}</td><td class="muted">${it.ingestedAt ?? ""}</td>`;
+    tb.appendChild(tr);
+  }
+});
+</script>
+</body>
+</html>

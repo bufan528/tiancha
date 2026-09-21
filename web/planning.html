@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>研究规划</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <span class="brand">投研工作台</span>
+  <nav>
+    <a href="/index.html">对话工作台</a>
+    <a href="/pool.html">储备库</a>
+    <a href="/industry.html">行业档案</a>
+    <a href="/materials.html">材料库</a>
+    <a href="/research.html">调研报告</a>
+    <a href="/planning.html">研究规划</a>
+  </nav>
+</header>
+<main class="container">
+  <h1>研究规划</h1>
+  <div class="card">
+    <h2>储备库概览</h2>
+    <div id="overview" class="muted">加载中…</div>
+  </div>
+  <div class="card">
+    <h2>规划清单</h2>
+    <div id="plans" class="muted">暂无规划，可在对话工作台要求「做未来两周的研究规划」。</div>
+  </div>
+</main>
+<script src="/app.js"></script>
+<script>
+Promise.all([api.get("/api/pool"), api.get("/api/plans")]).then(([pool, plans]) => {
+  const ov = document.getElementById("overview");
+  const counts = {};
+  for (const it of pool.items) counts[it.status] = (counts[it.status] || 0) + 1;
+  ov.innerHTML = Object.entries(counts).map(([k, v]) => `<span class="badge">${k}: ${v}</span>`).join(" &nbsp; ") || "空";
+  const p = document.getElementById("plans");
+  if (plans.items.length) {
+    p.innerHTML = "";
+    for (const it of plans.items) {
+      const c = api.el("div", "card");
+      c.innerHTML = `<h3>${it.title ?? "(规划)"}</h3><pre>${it.body ?? ""}</pre>`;
+      p.appendChild(c);
+    }
+  }
+});
+</script>
+</body>
+</html>
