@@ -13,3 +13,6 @@ export * from "./planning/index.js";
 export * from "./evidence/index.js";
 export * from "./dossier/index.js";
 export * from "./scoring/index.js";
+export * from "./providers/echo-data-provider.js";
+export * from "./methodology/methodology-v1.js";
+export * from "./application/opportunity-discovery-service.js";

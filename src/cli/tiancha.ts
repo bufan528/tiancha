@@ -35,7 +35,14 @@ import {
   migratePiToTiancha,
   ReadOnlySessionManager,
   ReadOnlySessionError,
+  ResearchDb,
+  ResearchRepository,
+  SqliteArtifactStore,
+  EchoDataProvider,
+  OpportunityDiscoveryService,
 } from "@tiancha/research";
+import { readFileSync } from "node:fs";
+import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -223,6 +230,77 @@ async function cmdSessionReadonly(path: string): Promise<void> {
   console.log("tiancha session readonly: PASS");
 }
 
+// --- Phase 2A Research Memory Foundation wiring ----------------------------
+function foundationPaths() {
+  const root = join(homedir(), ".tiancha");
+  return {
+    dbPath: join(root, "db", "tiancha.sqlite"),
+    artifactDbPath: join(root, "db", "artifacts.sqlite"),
+  };
+}
+
+async function cmdIndustryIngest(file: string, industryName: string): Promise<void> {
+  configureTianchaAgentDir();
+  const text = readFileSync(file, "utf8");
+  const { dbPath, artifactDbPath } = foundationPaths();
+  const db = new ResearchDb({ path: dbPath });
+  const artifacts = new SqliteArtifactStore({ path: artifactDbPath });
+  const repo = new ResearchRepository(db.db);
+  const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+  const res = await svc.ingestMaterial({ materialText: text, industryName });
+  console.log(`[ingest] industry=${res.industry.canonicalName} (${res.industry.industryId})`);
+  console.log(`  questions=${res.questionCount} requirements=${res.requirementCount} pool=${res.poolEntryCount} gaps=${res.gapCount} nextActions=${res.nextActionCount}`);
+  await artifacts.close();
+  db.close();
+}
+
+async function cmdIndustryShow(name: string): Promise<void> {
+  const { dbPath } = foundationPaths();
+  const db = new ResearchDb({ path: dbPath });
+  const repo = new ResearchRepository(db.db);
+  const ind = repo.findIndustryByName(name);
+  if (!ind) {
+    console.error(`industry not found: ${name}`);
+    process.exitCode = 1;
+    db.close();
+    return;
+  }
+  console.log(`Industry: ${ind.canonicalName} [${ind.reserveStatus}]`);
+  console.log(`  questions: ${repo.listQuestions(ind.industryId).length}`);
+  console.log(`  requirements: ${repo.listRequirements(ind.industryId).length}`);
+  console.log(`  pool: ${repo.listPoolEntries(ind.industryId).length}`);
+  console.log(`  gaps: ${repo.listGaps(ind.industryId).length}`);
+  console.log(`  nextActions: ${repo.listNextActions(ind.industryId).length}`);
+  db.close();
+}
+
+async function cmdStateShow(industryName: string): Promise<void> {
+  const { dbPath } = foundationPaths();
+  const db = new ResearchDb({ path: dbPath });
+  const repo = new ResearchRepository(db.db);
+  const ind = repo.findIndustryByName(industryName);
+  if (!ind) {
+    console.error(`industry not found: ${industryName}`);
+    process.exitCode = 1;
+    db.close();
+    return;
+  }
+  const st = repo.getStateBySubject("industry", ind.industryId);
+  if (!st) {
+    console.error(`no state for ${ind.canonicalName}`);
+    process.exitCode = 1;
+    db.close();
+    return;
+  }
+  console.log(`ResearchState for ${ind.canonicalName} (v${st.version})`);
+  console.log(`  known(claim refs): ${st.known.length}`);
+  console.log(`  unknown topics: ${st.unknown.map((u) => u.ref).join(", ") || "-"}`);
+  console.log(`  keyQuestions: ${st.keyQuestionIds.length}`);
+  console.log(`  gaps: ${st.researchGapIds.length}`);
+  console.log(`  nextActions: ${st.nextActionIds.length}`);
+  db.close();
+}
+
 async function run(): Promise<void> {
   configureTianchaAgentDir();
   const args = process.argv.slice(2);
@@ -257,7 +335,60 @@ async function run(): Promise<void> {
     return;
   }
 
-  // Default: delegate to Pi main (preserves full pi TUI/chat + all commands).
+  // --- Phase 2A research memory commands ---
+  if (tianchaBrand && args[0] === "industry" && args[1] === "ingest") {
+    const file = args[2];
+    const name = args[3] === "--name" ? args[4] : undefined;
+    if (!file || !name) {
+      console.error("usage: tiancha industry ingest <file> --name <industry>");
+      process.exitCode = 1;
+      return;
+    }
+    await cmdIndustryIngest(file, name);
+    return;
+  }
+  if (tianchaBrand && args[0] === "industry" && args[1] === "show") {
+    if (!args[2]) {
+      console.error("usage: tiancha industry show <name>");
+      process.exitCode = 1;
+      return;
+    }
+    await cmdIndustryShow(args[2]);
+    return;
+  }
+  if (tianchaBrand && args[0] === "state" && args[1] === "show") {
+    if (!args[2]) {
+      console.error("usage: tiancha state show <industry>");
+      process.exitCode = 1;
+      return;
+    }
+    await cmdStateShow(args[2]);
+    return;
+  }
+
+  // --- Phase 2B: product entry ---------------------------------------------
+  // Non-interactive one-shot, sharing the SAME assembly as the interactive REPL.
+  if (tianchaBrand && args[0] === "ask") {
+    const prompt = args.slice(1).join(" ").trim();
+    if (!prompt) {
+      console.error('usage: tiancha ask "<prompt>"');
+      process.exitCode = 1;
+      return;
+    }
+    const host = await TianchaAgentHost.create();
+    console.log(await host.askOneShot(prompt));
+    return;
+  }
+
+  // No args (tiancha brand) => enter the Tiancha Agent interactive REPL.
+  // This is THE product entry; it must NOT fall through to piMain / old host.
+  if (tianchaBrand && args.length === 0) {
+    const host = await TianchaAgentHost.create();
+    await host.startInteractive();
+    return;
+  }
+
+  // Non-tiancha brand or unknown subcommand => delegate to Pi.
   await piMain(args);
 }
 

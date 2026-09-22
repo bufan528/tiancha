@@ -1,0 +1,170 @@
+/**
+ * ResearchDb — unified SQLite connection for Phase 2A business entities.
+ * Owns a single DatabaseSync and creates all 2A tables idempotently.
+ * Existing Phase 1 stores (ArtifactStore/EventStore) keep their own DB files;
+ * this DB holds the research memory: industry/company/question/requirement/
+ * gap/pool/state/source/document/next_action/methodology.
+ */
+
+import { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
+export interface ResearchDbOptions {
+  path: string;
+}
+
+export class ResearchDb {
+  readonly db: DatabaseSync;
+  readonly path: string;
+
+  constructor(options: ResearchDbOptions) {
+    this.path = options.path;
+    if (this.path !== ":memory:" && !existsSync(dirname(this.path))) {
+      mkdirSync(dirname(this.path), { recursive: true });
+    }
+    this.db = new DatabaseSync(this.path);
+    this.migrate();
+  }
+
+  private migrate(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS industry (
+        industry_id TEXT PRIMARY KEY,
+        canonical_name TEXT NOT NULL,
+        aliases_json TEXT NOT NULL,
+        description TEXT,
+        reserve_status TEXT NOT NULL,
+        current_state_id TEXT,
+        current_evaluation_run_id TEXT,
+        first_discovered_at TEXT NOT NULL,
+        last_evaluated_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS company (
+        company_id TEXT PRIMARY KEY,
+        canonical_name TEXT NOT NULL,
+        aliases_json TEXT NOT NULL,
+        primary_industry_id TEXT,
+        chain_position TEXT,
+        current_state_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS research_question (
+        question_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        statement TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        status TEXT NOT NULL,
+        priority INTEGER NOT NULL,
+        depends_on_json TEXT NOT NULL,
+        answer_claim_ref TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS information_requirement (
+        requirement_id TEXT PRIMARY KEY,
+        question_id TEXT NOT NULL,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        dimension TEXT NOT NULL,
+        description TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        required_evidence_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS research_gap (
+        gap_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        description TEXT NOT NULL,
+        importance INTEGER NOT NULL,
+        uncertainty REAL NOT NULL,
+        related_requirement_ids_json TEXT NOT NULL,
+        related_question_ids_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        discovered_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS information_pool_entry (
+        entry_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        status TEXT NOT NULL,
+        related_requirement_ids_json TEXT NOT NULL,
+        evidence_refs_json TEXT NOT NULL,
+        note TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS research_state (
+        state_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        known_json TEXT NOT NULL,
+        confirmed_json TEXT NOT NULL,
+        uncertain_json TEXT NOT NULL,
+        conflicting_json TEXT NOT NULL,
+        unknown_json TEXT NOT NULL,
+        key_question_ids_json TEXT NOT NULL,
+        research_gap_ids_json TEXT NOT NULL,
+        next_action_ids_json TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS research_source (
+        source_id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        publisher TEXT,
+        title TEXT,
+        published_at TEXT,
+        is_real_external_data INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS research_document (
+        document_id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        raw_text_locator TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS next_action (
+        action_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        params_json TEXT NOT NULL,
+        depends_on_json TEXT NOT NULL,
+        priority INTEGER NOT NULL,
+        rationale TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS methodology (
+        methodology_id TEXT PRIMARY KEY,
+        version_tag TEXT NOT NULL,
+        is_human_approved_baseline INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        activated_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_industry_subject ON information_requirement(subject_id);
+      CREATE INDEX IF NOT EXISTS idx_gap_subject ON research_gap(subject_id);
+      CREATE INDEX IF NOT EXISTS idx_pool_subject ON information_pool_entry(subject_id);
+      CREATE INDEX IF NOT EXISTS idx_state_subject ON research_state(subject_kind, subject_id);
+      CREATE INDEX IF NOT EXISTS idx_action_subject ON next_action(subject_id);
+    `);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}

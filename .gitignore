@@ -53,3 +53,9 @@ diag*.txt
 b-err.txt
 b-out.txt
 smoke-verify.txt
+
+# ===== Runtime agent dirs / credentials (do NOT track) =====
+.tiancha/
+.pi/auth.json
+.pi/models-store.json
+**/auth.json

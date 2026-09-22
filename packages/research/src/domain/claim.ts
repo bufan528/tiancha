@@ -20,6 +20,11 @@ export type Provenance =
 
 export type HypothesisStatus = "confirmed" | "refuted" | "open";
 
+export type ClaimSubjectKind = "industry" | "company" | "general";
+
+/** Temporal relation of this Claim to prior claims (T9: never overwrite silently). */
+export type ClaimTemporalRelation = "current" | "old" | "superseded";
+
 export interface Hypothesis {
   hypothesisId: string;
   statement: string;
@@ -35,4 +40,9 @@ export interface Claim {
   conflictOfInterest: boolean;
   factIds: string[];
   evidenceIds: string[];
+  /** Which research object this claim belongs to (Phase 2A). */
+  subjectKind: ClaimSubjectKind;
+  subjectId: string;
+  /** current = live; old = retained but superseded by a newer claim; superseded = replaced. */
+  temporalRelation: ClaimTemporalRelation;
 }
