@@ -161,7 +161,64 @@ export class ResearchDb {
       CREATE INDEX IF NOT EXISTS idx_pool_subject ON information_pool_entry(subject_id);
       CREATE INDEX IF NOT EXISTS idx_state_subject ON research_state(subject_kind, subject_id);
       CREATE INDEX IF NOT EXISTS idx_action_subject ON next_action(subject_id);
+
+      CREATE TABLE IF NOT EXISTS industry_knowledge (
+        knowledge_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS knowledge_belief (
+        belief_id TEXT PRIMARY KEY,
+        knowledge_id TEXT NOT NULL,
+        claim_ref TEXT NOT NULL,
+        source_ref TEXT,
+        evidence_ref TEXT,
+        dimension TEXT NOT NULL,
+        topic TEXT,
+        confidence REAL NOT NULL,
+        state TEXT NOT NULL,
+        historical_relations_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS knowledge_conflict (
+        conflict_id TEXT PRIMARY KEY,
+        claim_a_ref TEXT NOT NULL,
+        claim_b_ref TEXT NOT NULL,
+        dimension TEXT NOT NULL,
+        status TEXT NOT NULL,
+        related_gap_id TEXT,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_knowledge_subject ON industry_knowledge(subject_kind, subject_id);
+      CREATE INDEX IF NOT EXISTS idx_belief_knowledge ON knowledge_belief(knowledge_id);
+      CREATE INDEX IF NOT EXISTS idx_belief_claim ON knowledge_belief(claim_ref);
+      CREATE INDEX IF NOT EXISTS idx_belief_dimension ON knowledge_belief(dimension);
+      CREATE INDEX IF NOT EXISTS idx_conflict_claims ON knowledge_conflict(claim_a_ref, claim_b_ref);
+      CREATE INDEX IF NOT EXISTS idx_conflict_status ON knowledge_conflict(status);
     `);
+    this.ensureIndustryKnowledgeColumn();
+  }
+
+  /**
+   * Add industry.current_knowledge_id via PRAGMA pre-check (normal path).
+   * try/catch is only a safety net; we never rely on swallowing "duplicate column".
+   */
+  private ensureIndustryKnowledgeColumn(): void {
+    const cols = this.db.prepare("PRAGMA table_info(industry)").all() as { name: string }[];
+    const exists = cols.some((c) => c.name === "current_knowledge_id");
+    if (exists) return;
+    try {
+      this.db.exec("ALTER TABLE industry ADD COLUMN current_knowledge_id TEXT");
+    } catch (err) {
+      // Re-check after the fact: another writer may have added it concurrently.
+      const after = this.db.prepare("PRAGMA table_info(industry)").all() as { name: string }[];
+      if (!after.some((c) => c.name === "current_knowledge_id")) throw err;
+    }
   }
 
   close(): void {

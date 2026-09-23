@@ -20,6 +20,7 @@ export interface Industry {
   reserveStatus: ReserveStatus;
   currentStateId?: string;
   currentEvaluationRunId?: string;
+  currentKnowledgeId?: string;
   firstDiscoveredAt: string;
   lastEvaluatedAt?: string;
   createdAt: string;

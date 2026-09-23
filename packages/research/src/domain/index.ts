@@ -22,3 +22,6 @@ export * from "./research-state.js";
 export * from "./source.js";
 export * from "./next-action.js";
 export * from "./methodology.js";
+export * from "./knowledge-belief.js";
+export * from "./knowledge-conflict.js";
+export * from "./industry-knowledge.js";

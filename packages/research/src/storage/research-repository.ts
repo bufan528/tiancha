@@ -27,9 +27,9 @@ export class ResearchRepository {
       .prepare(
         `INSERT OR REPLACE INTO industry
          (industry_id, canonical_name, aliases_json, description, reserve_status,
-          current_state_id, current_evaluation_run_id, first_discovered_at,
-          last_evaluated_at, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          current_state_id, current_evaluation_run_id, current_knowledge_id,
+          first_discovered_at, last_evaluated_at, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         i.industryId,
@@ -39,6 +39,7 @@ export class ResearchRepository {
         i.reserveStatus,
         i.currentStateId ?? null,
         i.currentEvaluationRunId ?? null,
+        i.currentKnowledgeId ?? null,
         i.firstDiscoveredAt,
         i.lastEvaluatedAt ?? null,
         i.createdAt,
@@ -420,6 +421,7 @@ function rowToIndustry(row: any): Industry {
     reserveStatus: row.reserve_status,
     currentStateId: row.current_state_id ?? undefined,
     currentEvaluationRunId: row.current_evaluation_run_id ?? undefined,
+    currentKnowledgeId: row.current_knowledge_id ?? undefined,
     firstDiscoveredAt: row.first_discovered_at,
     lastEvaluatedAt: row.last_evaluated_at ?? undefined,
     createdAt: row.created_at,
