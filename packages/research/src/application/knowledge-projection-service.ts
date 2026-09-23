@@ -20,12 +20,15 @@
 
 import type { DatabaseSync } from "node:sqlite";
 import { KnowledgeRepository } from "../storage/knowledge-repository.js";
+import { ResearchRepository } from "../storage/research-repository.js";
 import type {
   Claim,
   IndustryKnowledge,
+  InformationPoolEntry,
   KnowledgeBelief,
   KnowledgeConflict,
   KnowledgeSubjectKind,
+  PoolStatus,
 } from "../domain/index.js";
 
 export type KnowledgeEvolution = "SUPPORT" | "REVISE" | "CONFLICT" | "SUPERSEDE" | "NEW";
@@ -56,8 +59,10 @@ export interface ProjectResult {
 
 export class KnowledgeProjectionService {
   private readonly knowledge: KnowledgeRepository;
+  private readonly db: DatabaseSync;
 
   constructor(db: DatabaseSync) {
+    this.db = db;
     this.knowledge = new KnowledgeRepository(db);
   }
 
@@ -185,12 +190,88 @@ export class KnowledgeProjectionService {
     return "SUPPORT";
   }
 
-  // ---- Step 2-B placeholders (NOT implemented in 2-A) ----
-  reconcilePool(_subjectId: string): void {
-    throw new Error("KnowledgeProjectionService.reconcilePool: not implemented in Step 2-A (Step 2-B)");
+  // ---- Step 2-B-1: Knowledge -> InformationPool (one-way) ----
+  /**
+   * Reconcile InformationPool against the CURRENT knowledge projection.
+   * One-way: Knowledge/Claim/Evidence -> Pool only. Never writes State, Gap,
+   * NextAction. Idempotent: recomputed from the current projection; a no-op
+   * projection yields no entry/ref changes.
+   *
+   * Rules (strict, conservative):
+   *  - unknown -> partial when >=1 `confirmed` current belief covers the entry's
+   *    dimension (resolved via relatedRequirementIds -> requirement.dimension,
+   *    else entry.topic).
+   *  - partial -> confirmed is NEVER auto-upgraded here (insufficient coverage
+   *    judgment). We would rather stay partial than over-confirm.
+   *  - open KnowledgeConflict on the dimension -> status `conflict` (both sides
+   *    kept; pool conflict only means "unresolved disagreement").
+   *  - only `confirmed` current beliefs act as support; revised/superseded do not.
+   */
+  reconcilePool(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
+    const repo = new ResearchRepository(this.db);
+    const knowledge = this.knowledge.findKnowledgeBySubject(subjectKind, subjectId);
+    const entries = repo.listPoolEntries(subjectId);
+    if (entries.length === 0) return;
+
+    const reqDim = new Map<string, string>();
+    for (const r of repo.listRequirements(subjectId)) reqDim.set(r.questionId, r.dimension);
+
+    // Subject-scoped conflict: an open conflict only counts for THIS subject when
+    // one of its claim refs belongs to this subject's knowledge beliefs (incl.
+    // history). Dimensions are shared across industries, so a global dimension
+    // match would wrongly mark subject B's pool as conflicted by subject A's dispute.
+    const subjectClaimRefs = new Set<string>(
+      knowledge ? this.knowledge.listBeliefs(knowledge.knowledgeId).map((b) => b.claimRef) : [],
+    );
+    const openConflicts = this.knowledge
+      .listOpenConflicts()
+      .filter((c) => subjectClaimRefs.has(c.claimARef) || subjectClaimRefs.has(c.claimBRef));
+
+    for (const entry of entries) {
+      const dims = this.entryDimensions(entry, reqDim);
+      const support = (knowledge?.beliefs ?? []).filter(
+        (b) => b.state === "confirmed" && dims.includes(b.dimension),
+      );
+      const hasOpenConflict = openConflicts.some((c) => dims.includes(c.dimension));
+
+      let status: PoolStatus = entry.status;
+      if (hasOpenConflict) {
+        status = "conflict";
+      } else if (entry.status === "unknown" && support.length > 0) {
+        status = "partial";
+      }
+
+      // Canonical, sorted claim refs of current support (idempotent set).
+      const refs = support.length > 0
+        ? [...new Set(support.map((b) => b.claimRef))].sort()
+        : entry.evidenceRefs;
+
+      const refsSame =
+        refs.length === entry.evidenceRefs.length &&
+        refs.every((r, i) => r === entry.evidenceRefs[i]);
+
+      if (status !== entry.status || !refsSame) {
+        const next: InformationPoolEntry = {
+          ...entry,
+          status,
+          evidenceRefs: refs,
+          updatedAt: new Date().toISOString(),
+        };
+        repo.upsertPoolEntry(next);
+      }
+    }
+  }
+
+  private entryDimensions(
+    entry: InformationPoolEntry,
+    reqDim: Map<string, string>,
+  ): string[] {
+    const dims = entry.relatedRequirementIds.map((id) => reqDim.get(id)).filter(Boolean) as string[];
+    if (dims.length > 0) return dims;
+    return [entry.topic];
   }
 
   refreshState(_subjectId: string): void {
-    throw new Error("KnowledgeProjectionService.refreshState: not implemented in Step 2-A (Step 2-B)");
+    throw new Error("KnowledgeProjectionService.refreshState: not implemented in Step 2-B-2");
   }
 }

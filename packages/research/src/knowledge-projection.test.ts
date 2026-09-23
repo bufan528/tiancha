@@ -131,9 +131,8 @@ describe("KnowledgeProjectionService", () => {
     assert.equal(k.beliefs.length, 3);
   });
 
-  test("Pool/State reconcile stubs are not implemented in 2-A", () => {
+  test("refreshState still reserved for Step 2-B-2", () => {
     const { svc } = setup();
-    assert.throws(() => svc.reconcilePool("x"), /Step 2-B/);
-    assert.throws(() => svc.refreshState("x"), /Step 2-B/);
+    assert.throws(() => svc.refreshState("x"), /Step 2-B-2/);
   });
 });
