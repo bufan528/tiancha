@@ -266,4 +266,56 @@ describe("Phase 2C ingest wiring (real data)", () => {
     assert.equal(repo.listNextActions(sid).filter((a) => a.status === "open").length, 12);
     db.close();
   });
+
+  test("backfill relation hints drive Evolution (REVISE/CONFLICT/SUPERSEDE), never overwrite", async () => {
+    const { db, repo, artifacts } = setup();
+    const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+    const res = await svc.ingestMaterial({ materialText: "x", industryName: "低空经济" });
+    const sid = res.industry.industryId;
+    const kr = new KnowledgeRepository(db.db);
+
+    // establish a belief on 'market'
+    await svc.ingestClaims({
+      subjectKind: "industry",
+      subjectId: sid,
+      claims: [{ statement: "market v1", dimension: "market", confidence: 0.6 }],
+    });
+    let k = kr.findKnowledgeBySubject("industry", sid)!;
+    assert.equal(k.beliefs.length, 1);
+    assert.equal(k.beliefs[0].state, "confirmed");
+
+    // REVISE: old kept as revised, new confirmed
+    await svc.ingestClaims({
+      subjectKind: "industry",
+      subjectId: sid,
+      claims: [{ statement: "market v2", dimension: "market", confidence: 0.8, relationHint: { kind: "REVISE" } }],
+    });
+    k = kr.findKnowledgeBySubject("industry", sid)!;
+    assert.equal(k.beliefs.filter((b) => b.state === "revised").length, 1);
+    assert.equal(k.beliefs.filter((b) => b.state === "confirmed").length, 1);
+
+    // CONFLICT: both sides conflicting + open conflict (no side is picked)
+    await svc.ingestClaims({
+      subjectKind: "industry",
+      subjectId: sid,
+      claims: [{ statement: "market X", dimension: "market", relationHint: { kind: "CONFLICT" } }],
+    });
+    k = kr.findKnowledgeBySubject("industry", sid)!;
+    assert.equal(kr.listOpenConflicts().length, 1);
+    assert.ok(k.beliefs.filter((b) => b.state === "conflicting").length >= 2);
+
+    // SUPERSEDE: new becomes current, old marked superseded, history retained
+    await svc.ingestClaims({
+      subjectKind: "industry",
+      subjectId: sid,
+      claims: [
+        { statement: "market final", dimension: "market", relationHint: { kind: "SUPERSEDE", supersedesClaimRef: "x" } },
+      ],
+    });
+    k = kr.findKnowledgeBySubject("industry", sid)!;
+    const hist = kr.listBeliefs(k.knowledgeId);
+    assert.ok(hist.some((b) => b.state === "superseded"), "old belief superseded");
+    assert.ok(hist.length >= 4, "history never deleted");
+    db.close();
+  });
 });
