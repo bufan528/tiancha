@@ -20,7 +20,6 @@ import type {
   Industry,
   ResearchQuestion,
   InformationRequirement,
-  ResearchGap,
   InformationPoolEntry,
   ResearchState,
   ResearchSource,
@@ -32,8 +31,8 @@ import type {
   Provenance,
 } from "../domain/index.js";
 import { createIndustry } from "../domain/industry.js";
-import { emptyResearchState } from "../domain/research-state.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
+import { KnowledgeProjectionService } from "./knowledge-projection-service.js";
 import type { ResearchRepository } from "../storage/research-repository.js";
 import type { ArtifactStore } from "../storage/artifact-store.js";
 import type { DataProviderPort } from "../ports/data-provider.port.js";
@@ -52,15 +51,21 @@ export interface IngestResult {
   gapCount: number;
   nextActionCount: number;
   state: ResearchState;
+  /** Artifact ids of the claims persisted by this ingest (for traceability). */
+  claimIds: string[];
 }
 
 export class OpportunityDiscoveryService {
+  private readonly knowledge: KnowledgeProjectionService;
+
   constructor(
     private readonly repo: ResearchRepository,
     private readonly provider: DataProviderPort,
     private readonly artifactStore: ArtifactStore,
     private readonly methodology: MethodologyVersion = METHODOLOGY_V1,
-  ) {}
+  ) {
+    this.knowledge = new KnowledgeProjectionService(repo.db);
+  }
 
   async ingestMaterial(input: IngestMaterialInput): Promise<IngestResult> {
     const now = new Date();
@@ -186,53 +191,35 @@ export class OpportunityDiscoveryService {
         blob: claim,
       });
       evidenceClaimIds.push(claim.claimId);
-      // mark matching pool entry partial
-      const entries = this.repo.listPoolEntries(industry.industryId);
-      const hit = entries.find((e) => e.topic === c.dimension);
-      if (hit && hit.status === "unknown") {
-        this.repo.upsertPoolEntry({
-          ...hit,
-          status: "partial",
-          evidenceRefs: [...hit.evidenceRefs, claim.claimId],
-          note: obs.isRealExternalData
-            ? "部分掌握（真实数据）"
-            : "部分掌握（echo 占位，待真实数据验证）",
-          updatedAt: nowIso,
-        });
-      }
+      // Project into Knowledge. Placeholder claims (Echo, isRealExternalData=false)
+      // are auto-SKIPPED and never become beliefs (Invariant 5). Pool/State/Gap
+      // are refreshed from the current projection in step 5.
+      this.knowledge.projectFromClaim({
+        claim,
+        dimension: c.dimension,
+        topic: c.dimension,
+        sourceRef: source.sourceId,
+        confidence: c.confidence ?? 0.5,
+      });
     }
 
-    // 5. Gaps: dimensions whose pool entry is still unknown
-    const poolEntries = this.repo.listPoolEntries(industry.industryId);
-    const openTopics = poolEntries.filter((e) => e.status === "unknown");
-    const gapIds: string[] = [];
-    for (const topic of openTopics) {
-      const gap: ResearchGap = {
-        gapId: `gap-${randomUUID()}`,
-        subjectKind: "industry",
-        subjectId: industry.industryId,
-        description: `「${industry.canonicalName}」在 ${topic.topic} 维度信息缺失`,
-        importance: 5,
-        uncertainty: 0.9,
-        relatedRequirementIds: topic.relatedRequirementIds,
-        relatedQuestionIds: questionIds,
-        status: "open",
-        discoveredAt: nowIso,
-        updatedAt: nowIso,
-      };
-      this.repo.upsertGap(gap);
-      gapIds.push(gap.gapId);
-    }
+    // 5. One-way Knowledge -> Pool -> State -> Gap projection (2C).
+    this.knowledge.reconcilePool(industry.industryId, "industry");
+    this.knowledge.refreshGaps(industry.industryId, "industry");
+    this.knowledge.refreshState(industry.industryId, "industry");
 
-    // 6. NextAction for each open gap
+    // 6. NextAction for each active gap (retrieve the missing information).
+    const gaps = this.repo
+      .listGaps(industry.industryId)
+      .filter((g) => g.status === "open" || g.status === "mitigating");
     const actionIds: string[] = [];
-    for (const gap of gapIds) {
+    for (const gap of gaps) {
       const a: NextAction = {
         actionId: `act-${randomUUID()}`,
         subjectKind: "industry",
         subjectId: industry.industryId,
         kind: "retrieve_data",
-        params: { gapId: gap },
+        params: { gapId: gap.gapId },
         dependsOn: [],
         priority: 0,
         rationale: "信息缺失，需补全",
@@ -245,40 +232,30 @@ export class OpportunityDiscoveryService {
       actionIds.push(a.actionId);
     }
 
-    // 7. ResearchState refresh
-    let state = this.repo.getStateBySubject("industry", industry.industryId);
-    if (!state) {
-      state = emptyResearchState({
-        stateId: `st-${randomUUID()}`,
-        subjectKind: "industry",
-        subjectId: industry.industryId,
-        now,
-      });
-    }
-    state = {
-      ...state,
-      known: evidenceClaimIds.map((ref) => ({ ref, confidence: 0.1 })),
-      confirmed: [],
-      uncertain: [],
-      conflicting: [],
-      unknown: openTopics.map((e) => ({ ref: e.topic })),
+    // 7. Attach aux ids (questions/gaps/actions) to the projected state.
+    //    known/confirmed/uncertain/conflicting/unknown come from refreshState;
+    //    these ids are maintained here (refreshState preserves, never creates).
+    const projected = this.repo.getStateBySubject("industry", industry.industryId)!;
+    const state: ResearchState = {
+      ...projected,
       keyQuestionIds: questionIds,
-      researchGapIds: gapIds,
+      researchGapIds: gaps.map((g) => g.gapId),
       nextActionIds: actionIds,
-      version: state.version + 1,
       updatedAt: nowIso,
     };
     this.repo.upsertState(state);
     this.repo.upsertIndustry({ ...industry, currentStateId: state.stateId, updatedAt: nowIso });
 
+    const poolEntries = this.repo.listPoolEntries(industry.industryId);
     return {
       industry,
       questionCount: questionIds.length,
       requirementCount: requirementIds.length,
       poolEntryCount: poolEntries.length,
-      gapCount: gapIds.length,
+      gapCount: gaps.length,
       nextActionCount: actionIds.length,
       state,
+      claimIds: evidenceClaimIds,
     };
   }
 

@@ -16,12 +16,18 @@ import { ResearchRepository } from "./storage/research-repository.js";
 import { SqliteArtifactStore } from "./storage/artifact-store.js";
 import { EchoDataProvider } from "./providers/echo-data-provider.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
+import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import { METHODOLOGY_V1 } from "./methodology/methodology-v1.js";
 import type {
   InformationRequirement,
   ResearchGap,
   Claim,
 } from "./domain/index.js";
+import type {
+  DataProviderPort,
+  DataObservation,
+  DataRetrievalRequest,
+} from "./ports/data-provider.port.js";
 
 function setup() {
   const db = new ResearchDb({ path: ":memory:" });
@@ -112,34 +118,38 @@ describe("T2 ResearchGap lifecycle", () => {
 });
 
 describe("T3 InformationPool vs Knowledge invariant", () => {
-  test("Pool tracks coverage; Knowledge claims live as separate Artifacts, not two homogeneous tables", async () => {
+  test("echo placeholder never promotes pool/state; claims live as separate artifacts", async () => {
     const { db, repo, artifacts } = setup();
     const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
     const res = await svc.ingestMaterial({ materialText: "x", industryName: "新能源" });
 
-    // Pool entries exist and track status/coverage
+    // Pool entries exist and track status/coverage; echo never marks them partial
     const pool = repo.listPoolEntries(res.industry.industryId);
     assert.ok(pool.length >= 12);
     for (const e of pool) {
       assert.ok(["unknown", "partial", "confirmed", "conflict"].includes(e.status));
+      assert.equal(e.status, "unknown", "echo placeholder must not promote coverage");
+      assert.equal(e.evidenceRefs.length, 0);
       // Pool entry is coverage metadata, NOT a claim statement
       assert.equal(typeof e.topic, "string");
       assert.equal((e as any).statement, undefined);
     }
 
-    // Knowledge claims are separate Artifacts (kind=claim) with subjectKind/subjectId
-    const claimArtifacts = await artifacts.listByRun("ingest-nope").catch(() => [] as any[]);
-    void claimArtifacts;
-    // directly read a claim blob via known artfactStore roundtrip
+    // State keeps echo out of known/confirmed (Invariant 5)
     const state = repo.getStateBySubject("industry", res.industry.industryId);
     assert.ok(state);
-    assert.ok(state.known.length > 0, "state.known should reference claim artifacts");
-    const a = await artifacts.get(state.known[0]!.ref);
+    assert.equal(state.known.length, 0, "placeholder claims are not knowledge");
+    assert.equal(state.unknown.length, 12);
+
+    // Claims still live as separate Artifacts (kind=claim), not in Pool
+    assert.ok(res.claimIds.length > 0);
+    const a = await artifacts.get(res.claimIds[0]!);
     assert.ok(a);
     const blob = a.blob as Claim;
     assert.equal(blob.subjectKind, "industry");
     assert.equal(blob.subjectId, res.industry.industryId);
     assert.equal(typeof blob.statement, "string");
+    assert.equal(blob.isRealExternalData, false);
     db.close();
   });
 });
@@ -149,7 +159,7 @@ describe("T9 old claim never overwritten", () => {
     const { db, repo, artifacts } = setup();
     const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
     const res = await svc.ingestMaterial({ materialText: "x", industryName: "固态电池" });
-    const firstClaimRef = res.state.known[0]!.ref;
+    const firstClaimRef = res.claimIds[0]!;
 
     const { oldClaimId, newClaimId } = await svc.supersedeClaim({
       oldClaimId: firstClaimRef,
@@ -165,6 +175,59 @@ describe("T9 old claim never overwritten", () => {
     assert.equal((oldAfter!.blob as Claim).temporalRelation, "old");
     assert.equal((newAfter!.blob as Claim).temporalRelation, "current");
     assert.notEqual(oldClaimId, newClaimId);
+    db.close();
+  });
+});
+
+// --- Phase 2C wiring: a real (non-placeholder) provider must flow into Knowledge ---
+
+class RealDataProvider implements DataProviderPort {
+  readonly name = "test-real";
+  async retrieve(req: DataRetrievalRequest): Promise<DataObservation> {
+    return {
+      provider: "test-real",
+      isRealExternalData: true,
+      sourceType: "analyst_report",
+      industryName: req.subjectName,
+      fetchedAt: new Date().toISOString(),
+      // only the first two dimensions have real evidence
+      claims: req.metrics.slice(0, 2).map((m, i) => ({
+        statement: `real signal for ${m}`,
+        dimension: m,
+        stance: "contextualize" as const,
+        confidence: 0.8 - i * 0.1,
+      })),
+    };
+  }
+}
+
+describe("Phase 2C ingest wiring (real data)", () => {
+  test("real claims project into Knowledge, promote Pool to partial, flow to State and Gap", async () => {
+    const { db, repo, artifacts } = setup();
+    const svc = new OpportunityDiscoveryService(repo, new RealDataProvider(), artifacts);
+    const res = await svc.ingestMaterial({ materialText: "x", industryName: "人形机器人" });
+
+    // Knowledge: two real claims become confirmed beliefs
+    const knowledgeRepo = new KnowledgeRepository(db.db);
+    const k = knowledgeRepo.findKnowledgeBySubject("industry", res.industry.industryId);
+    assert.ok(k, "knowledge created for real claims");
+    assert.equal(k.beliefs.length, 2);
+    assert.equal(k.beliefs.every((b) => b.state === "confirmed"), true);
+
+    // Pool: the two covered dimensions become partial; the rest stay unknown
+    const pool = repo.listPoolEntries(res.industry.industryId);
+    assert.equal(pool.filter((e) => e.status === "partial").length, 2);
+    assert.equal(pool.filter((e) => e.status === "unknown").length, 10);
+
+    // State: known = the two partial entries; unknown = the rest
+    assert.equal(res.state.known.length, 2);
+    assert.equal(res.state.unknown.length, 10);
+
+    // Gaps: high importance + (partial|unknown) => open for all 12 dims
+    const gaps = repo.listGaps(res.industry.industryId).filter((g) => g.status === "open");
+    assert.equal(gaps.length, 12);
+    assert.equal(res.gapCount, 12);
+    assert.equal(res.nextActionCount, 12);
     db.close();
   });
 });

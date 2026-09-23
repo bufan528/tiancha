@@ -19,7 +19,7 @@ import type {
 } from "../domain/index.js";
 
 export class ResearchRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(public readonly db: DatabaseSync) {}
 
   // ---- Industry ----
   upsertIndustry(i: Industry): void {
