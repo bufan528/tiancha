@@ -230,4 +230,36 @@ describe("Phase 2C ingest wiring (real data)", () => {
     assert.equal(res.nextActionCount, 12);
     db.close();
   });
+
+  test("ingestClaims backfills real claims and refreshes subject idempotently", async () => {
+    const { db, repo, artifacts } = setup();
+    const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+    const res = await svc.ingestMaterial({ materialText: "x", industryName: "具身智能" });
+    const sid = res.industry.industryId;
+    assert.equal(repo.listNextActions(sid).filter((a) => a.status === "open").length, 12);
+
+    await svc.ingestClaims({
+      subjectKind: "industry",
+      subjectId: sid,
+      claims: [
+        { statement: "market real", dimension: "market", confidence: 0.8 },
+        { statement: "demand real", dimension: "demand", confidence: 0.7 },
+      ],
+    });
+
+    const knowledgeRepo = new KnowledgeRepository(db.db);
+    const k = knowledgeRepo.findKnowledgeBySubject("industry", sid)!;
+    assert.equal(k.beliefs.length, 2);
+
+    const pool = repo.listPoolEntries(sid);
+    assert.equal(pool.filter((e) => e.status === "partial").length, 2);
+    assert.equal(pool.filter((e) => e.status === "unknown").length, 10);
+
+    const state = repo.getStateBySubject("industry", sid)!;
+    assert.equal(state.known.length, 2);
+    assert.equal(state.unknown.length, 10);
+    // next actions stay idempotent (no duplicates from backfill)
+    assert.equal(repo.listNextActions(sid).filter((a) => a.status === "open").length, 12);
+    db.close();
+  });
 });

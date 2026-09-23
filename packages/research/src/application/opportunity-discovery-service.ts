@@ -24,7 +24,6 @@ import type {
   ResearchState,
   ResearchSource,
   ResearchDocument,
-  NextAction,
   MethodologyVersion,
   Claim,
   ClaimTemporalRelation,
@@ -203,49 +202,23 @@ export class OpportunityDiscoveryService {
       });
     }
 
-    // 5. One-way Knowledge -> Pool -> State -> Gap projection (2C).
-    this.knowledge.reconcilePool(industry.industryId, "industry");
-    this.knowledge.refreshGaps(industry.industryId, "industry");
-    this.knowledge.refreshState(industry.industryId, "industry");
+    // 5-6. One-way Knowledge -> Pool -> Gaps -> NextActions -> State (2C).
+    this.knowledge.refreshSubject(industry.industryId, "industry");
 
-    // 6. NextAction for each active gap (retrieve the missing information).
-    const gaps = this.repo
-      .listGaps(industry.industryId)
-      .filter((g) => g.status === "open" || g.status === "mitigating");
-    const actionIds: string[] = [];
-    for (const gap of gaps) {
-      const a: NextAction = {
-        actionId: `act-${randomUUID()}`,
-        subjectKind: "industry",
-        subjectId: industry.industryId,
-        kind: "retrieve_data",
-        params: { gapId: gap.gapId },
-        dependsOn: [],
-        priority: 0,
-        rationale: "信息缺失，需补全",
-        status: "open",
-        createdBy: "planner",
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-      this.repo.upsertNextAction(a);
-      actionIds.push(a.actionId);
-    }
-
-    // 7. Attach aux ids (questions/gaps/actions) to the projected state.
-    //    known/confirmed/uncertain/conflicting/unknown come from refreshState;
-    //    these ids are maintained here (refreshState preserves, never creates).
+    // 7. Attach keyQuestionIds (questions are created by ingest; refreshSubject preserves them).
     const projected = this.repo.getStateBySubject("industry", industry.industryId)!;
     const state: ResearchState = {
       ...projected,
       keyQuestionIds: questionIds,
-      researchGapIds: gaps.map((g) => g.gapId),
-      nextActionIds: actionIds,
       updatedAt: nowIso,
     };
     this.repo.upsertState(state);
     this.repo.upsertIndustry({ ...industry, currentStateId: state.stateId, updatedAt: nowIso });
 
+    const gaps = this.repo
+      .listGaps(industry.industryId)
+      .filter((g) => g.status === "open" || g.status === "mitigating");
+    const actions = this.repo.listNextActions(industry.industryId).filter((a) => a.status === "open");
     const poolEntries = this.repo.listPoolEntries(industry.industryId);
     return {
       industry,
@@ -253,9 +226,75 @@ export class OpportunityDiscoveryService {
       requirementCount: requirementIds.length,
       poolEntryCount: poolEntries.length,
       gapCount: gaps.length,
-      nextActionCount: actionIds.length,
+      nextActionCount: actions.length,
       state,
       claimIds: evidenceClaimIds,
+    };
+  }
+
+  /**
+   * Backfill an existing subject with new claims (Phase 2C: field research
+   * return path). Persists each claim and projects it into Knowledge, then runs
+   * the full one-way refresh. Placeholder claims are auto-SKIPPED.
+   */
+  async ingestClaims(input: {
+    subjectKind: "industry" | "company" | "general";
+    subjectId: string;
+    claims: Array<{
+      statement: string;
+      dimension: string;
+      confidence?: number;
+      provenance?: Claim["provenance"];
+      sourceRef?: string;
+      relationHint?: { kind: "SUPPORT" } | { kind: "REVISE" } | { kind: "CONFLICT"; note?: string } | { kind: "SUPERSEDE"; supersedesClaimRef: string };
+    }>;
+    sourceType?: ResearchSource["type"];
+  }): Promise<{ claimIds: string[]; state: ResearchState | undefined }> {
+    const nowIso = new Date().toISOString();
+    const claimIds: string[] = [];
+
+    for (const c of input.claims) {
+      const claim: Claim = {
+        claimId: `claim-${randomUUID()}`,
+        statement: c.statement,
+        claimType: "descriptive",
+        provenance: c.provenance ?? "user",
+        conflictOfInterest: false,
+        factIds: [],
+        evidenceIds: [],
+        subjectKind: input.subjectKind,
+        subjectId: input.subjectId,
+        temporalRelation: "current",
+        isRealExternalData: true,
+      };
+      await this.artifactStore.put({
+        artifact: {
+          artifactId: claim.claimId,
+          kind: "claim",
+          schemaVersion: "2",
+          ref: { artifactId: claim.claimId, kind: "claim", locator: { type: "sqlite", id: claim.claimId } },
+          createdAt: nowIso,
+          taskId: "field-research-ingest",
+          attemptId: "ingest-claims",
+          runId: `backfill-${randomUUID()}`,
+        },
+        blob: claim,
+      });
+      claimIds.push(claim.claimId);
+      this.knowledge.projectFromClaim({
+        claim,
+        dimension: c.dimension,
+        topic: c.dimension,
+        sourceRef: c.sourceRef,
+        confidence: c.confidence ?? 0.5,
+        relationHint: c.relationHint,
+      });
+    }
+
+    this.knowledge.refreshSubject(input.subjectId, input.subjectKind);
+    return {
+      claimIds,
+      state: this.repo.getStateBySubject(input.subjectKind, input.subjectId),
     };
   }
 
