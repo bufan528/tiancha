@@ -16,6 +16,7 @@ export * from "./industry.js";
 export * from "./company.js";
 export * from "./research-question.js";
 export * from "./information-requirement.js";
+export * from "./identity.js";
 export * from "./research-gap.js";
 export * from "./information-pool.js";
 export * from "./research-state.js";

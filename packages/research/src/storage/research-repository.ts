@@ -147,6 +147,25 @@ export class ResearchRepository {
       );
   }
 
+  getQuestion(questionId: string): ResearchQuestion | undefined {
+    const r = this.db.prepare("SELECT * FROM research_question WHERE question_id = ?").get(questionId) as any;
+    return r
+      ? {
+          questionId: r.question_id,
+          subjectKind: r.subject_kind,
+          subjectId: r.subject_id,
+          statement: r.statement,
+          origin: r.origin,
+          status: r.status,
+          priority: r.priority,
+          dependsOn: JSON.parse(r.depends_on_json),
+          answerClaimRef: r.answer_claim_ref ?? undefined,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+        }
+      : undefined;
+  }
+
   listQuestions(subjectId: string): ResearchQuestion[] {
     const rows = this.db
       .prepare("SELECT * FROM research_question WHERE subject_id = ? ORDER BY priority ASC")
@@ -193,6 +212,30 @@ export class ResearchRepository {
         r.createdAt,
         r.updatedAt,
       );
+  }
+
+  getRequirement(requirementId: string): InformationRequirement | undefined {
+    const r = this.db
+      .prepare("SELECT * FROM information_requirement WHERE requirement_id = ?")
+      .get(requirementId) as any;
+    if (!r) return undefined;
+    return {
+      requirementId: r.requirement_id,
+      questionId: r.question_id,
+      subjectKind: r.subject_kind,
+      subjectId: r.subject_id,
+      dimension: r.dimension,
+      description: r.description,
+      importance: r.importance,
+      requiredEvidenceType: r.required_evidence_type,
+      confirmedCondition: r.confirmed_condition ?? "",
+      uncertainCondition: r.uncertain_condition ?? "",
+      unknownCondition: r.unknown_condition ?? "",
+      preferredPositionKinds: r.preferred_position_kinds_json ? JSON.parse(r.preferred_position_kinds_json) : [],
+      status: r.status,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
   }
 
   listRequirements(subjectId: string): InformationRequirement[] {
@@ -283,6 +326,24 @@ export class ResearchRepository {
         e.createdAt,
         e.updatedAt,
       );
+  }
+
+  getPoolEntry(entryId: string): InformationPoolEntry | undefined {
+    const r = this.db.prepare("SELECT * FROM information_pool_entry WHERE entry_id = ?").get(entryId) as any;
+    return r
+      ? {
+          entryId: r.entry_id,
+          subjectKind: r.subject_kind,
+          subjectId: r.subject_id,
+          topic: r.topic,
+          status: r.status,
+          relatedRequirementIds: JSON.parse(r.related_requirement_ids_json),
+          evidenceRefs: JSON.parse(r.evidence_refs_json),
+          note: r.note ?? undefined,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+        }
+      : undefined;
   }
 
   listPoolEntries(subjectId: string): InformationPoolEntry[] {

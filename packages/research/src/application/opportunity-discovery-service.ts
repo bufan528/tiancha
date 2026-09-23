@@ -31,6 +31,7 @@ import type {
 } from "../domain/index.js";
 import { createIndustry } from "../domain/industry.js";
 import { dimensionImportance } from "../domain/methodology.js";
+import { questionKey, requirementKey, poolEntryKey } from "../domain/identity.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 import { KnowledgeProjectionService } from "./knowledge-projection-service.js";
 import { MethodologyService } from "./methodology-service.js";
@@ -110,59 +111,70 @@ export class OpportunityDiscoveryService {
     this.repo.upsertIndustry(industry);
 
     // 3. Per methodology dimension: Question + Requirement + Pool entry(unknown)
+    //    E2 (S2): match-or-create on DETERMINISTIC identity keys (subject + dimension)
+    //    so a repeated ingest never creates a second copy of the research skeleton.
     const questionIds: string[] = [];
     const requirementIds: string[] = [];
     for (const dim of activeMethodology.dimensions) {
-      const q: ResearchQuestion = {
-        questionId: `q-${randomUUID()}`,
-        subjectKind: "industry",
-        subjectId: industry.industryId,
-        statement: `研究「${industry.canonicalName}」在 ${dim.name}（${dim.key}）上：${dim.requiredInfo}`,
-        origin: "material",
-        status: "open",
-        priority: 0,
-        dependsOn: [],
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-      this.repo.upsertQuestion(q);
-      questionIds.push(q.questionId);
+      const questionId = questionKey(industry.industryId, dim.key);
+      if (!this.repo.getQuestion(questionId)) {
+        const q: ResearchQuestion = {
+          questionId,
+          subjectKind: "industry",
+          subjectId: industry.industryId,
+          statement: `研究「${industry.canonicalName}」在 ${dim.name}（${dim.key}）上：${dim.requiredInfo}`,
+          origin: "material",
+          status: "open",
+          priority: 0,
+          dependsOn: [],
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        this.repo.upsertQuestion(q);
+      }
+      questionIds.push(questionId);
 
-      const req: InformationRequirement = {
-        requirementId: `ir-${randomUUID()}`,
-        questionId: q.questionId,
-        subjectKind: "industry",
-        subjectId: industry.industryId,
-        dimension: dim.key,
-        description: dim.requiredInfo,
-        // E1: importance + judgement conditions come from the ACTIVE methodology,
-        // never hard-coded (was: importance = 5).
-        importance: dimensionImportance(dim.weight),
-        requiredEvidenceType: dim.requiredInfo,
-        confirmedCondition: dim.confirmedCondition,
-        uncertainCondition: dim.uncertainCondition,
-        unknownCondition: dim.unknownCondition,
-        preferredPositionKinds: [],
-        status: "open",
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-      this.repo.upsertRequirement(req);
-      requirementIds.push(req.requirementId);
+      const requirementId = requirementKey(industry.industryId, dim.key);
+      if (!this.repo.getRequirement(requirementId)) {
+        const req: InformationRequirement = {
+          requirementId,
+          questionId,
+          subjectKind: "industry",
+          subjectId: industry.industryId,
+          dimension: dim.key,
+          description: dim.requiredInfo,
+          // E1: importance + judgement conditions come from the ACTIVE methodology,
+          // never hard-coded (was: importance = 5).
+          importance: dimensionImportance(dim.weight),
+          requiredEvidenceType: dim.requiredInfo,
+          confirmedCondition: dim.confirmedCondition,
+          uncertainCondition: dim.uncertainCondition,
+          unknownCondition: dim.unknownCondition,
+          preferredPositionKinds: [],
+          status: "open",
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        this.repo.upsertRequirement(req);
+      }
+      requirementIds.push(requirementId);
 
-      const pool: InformationPoolEntry = {
-        entryId: `pe-${randomUUID()}`,
-        subjectKind: "industry",
-        subjectId: industry.industryId,
-        topic: dim.key,
-        status: "unknown",
-        relatedRequirementIds: [req.requirementId],
-        evidenceRefs: [],
-        note: dim.unknownCondition,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-      this.repo.upsertPoolEntry(pool);
+      const entryId = poolEntryKey(industry.industryId, dim.key);
+      if (!this.repo.getPoolEntry(entryId)) {
+        const pool: InformationPoolEntry = {
+          entryId,
+          subjectKind: "industry",
+          subjectId: industry.industryId,
+          topic: dim.key,
+          status: "unknown",
+          relatedRequirementIds: [requirementId],
+          evidenceRefs: [],
+          note: dim.unknownCondition,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        this.repo.upsertPoolEntry(pool);
+      }
     }
 
     // 4. DataProvider → Claims (as Artifacts). Echo must flag non-real.
