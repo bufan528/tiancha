@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase%202A%2F2B%20-%20research%20memory%20%2B%20agent%20entry-blue.svg)](#开发路线)
+[![Status](https://img.shields.io/badge/Phase%202C%20knowledge%20projection%20-%20partial-blue.svg)](#开发路线)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -66,10 +66,15 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 **已完成：**
 - **Phase 2A 研究记忆底座**：Industry / Company / ResearchQuestion / InformationRequirement / ResearchGap / InformationPool / ResearchState / Evidence·Claim·Fact·Event / Methodology v1（12 维 Human-approved baseline），SQLite 持久化到 `~/.tiancha/db/`。
 - **Phase 2B Agent 主入口**：无参数进入交互 Agent；注入 6 个研究工具，由主模型**语义选择调用**（无关键词分类器）；`ask` 为非交互辅助。
+- **Phase 2C（部分）Knowledge Projection**：
+  - `IndustryKnowledge / KnowledgeBelief / KnowledgeConflict` 领域对象与三表持久化；
+  - Claim→Knowledge 投影，四种 Evolution：**SUPPORT / REVISE / CONFLICT / SUPERSEDE**，历史永不覆盖、Conflict 双方保留不选边；
+  - 单向闭环 **Knowledge → InformationPool → ResearchState → ResearchGap**（State 不回写 Pool；Gap 以 InformationRequirement 为中心、幂等、subject 隔离）。
 
 **能力边界：**
 - 当前数据源是 **Echo 占位 Provider**，所有 Evidence 标记 `isRealExternalData=false` / `sourceType=echo_placeholder`。**不能据此做真实投资判断、不打分、不给"值得/不值得"结论**；真实 Wind/Web/上传文档数据源在后续 Phase 接入。
-- **暂未实现**：ResearchTarget / ResearchChain / Diligence / Field Research Ingestion / Evidence-linked Report / Research Planning（Phase 2C–8）。
+- **尚未完成（2C 剩余）**：Gap→NextAction 刷新、ingest 自动接线、Methodology Human Gate 运行时。
+- **暂未实现**：ResearchTarget / ResearchChain / Diligence / Field Research Ingestion / Evidence-linked Report / Research Planning（Phase 2D、3–8）。
 
 ---
 
@@ -117,7 +122,7 @@ node dist/cli/tiancha.js research smoke
 | 1 | tiancha CLI、TianchaRuntime、Run/Round/TaskGraph、三契约、迁移层、Durable Event Store | ✅ |
 | 2A | Research Memory Foundation + Industry Vertical Slice（11 张业务表、Methodology v1、Echo Provider、OpportunityDiscoveryService） | ✅ |
 | 2B | 自然语言 Agent 主入口 + 语义工具路由 + 多轮连贯（REPL + ask 共享装配） | ✅ |
-| 2C | Knowledge Projection：Evidence→Claim→Industry Knowledge、冲突保留、Methodology Human Gate | ⏳ |
+| 2C | Knowledge Projection：Claim→IndustryKnowledge、四种 Evolution、Knowledge→Pool→State→Gap 单向链路 | 🚧 部分完成（Domain/投影/Pool/State/Gap 已落地；NextAction 刷新、ingest 接线、Human Gate 运行时待做） |
 | 2D | 重启恢复 / 持久化回归（kill→restart 数据仍在） | ⏳ |
 | 3 | Industry Research Engine（信息需求、Gap 分析、冲突解决、动态 Profile、重评） | ⏳ |
 | 4 | Research Target Recommendation（问题→信息需求→ResearchChain→候选→匹配→Fallback） | ⏳ |
