@@ -45,4 +45,10 @@ export interface Claim {
   subjectId: string;
   /** current = live; old = retained but superseded by a newer claim; superseded = replaced. */
   temporalRelation: ClaimTemporalRelation;
+  /**
+   * Whether the evidence behind this claim comes from a real external data
+   * source. Placeholder providers (e.g. Echo) MUST set false so downstream
+   * Knowledge projection never promotes placeholder data into confirmed beliefs.
+   */
+  isRealExternalData: boolean;
 }

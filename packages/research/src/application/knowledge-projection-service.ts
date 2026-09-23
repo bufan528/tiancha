@@ -33,7 +33,7 @@ import type {
   StateItemRef,
 } from "../domain/index.js";
 
-export type KnowledgeEvolution = "SUPPORT" | "REVISE" | "CONFLICT" | "SUPERSEDE" | "NEW";
+export type KnowledgeEvolution = "SUPPORT" | "REVISE" | "CONFLICT" | "SUPERSEDE" | "NEW" | "SKIPPED";
 
 export type RelationHint =
   | { kind: "SUPPORT" }
@@ -77,6 +77,12 @@ export class KnowledgeProjectionService {
     const { claim, dimension } = input;
     const now = new Date().toISOString();
     const subjectKind = claim.subjectKind as KnowledgeSubjectKind;
+
+    // Placeholder data (Echo) never enters Knowledge: it must not become a
+    // confirmed belief that later reconciles as real coverage (Invariant 5).
+    if (!claim.isRealExternalData) {
+      return { knowledgeId: "", evolution: "SKIPPED", beliefId: "" };
+    }
 
     // 1. current knowledge for this subject (create v1 if absent)
     let knowledge = this.knowledge.findKnowledgeBySubject(subjectKind, claim.subjectId);

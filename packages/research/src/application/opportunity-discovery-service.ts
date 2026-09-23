@@ -170,6 +170,7 @@ export class OpportunityDiscoveryService {
         subjectKind: "industry",
         subjectId: industry.industryId,
         temporalRelation: "current",
+        isRealExternalData: obs.isRealExternalData,
       };
       await this.artifactStore.put({
         artifact: {
@@ -322,6 +323,7 @@ export class OpportunityDiscoveryService {
       subjectKind: opts.subjectKind,
       subjectId: opts.subjectId,
       temporalRelation: "current",
+      isRealExternalData: true,
     };
     await this.artifactStore.put({
       artifact: {

@@ -27,6 +27,7 @@ function mkClaim(subjectId: string): Claim {
     subjectKind: "industry",
     subjectId,
     temporalRelation: "current",
+    isRealExternalData: true,
   };
 }
 
@@ -40,6 +41,17 @@ describe("KnowledgeProjectionService", () => {
     assert.equal(k.version, 1);
     assert.equal(k.beliefs.length, 1);
     assert.equal(k.beliefs[0].state, "confirmed");
+  });
+
+  test("placeholder (Echo) claim is SKIPPED, never becomes a confirmed belief", () => {
+    const { svc, repo } = setup();
+    const subj = "ind-" + randomUUID();
+    const r = svc.projectFromClaim({
+      claim: { ...mkClaim(subj), isRealExternalData: false },
+      dimension: "market",
+    });
+    assert.equal(r.evolution, "SKIPPED");
+    assert.equal(repo.findKnowledgeBySubject("industry", subj), undefined);
   });
 
   test("SUPPORT: matching belief kept, new belief confirmed, no duplicate knowledge", () => {

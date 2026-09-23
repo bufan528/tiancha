@@ -29,6 +29,7 @@ function mkClaim(subjectId: string): Claim {
     subjectKind: "industry",
     subjectId,
     temporalRelation: "current",
+    isRealExternalData: true,
   };
 }
 
