@@ -77,15 +77,21 @@
 
 **上下文间只允许单向依赖**（避免环）：
 ```
-Discovery → Industry → Inquiry → Information → Knowledge → Evaluation
-                ↑                      ↑                       │
-             Strategy ─────────────────┘                      │
-                ↑                                             │
-            Evidence ────────────────────────────────────────►┘
-                                                    Experience（读 Knowledge/Evaluation/Strategy → 产 Candidate）
-                                                        ↓
-                                                   Methodology（Human Gated）
+Discovery ─→ Industry ─→ Inquiry ─→ Information ─→ Knowledge ─→ Evaluation
+                 ↑              ↑                            │
+                 │              └──── Strategy ◄─────────────┘
+                 │                     ▲  （Strategy 读 Inquiry 的 Question/Requirement + Knowledge 的认知）
+                 │                     │
+                 │              Evidence（SoT，被 Knowledge/Evaluation 引用）
+                 │
+             Experience（读 Knowledge + Evaluation + Strategy 的"方法层信号" → 产 Candidate）
+                 ↓
+             Methodology（Human Gated）
 ```
+**读图要点**：
+- `Strategy` 依赖 **Inquiry（Question/Requirement）** 与 **Knowledge**（共同决定"该问谁"）；
+- `Experience` 依赖 **Knowledge + Evaluation + Strategy**（三处产生的"方法层信号"）；
+- `Methodology` **只**由 `Experience → Candidate → HumanGate` 进入，不被任何上游直接修改。
 
 ---
 
@@ -100,7 +106,9 @@ Discovery → Industry → Inquiry → Information → Knowledge → Evaluation
 | 内部实体 | Dimension（值对象集合） |
 | 关键要素 | versionTag、dimensions（每维含：key/name/whyNeeded/requiredInfo/confirmedCondition/uncertainCondition/unknownCondition/**weight**/**industryTypeRules**/**criticality**）、isHumanApproved、activatedAt |
 | 不变量 | ①已激活版本不可修改；②同一时刻只有一个"当前激活"版本；③任何版本必须经 HumanGate 批准 |
-| 生命周期 | `draft → candidate(→Gate) → approved → activated`（旧版本永久保留） |
+| 生命周期 | `draft → approved → activated`（旧版本永久保留） |
+
+> **与 §7 状态机一致**：MethodologyVersion **没有** `candidate` 态——"候选"是**独立聚合 `MethodologyCandidate`** 的状态（见 A2）。本聚合一旦存在即为已批准版本。
 | 现状 | **已实现**（缺 weight / industryTypeRules / criticality，需扩展） |
 
 > **注意**：`criticality`（关键维度）与"总分算法"按 v3.1 §7.3 **属于方法论**，因此它们是 Dimension 的属性，不是 Evaluation 里写死的常量。
@@ -130,7 +138,8 @@ Discovery → Industry → Inquiry → Information → Knowledge → Evaluation
 #### B2 `Company`（聚合根）
 | 项 | 内容 |
 |---|---|
-| 关键要素 | companyId、canonicalName、aliases、primaryIndustryId、chainPositionRefs |
+| 关键要素 | companyId、canonicalName、aliases、primaryIndustryId、**positionRefs[]（指向 `ResearchPosition` 的引用）** |
+| 术语统一 | 原 `chainPosition`（自由字符串）**废弃**，统一为 `positionRef → ResearchPosition`（见 B3） |
 | 不变量 | canonicalName 唯一 |
 | 现状 | 表与 CRUD 已实现但**零调用**（Phase B 接上） |
 
@@ -222,10 +231,21 @@ Discovery → Industry → Inquiry → Information → Knowledge → Evaluation
 |---|---|
 | Root | InformationPool（以 subject 为界） |
 | 内部实体 | **PoolSlot**（信息槽位，按 dimension/子维度）、**PoolItem**（槽位内的具体信息条目） |
-| PoolSlot 关键要素 | slotRef、subject、dimension/子维度、status（unknown/partial/sufficient/conflicting）、**coverageJudgement**（依据 Requirement 的 confirmed 条件判定的结果） |
+| PoolSlot 关键要素 | slotRef、subject、dimension/子维度、status（**`unknown` / `partial` / `sufficient` / `conflicting`**）、**coverageJudgement**（依据 Requirement 的 confirmed 条件判定的结果） |
 | PoolItem 关键要素 | itemRef、slotRef、**value/statement**、**caliber（口径）**、asOf、**claimRef**（必需）、sourceRef、relation-to-others（consistent/caliber_differs/contradicts/complements） |
 | 不变量 | ①**PoolItem 必须指向 claimRef**（P1/P7：不复制内容）；②Slot 与 Item 不构成新的事实来源；③同一槽位多口径**并列保留**（不取平均、不覆盖） |
 | 现状 | **需重定义**：现有 `information_pool_entry` 只有 topic/status/evidenceRefs，**没有 Item 层与口径** |
+
+> **状态词统一（消除同义双枚举）**：旧 PoolEntry 的 `confirmed` → 新 Slot 的 **`sufficient`**；旧 `conflict` → 新 **`conflicting`**；`unknown`/`partial` 不变。**迁移时必须做词映射**，不允许新旧两套枚举并存。
+
+> **⚠️ 破坏性变更声明（必须显式处理，不能只在映射表里写"重定义"）**：
+> 现有 `reconcilePool()`、`refreshState()` 及其**已验收测试**（`knowledge-pool-reconcile.test.ts`、`knowledge-state-refresh.test.ts`）**直接建立在旧 `information_pool_entry` 单层结构上**。重定义为 Slot + Item 会**直接打破这两条已通过的链路**，因此本变更必须连带：
+> 1. 重写 `reconcilePool`（写 Slot.status + 生成/更新 Item）；
+> 2. 重写 `refreshState` 的输入（改读 Slot）；
+> 3. 改写上述两个测试文件（断言目标从 entry 变为 slot/item）；
+> 4. 提供**数据迁移**：旧 entry → 一个 Slot（含状态词映射）+ 由 `evidence_refs_json` 尝试解析出 Item（解析不到 claim 的留空，并在 `coverageJudgement` 标注"历史数据无来源"）；
+> 5. 迁移期**双读**（新 Slot 优先、旧 entry 兜底），迁移完成后删除旧列/表。
+> **顺序约束**：本变更应在 Code Design（08）中作为**独立小步**，且**必须在 E2 幂等修复之后**（否则重复 ingest 会把 Slot 也搞乱）。
 
 > **这是 v3.1 §5 的落地点**：`Slot` 回答"针对某需求，目前信息被组织成什么样"，`Item` 是"组织后的一条可回溯信息"。
 
@@ -255,6 +275,7 @@ Discovery → Industry → Inquiry → Information → Knowledge → Evaluation
 | research 专有 | positionRef、relatedQuestionRefs、accessibility、expectedInformationValue、limitations |
 | 不变量 | ①**用 `purpose` 强制区分**；②investment candidate **禁止**用 research 的适配度排序，反之亦然 |
 | 现状 | **需改造**（现有 `target-candidate.ts` 只有 screening 语义 → 归入 `purpose=investment`） |
+| 命名澄清（避免同名混淆） | 本处 **F2 `TargetCandidate`** 是现有 `domain/target-candidate.ts` 中 `TargetCandidate` 的**原地超集**：现有类 = `purpose="investment"` 的那一支。**不新建第二个同名类型**；`ScreeningRun/ScreeningRule/TargetDecision` 保持不动，仅归属 investment 分支 |
 
 > **v3.1 §11 的落实**：「最值得投资的企业」与「最适合回答某问题的对象」是两条独立的候选池，**永远不混排**。
 
@@ -313,7 +334,39 @@ Discovery → Industry → Inquiry → Information → Knowledge → Evaluation
 | 关键要素 | evaluationRef、subject、**methodologyVersionRef**（评估绑定方法论版本）、dimensionEvaluations[]、**coverage**（已评/证据不足/冲突/不适用的计数）、overallDecision、createdAt |
 | DimensionEvaluation 关键要素 | dimension、status（**evaluated / insufficient_evidence / conflicting / not_applicable**）、**score?（仅 evaluated 时有值）**、rationale、evidenceRefs、**sufficiency**（几条独立来源/几手）、conflictingClaimRefs? |
 | 不变量 | ①**未满足 confirmedCondition ⇒ status=insufficient_evidence 且 score 必须为空**（"不知道"≠"低分"）；②score 必须可回溯到 evidence；③**总分规则、critical 判定、sufficiency 阈值不在本聚合写死**——它们是 Methodology 的属性（v3.1 §7.3） |
-| 现状 | **新建**（现有 `scoring/` 是空壳 + 冲突的 7 维 0–100 模型，将废弃） |
+| 现状 | **新建**（现有 `scoring/` 是空壳 + 与 12 维冲突的 7 维 0–100 模型，**不废弃、改为上层**） |
+
+#### 3.8a 评分口径裁决：**两层映射（不是二选一）**
+
+> **背景（reviewer 指出）**：仓库里存在两套评分维度且互不引用——`Methodology v1` 的 **12 维**（研究维度）与 `docs/SCORING_MODEL.md` 的 **7 维 0–100**（投资汇总）。两者**分层并存**，不废弃任何一套；此前"废弃 scoring"的表述**作废**。
+
+**层级关系**：
+
+| 层 | 维度 | 回答 | 驱动什么 |
+|---|---|---|---|
+| **底层：研究维度** | Methodology 的 **12 维** | 「该查什么、查得怎么样」 | `Requirement / Pool / Evidence / Belief` |
+| **上层：投资汇总维度** | SCORING_MODEL 的 **7 维** | 「值不值得投」 | `OverallScore / 评级 / 储备决策` |
+
+**12 → 7 映射表（草稿，待过目）**：
+
+| 上层 7 维（权重） | 聚合自哪些底层研究维度 | 聚合方式 |
+|---|---|---|
+| **market_growth** 市场空间与增速（20%） | `market` + `market_growth` | 加权合成 |
+| **policy_env** 政策与监管环境（15%） | `policy` | 直通 |
+| **competition** 竞争格局与壁垒（15%） | `competition` +（`technology` 的"壁垒"部分） | 加权合成 |
+| **tech_maturity** 技术成熟度（15%） | `technology`（路线/迭代部分） | 直通 |
+| **commercialization** 商业化与产业链（15%） | `demand` + `supply` + `industry_chain` + `business_model` + `profitability` | 加权合成 |
+| **exit_env** 退出与资本环境（10%） | **⚠️ 缺口：12 维中无对应** | 见下 |
+| **risk_level** 风险因素·逆向（10%） | `risk`（+ `key_validation` 作为不确定性参考） | 逆向合成 |
+
+**`exit_env` 缺口处理（我建议 A）**：
+- **方案 A（推荐）**：通过方法论演进机制**补一个维度** `exit_environment`（退出与资本环境），走 `MethodologyCandidate → Human Gate → v2`——这是**外环的第一次真实演练**；v1 阶段该维标 `insufficient_evidence`（不硬凑分）。
+- 方案 B：不进方法论，改由**外部资本市场数据**单独提供（Wind 接入后）。
+- 方案 C：v1 不输出该分，仅在报告中标注"退出环境未评估"。
+
+**映射表归属**：`12→7` 的**贡献矩阵（含权重）必须写进方法论配置并版本化**（属 Methodology 属性）；**代码只做数学聚合** —— 于是"改评分口径 = 改方法论版本"，不改代码。
+
+**与四面（v3.1 §7.3）的衔接**：7 维总分只在**足够底层维度已评**时给出；`insufficient_evidence` 的底层维度**不折算为低分**；`criticality` 定义为 12 维的属性（建议 `risk` / `key_validation` 为 critical）。
 
 ---
 
@@ -488,7 +541,7 @@ Industry ──< Company                    ┌───────────
 | `Evidence` / `EvidenceAssertion` | **保留 + 落地** | 加 fragmentRef |
 | `Source` / `Document` | **保留** | 与 Material/Fragment 衔接 |
 | `TargetCandidate` / `ScreeningRun` / `ScreeningRule` | **改造** | 归为 `purpose=investment` |
-| `scoring/`（7 维 0–100） | **废弃/合并** | 统一到方法论维度的证据驱动评分 |
+| `scoring/`（7 维 0–100） | **升级为上层汇总层**（不废弃） | 7 维作为投资汇总维度，由 12 维研究维度加权聚合（见 §3.8a） |
 | `evidence/` 空壳 | **落地** | 变 Fragment→Evidence→Claim 抽取管线（Phase C/E） |
 | `planning/` 空壳 | **落地** | 变 Priority + NextAction 生成 |
 | `agents/` / `dossier/` / `scheduler/` 空壳 | **按需落地或删除** | 不为"未来"保留 |
@@ -504,7 +557,7 @@ Industry ──< Company                    ┌───────────
 | Q2 | Pattern 的"至少 N 条"阈值（默认 3？） | 放 Methodology/配置，默认 3，可调 |
 | Q3 | PoolSlot 的粒度：按 12 个维度，还是允许维度下再分子槽位 | 允许子槽位（如"市场规模"下分 TAM/SAM/SOM），但**不强制** |
 | Q4 | `ResearchTarget` 的 `kindSubject` 如何存储（同表 JSON 扩展 vs 分表） | 同表 JSON 扩展（避免表爆炸），关键类型（company）保留外键 |
-| Q5 | Evaluation 的 `score` 量纲（0–100 还是 0–10） | **由 Methodology 定义**（v3.1 §7.3），模型层只存数值 + 量纲引用 |
+| Q5 | Evaluation 的 `score` 量纲 | **已裁决（见 §3.8a）**：底层 12 维研究维度 → 上层 7 维投资汇总（两层映射）；量纲与聚合规则均由 Methodology 定义 |
 | Q6 | 是否需要 `Industry.reserveStatus` 的**变更历史表** | 需要（否则无法回答"何时进的储备"） |
 | Q7 | Report/Dossier 的产物形态（DB 快照 vs 文件） | DB 存结构化 sections + 可选物化 Markdown 文件 |
 

@@ -111,7 +111,7 @@ src/
 | 对象 | 处置 |
 |---|---|
 | `information_pool_entry` | **迁移到 slot+item**：老行 → 一个 `slot`（status 保留）+ 0 个 item；老列保留一段时间（只读）后删除 |
-| `scoring/`（7 维 0–100） | **废弃**：不接线；`config/scoring.json` 标记 legacy |
+| `scoring/`（7 维 0–100） | **保留并升级为上层汇总层**：不作为研究维度，改作投资总分聚合（见 `07 §3.8a`）；`config/scoring.json` 保留 |
 | `config/methodology-v1.json` | **改为真正被读取**（E1 时把 weight/criticality 落到这里并载入 DB） |
 
 ---
@@ -352,6 +352,7 @@ tiancha research experience list          # 研究经验与模式（薄）
 | T-A10 | 投影 | 生成 report/dossier 后 Claim/Belief/Pool 数量不变 |
 | T-A11 | 占位防护 | 占位 claim 不进 belief、不参与评分 |
 | T-A12 | 回归 | 既有 64 用例全绿 + smoke PASS |
+| T-A13 | 两层映射 | 7 维汇总分由 12 维按贡献权重聚合得出；改方法论版本后映射随之变化；`exit_env` 在 v1 为 `insufficient_evidence` 时不参与总分 |
 
 ---
 
@@ -363,7 +364,7 @@ tiancha research experience list          # 研究经验与模式（薄）
 |---|---|---|
 | **S1** | Methodology 扩展（weight/criticality）+ E1（Requirement 条件与 importance） | T-A1, T-A2 绿 |
 | **S2** | E2 幂等 identity + match-or-create | T-A3 绿 |
-| **S3** | Pool 重定义（Slot + Item + 迁移） | T-A4, T-A11 绿 |
+| **S3** | ⚠️ **破坏性变更**：Pool 重定义（Slot + Item + 状态词映射 + 老数据迁移 + 双读）——**必须在 S2 之后**（详见 `07 §3.5` 破坏性变更声明） | T-A4, T-A11 绿 |
 | **S4** | EvaluationService（四面 + 证据驱动 + critical） | T-A5, T-A6, T-A7 绿 |
 | **S5** | PriorityService + NextAction 扩展 | T-A8 绿 |
 | **S6** | ExperienceService（薄）+ Report/Dossier 投影 | T-A9, T-A10 绿 |
@@ -384,9 +385,9 @@ tiancha research experience list          # 研究经验与模式（薄）
 
 | # | 问题 | 建议 |
 |---|---|---|
-| C1 | 评分量纲与规则（0–100？0–10？锚点怎么写） | 由 Methodology 定义；v1 先用 `0–100` + 锚点表（沿用 SCORING_MODEL 的锚点思路，但维度改为 12 维） |
-| C2 | `criticality` 的 v1 取值（哪几维是 critical） | 建议 `risk` + `key_validation` 为 critical（可在方法论中调整） |
-| C3 | PoolSlot 是否允许子槽位（如 TAM/SAM/SOM） | Phase A 先单层（=维度），Phase B 再支持子槽位 |
-| C4 | `information_pool_entry` 是否保留 | 迁移期保留只读，S3 完成后删除 |
+| C1 | 评分量纲与规则 | **已裁决（07 §3.8a）**：两层映射——底层 12 维研究维度 → 上层 7 维投资汇总；量纲、锚点、12→7 贡献权重全部写进方法论配置并版本化，代码只做数学聚合 |
+| C2 | 哪几维是 `critical` | 建议 **`risk` + `key_validation`**（可在方法论中调整） |
+| C3 | PoolSlot 是否允许子槽位 | **Phase A 先单层**（=维度），Phase B 再支持子槽位 |
+| C4 | 老 `information_pool_entry` | 迁移期只读 + 双读，**S3 完成后删除**（且 S3 必须在 S2 之后） |
 
 **确认后即可从 S1 开始写代码。**
