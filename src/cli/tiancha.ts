@@ -30,6 +30,7 @@ import {
   type EventBusPort,
   type ChildSessionOptions,
   type ChildSession,
+  type MethodologyDimension,
 } from "@tiancha/research";
 import {
   migratePiToTiancha,
@@ -40,6 +41,7 @@ import {
   SqliteArtifactStore,
   EchoDataProvider,
   OpportunityDiscoveryService,
+  MethodologyService,
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
@@ -301,6 +303,121 @@ async function cmdStateShow(industryName: string): Promise<void> {
   db.close();
 }
 
+// --- Phase P1 Methodology commands (Human-gated evolution) ------------------
+function readProposedDimensions(file: string): MethodologyDimension[] {
+  const raw = JSON.parse(readFileSync(file, "utf8"));
+  const dims = Array.isArray(raw) ? raw : raw?.dimensions;
+  if (!Array.isArray(dims) || dims.length === 0) {
+    throw new Error("proposal file must contain a non-empty dimensions array");
+  }
+  return dims as MethodologyDimension[];
+}
+
+async function cmdMethodology(sub: string | undefined, rest: string[]): Promise<void> {
+  const { dbPath } = foundationPaths();
+  const db = new ResearchDb({ path: dbPath });
+  const repo = new ResearchRepository(db.db);
+  const svc = new MethodologyService(repo);
+  try {
+    if (sub === "show") {
+      const active = svc.getActive();
+      console.log(`Methodology active: ${active.versionTag} (${active.versionId})`);
+      console.log(`  dimensions: ${active.dimensions.length}`);
+      for (const d of active.dimensions) console.log(`    - ${d.key}  ${d.name}`);
+      return;
+    }
+
+    if (sub === "list") {
+      const versions = svc.history();
+      console.log(`versions (${versions.length}):`);
+      for (const v of versions) {
+        console.log(
+          `  ${v.versionTag}  ${v.versionId}  dims=${v.dimensions.length}  activated=${v.activatedAt ?? "-"}`,
+        );
+      }
+      const pending = svc.pendingCandidates();
+      console.log(`pending candidates (${pending.length}):`);
+      for (const c of pending) {
+        console.log(`  ${c.candidateId}  base=${c.baseVersionId}  dims=${c.proposedDimensions.length}`);
+        console.log(`    rationale: ${c.rationale}`);
+      }
+      return;
+    }
+
+    if (sub === "propose") {
+      const file = rest[0];
+      const rationaleIdx = rest.indexOf("--rationale");
+      const rationale = rationaleIdx >= 0 ? rest[rationaleIdx + 1] : undefined;
+      const byIdx = rest.indexOf("--by");
+      const by = byIdx >= 0 ? rest[byIdx + 1] : "user";
+      if (!file || !rationale) {
+        console.error("usage: tiancha methodology propose <proposal.json> --rationale <text> [--by agent|user]");
+        process.exitCode = 1;
+        return;
+      }
+      const res = svc.propose({
+        proposedDimensions: readProposedDimensions(file),
+        rationale,
+        createdBy: by === "agent" ? "agent" : "user",
+      });
+      console.log(
+        `[propose] candidate=${res.candidate.candidateId} base=${res.candidate.baseVersionId} dims=${res.candidate.proposedDimensions.length}`,
+      );
+      console.log(`  rationale: ${res.candidate.rationale}`);
+      console.log(`  approval token (single-use, keep it): ${res.resumeToken}`);
+      console.log(
+        `  next: tiancha methodology decide ${res.candidate.candidateId} --approve --operator <name> [--token <token>]`,
+      );
+      return;
+    }
+
+    if (sub === "decide") {
+      const candidateId = rest[0];
+      const approve = rest.includes("--approve");
+      const reject = rest.includes("--reject");
+      const opIdx = rest.indexOf("--operator");
+      const operator = opIdx >= 0 ? rest[opIdx + 1] : undefined;
+      const cmtIdx = rest.indexOf("--comment");
+      const comment = cmtIdx >= 0 ? rest[cmtIdx + 1] : undefined;
+      const tokIdx = rest.indexOf("--token");
+      const resumeToken = tokIdx >= 0 ? rest[tokIdx + 1] : undefined;
+      if (!candidateId || (!approve && !reject) || !operator) {
+        console.error(
+          "usage: tiancha methodology decide <candidateId> (--approve|--reject) --operator <name> [--comment <text>] [--token <token>]",
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const res = svc.decide({
+        candidateId,
+        decision: approve ? "approved" : "rejected",
+        operator,
+        comment,
+        resumeToken,
+      });
+      console.log(
+        `[decide] candidate=${res.candidate.candidateId} status=${res.candidate.status} operator=${res.candidate.operator}`,
+      );
+      if (res.activatedVersion) {
+        console.log(
+          `  activated: ${res.activatedVersion.versionTag} (${res.activatedVersion.versionId}) dims=${res.activatedVersion.dimensions.length}`,
+        );
+      } else {
+        console.log("  no activation (rejected)");
+      }
+      return;
+    }
+
+    console.error("usage: tiancha methodology <show|list|propose|decide> ...");
+    process.exitCode = 1;
+  } catch (err) {
+    console.error("methodology error:", (err as Error).message);
+    process.exitCode = 1;
+  } finally {
+    db.close();
+  }
+}
+
 async function run(): Promise<void> {
   configureTianchaAgentDir();
   const args = process.argv.slice(2);
@@ -363,6 +480,12 @@ async function run(): Promise<void> {
       return;
     }
     await cmdStateShow(args[2]);
+    return;
+  }
+
+  // --- Phase P1 methodology evolution ---
+  if (tianchaBrand && args[0] === "methodology") {
+    await cmdMethodology(args[1], args.slice(2));
     return;
   }
 
