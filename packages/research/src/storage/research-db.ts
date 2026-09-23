@@ -200,8 +200,24 @@ export class ResearchDb {
       CREATE INDEX IF NOT EXISTS idx_belief_dimension ON knowledge_belief(dimension);
       CREATE INDEX IF NOT EXISTS idx_conflict_claims ON knowledge_conflict(claim_a_ref, claim_b_ref);
       CREATE INDEX IF NOT EXISTS idx_conflict_status ON knowledge_conflict(status);
+
+      CREATE TABLE IF NOT EXISTS methodology_candidate (
+        candidate_id TEXT PRIMARY KEY,
+        base_version_id TEXT NOT NULL,
+        proposed_dimensions_json TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        evidence_refs_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        operator TEXT,
+        comment TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_candidate_status ON methodology_candidate(status);
     `);
     this.ensureIndustryKnowledgeColumn();
+    this.ensureMethodologyDimensionsColumn();
   }
 
   /**
@@ -218,6 +234,22 @@ export class ResearchDb {
       // Re-check after the fact: another writer may have added it concurrently.
       const after = this.db.prepare("PRAGMA table_info(industry)").all() as { name: string }[];
       if (!after.some((c) => c.name === "current_knowledge_id")) throw err;
+    }
+  }
+
+  /**
+   * Add methodology.dimensions_json via PRAGMA pre-check (same discipline as
+   * ensureIndustryKnowledgeColumn): an activated version's dimensions must be
+   * readable back, never re-derived from a constant.
+   */
+  private ensureMethodologyDimensionsColumn(): void {
+    const cols = this.db.prepare("PRAGMA table_info(methodology)").all() as { name: string }[];
+    if (cols.some((c) => c.name === "dimensions_json")) return;
+    try {
+      this.db.exec("ALTER TABLE methodology ADD COLUMN dimensions_json TEXT");
+    } catch (err) {
+      const after = this.db.prepare("PRAGMA table_info(methodology)").all() as { name: string }[];
+      if (!after.some((c) => c.name === "dimensions_json")) throw err;
     }
   }
 

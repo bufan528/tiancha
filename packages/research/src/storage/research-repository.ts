@@ -16,6 +16,7 @@ import type {
   ResearchDocument,
   NextAction,
   MethodologyVersion,
+  MethodologyCandidate,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -400,15 +401,82 @@ export class ResearchRepository {
     }));
   }
 
-  // ---- Methodology ----
+  // ---- Methodology (versioned; Invariant 6: only human-approved versions activate) ----
   upsertMethodology(m: MethodologyVersion): void {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO methodology
-         (methodology_id, version_tag, is_human_approved_baseline, created_at, activated_at)
-         VALUES (?,?,?,?,?)`,
+         (methodology_id, version_tag, is_human_approved_baseline, created_at, activated_at, dimensions_json)
+         VALUES (?,?,?,?,?,?)`,
       )
-      .run(m.versionId, m.versionTag, m.isHumanApprovedBaseline ? 1 : 0, m.createdAt, m.activatedAt ?? null);
+      .run(
+        m.versionId,
+        m.versionTag,
+        m.isHumanApprovedBaseline ? 1 : 0,
+        m.createdAt,
+        m.activatedAt ?? null,
+        JSON.stringify(m.dimensions),
+      );
+  }
+
+  getMethodology(id: string): MethodologyVersion | undefined {
+    const row = this.db.prepare("SELECT * FROM methodology WHERE methodology_id = ?").get(id) as any;
+    return row ? rowToMethodology(row) : undefined;
+  }
+
+  listMethodologies(): MethodologyVersion[] {
+    const rows = this.db.prepare("SELECT * FROM methodology ORDER BY created_at ASC").all() as any[];
+    return rows.map(rowToMethodology);
+  }
+
+  /** The currently activated version (latest activatedAt). Never a constant. */
+  getActiveMethodology(): MethodologyVersion | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM methodology WHERE activated_at IS NOT NULL ORDER BY activated_at DESC LIMIT 1")
+      .get() as any;
+    return row ? rowToMethodology(row) : undefined;
+  }
+
+  // ---- MethodologyCandidate (proposal; never active until human-approved) ----
+  upsertMethodologyCandidate(c: MethodologyCandidate): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO methodology_candidate
+         (candidate_id, base_version_id, proposed_dimensions_json, rationale, evidence_refs_json,
+          status, created_by, created_at, decided_at, operator, comment)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        c.candidateId,
+        c.baseVersionId,
+        JSON.stringify(c.proposedDimensions),
+        c.rationale,
+        JSON.stringify(c.evidenceRefs),
+        c.status,
+        c.createdBy,
+        c.createdAt,
+        c.decidedAt ?? null,
+        c.operator ?? null,
+        c.comment ?? null,
+      );
+  }
+
+  getMethodologyCandidate(id: string): MethodologyCandidate | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM methodology_candidate WHERE candidate_id = ?")
+      .get(id) as any;
+    return row ? rowToMethodologyCandidate(row) : undefined;
+  }
+
+  listMethodologyCandidates(status?: MethodologyCandidate["status"]): MethodologyCandidate[] {
+    const rows = (
+      status
+        ? this.db
+            .prepare("SELECT * FROM methodology_candidate WHERE status = ? ORDER BY created_at ASC")
+            .all(status)
+        : this.db.prepare("SELECT * FROM methodology_candidate ORDER BY created_at ASC").all()
+    ) as any[];
+    return rows.map(rowToMethodologyCandidate);
   }
 }
 
@@ -445,5 +513,32 @@ function rowToState(row: any): ResearchState {
     version: row.version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function rowToMethodology(row: any): MethodologyVersion {
+  return {
+    versionId: row.methodology_id,
+    versionTag: row.version_tag,
+    dimensions: row.dimensions_json ? JSON.parse(row.dimensions_json) : [],
+    isHumanApprovedBaseline: row.is_human_approved_baseline === 1,
+    createdAt: row.created_at,
+    activatedAt: row.activated_at ?? undefined,
+  };
+}
+
+function rowToMethodologyCandidate(row: any): MethodologyCandidate {
+  return {
+    candidateId: row.candidate_id,
+    baseVersionId: row.base_version_id,
+    proposedDimensions: JSON.parse(row.proposed_dimensions_json),
+    rationale: row.rationale,
+    evidenceRefs: JSON.parse(row.evidence_refs_json),
+    status: row.status,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    decidedAt: row.decided_at ?? undefined,
+    operator: row.operator ?? undefined,
+    comment: row.comment ?? undefined,
   };
 }
