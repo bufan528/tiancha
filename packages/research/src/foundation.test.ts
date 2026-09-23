@@ -250,6 +250,10 @@ describe("Phase 2C ingest wiring (real data)", () => {
     const knowledgeRepo = new KnowledgeRepository(db.db);
     const k = knowledgeRepo.findKnowledgeBySubject("industry", sid)!;
     assert.equal(k.beliefs.length, 2);
+    // traceability: beliefs resolve to a real research_source row (Invariant 7)
+    const srcRef = k.beliefs[0]!.sourceRef;
+    assert.ok(srcRef, "belief carries a sourceRef");
+    assert.ok(repo.getSource(srcRef!), "sourceRef resolves to a research_source row");
 
     const pool = repo.listPoolEntries(sid);
     assert.equal(pool.filter((e) => e.status === "partial").length, 2);

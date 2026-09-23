@@ -249,9 +249,20 @@ export class OpportunityDiscoveryService {
       relationHint?: { kind: "SUPPORT" } | { kind: "REVISE" } | { kind: "CONFLICT"; note?: string } | { kind: "SUPERSEDE"; supersedesClaimRef: string };
     }>;
     sourceType?: ResearchSource["type"];
+    sourceTitle?: string;
   }): Promise<{ claimIds: string[]; state: ResearchState | undefined }> {
     const nowIso = new Date().toISOString();
     const claimIds: string[] = [];
+
+    // Field-research material provenance (Invariant 7: belief -> source -> document).
+    const source: ResearchSource = {
+      sourceId: `src-${randomUUID()}`,
+      type: input.sourceType ?? "customer_expert",
+      title: input.sourceTitle ?? "field research material",
+      isRealExternalData: true,
+      createdAt: nowIso,
+    };
+    this.repo.upsertSource(source);
 
     for (const c of input.claims) {
       const claim: Claim = {
@@ -285,7 +296,7 @@ export class OpportunityDiscoveryService {
         claim,
         dimension: c.dimension,
         topic: c.dimension,
-        sourceRef: c.sourceRef,
+        sourceRef: c.sourceRef ?? source.sourceId,
         confidence: c.confidence ?? 0.5,
         relationHint: c.relationHint,
       });
