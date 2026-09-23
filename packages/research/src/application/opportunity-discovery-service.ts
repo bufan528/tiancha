@@ -32,6 +32,7 @@ import type {
 import { createIndustry } from "../domain/industry.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 import { KnowledgeProjectionService } from "./knowledge-projection-service.js";
+import { MethodologyService } from "./methodology-service.js";
 import type { ResearchRepository } from "../storage/research-repository.js";
 import type { ArtifactStore } from "../storage/artifact-store.js";
 import type { DataProviderPort } from "../ports/data-provider.port.js";
@@ -56,19 +57,24 @@ export interface IngestResult {
 
 export class OpportunityDiscoveryService {
   private readonly knowledge: KnowledgeProjectionService;
+  private readonly methodologyService: MethodologyService;
 
   constructor(
     private readonly repo: ResearchRepository,
     private readonly provider: DataProviderPort,
     private readonly artifactStore: ArtifactStore,
+    /** Frozen baseline used only to bootstrap the DB when no version is active. */
     private readonly methodology: MethodologyVersion = METHODOLOGY_V1,
   ) {
     this.knowledge = new KnowledgeProjectionService(repo.db);
+    this.methodologyService = new MethodologyService(repo);
   }
 
   async ingestMaterial(input: IngestMaterialInput): Promise<IngestResult> {
     const now = new Date();
     const nowIso = now.toISOString();
+    // Always the version ACTIVE in the DB (bootstraps the frozen baseline if none).
+    const activeMethodology = this.methodologyService.getActive(this.methodology);
 
     // 1. Source + Document
     const source: ResearchSource = {
@@ -105,7 +111,7 @@ export class OpportunityDiscoveryService {
     // 3. Per methodology dimension: Question + Requirement + Pool entry(unknown)
     const questionIds: string[] = [];
     const requirementIds: string[] = [];
-    for (const dim of this.methodology.dimensions) {
+    for (const dim of activeMethodology.dimensions) {
       const q: ResearchQuestion = {
         questionId: `q-${randomUUID()}`,
         subjectKind: "industry",
@@ -158,7 +164,7 @@ export class OpportunityDiscoveryService {
       subjectKind: "industry",
       subjectId: industry.industryId,
       subjectName: industry.canonicalName,
-      metrics: this.methodology.dimensions.map((d) => d.key),
+      metrics: activeMethodology.dimensions.map((d) => d.key),
     });
 
     const evidenceClaimIds: string[] = [];
