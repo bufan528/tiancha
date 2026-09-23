@@ -40,6 +40,10 @@ const DimensionParam = Type.Object({
   confirmedCondition: Type.String(),
   uncertainCondition: Type.String(),
   unknownCondition: Type.String(),
+  weight: Type.Number({ description: "该维度的评估权重（0..1；12 维合计≈1）", minimum: 0, maximum: 1 }),
+  criticality: Type.Union([Type.Literal("normal"), Type.Literal("critical")], {
+    description: "是否为关键维度（critical：证据不足时不得直接得出储备结论）",
+  }),
 });
 
 const ProposeMethodologyParams = Type.Object({

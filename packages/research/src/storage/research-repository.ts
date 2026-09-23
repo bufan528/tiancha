@@ -172,8 +172,9 @@ export class ResearchRepository {
       .prepare(
         `INSERT OR REPLACE INTO information_requirement
          (requirement_id, question_id, subject_kind, subject_id, dimension, description,
-          importance, required_evidence_type, status, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+          importance, required_evidence_type, confirmed_condition, uncertain_condition,
+          unknown_condition, preferred_position_kinds_json, status, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         r.requirementId,
@@ -184,6 +185,10 @@ export class ResearchRepository {
         r.description,
         r.importance,
         r.requiredEvidenceType,
+        r.confirmedCondition,
+        r.uncertainCondition,
+        r.unknownCondition,
+        JSON.stringify(r.preferredPositionKinds),
         r.status,
         r.createdAt,
         r.updatedAt,
@@ -203,6 +208,10 @@ export class ResearchRepository {
       description: r.description,
       importance: r.importance,
       requiredEvidenceType: r.required_evidence_type,
+      confirmedCondition: r.confirmed_condition ?? "",
+      uncertainCondition: r.uncertain_condition ?? "",
+      unknownCondition: r.unknown_condition ?? "",
+      preferredPositionKinds: r.preferred_position_kinds_json ? JSON.parse(r.preferred_position_kinds_json) : [],
       status: r.status,
       createdAt: r.created_at,
       updatedAt: r.updated_at,

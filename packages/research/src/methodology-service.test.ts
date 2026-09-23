@@ -31,6 +31,8 @@ function extraDimension(): MethodologyDimension {
     confirmedCondition: "依赖清单 + 替代方案",
     uncertainCondition: "仅识别单点",
     unknownCondition: "无供应链分析",
+    weight: 0.07,
+    criticality: "normal",
   };
 }
 
@@ -234,5 +236,71 @@ describe("P1 approval credential (human gate token)", () => {
         }),
       /resume token rejected/,
     );
+  });
+});
+
+// --- S1: Methodology Extension + E1 -----------------------------------------
+
+describe("S1 T-A1 Methodology Evaluation Policy (weight / criticality)", () => {
+  test("weight + criticality round-trip through the DB for the active version", () => {
+    const { svc } = setup();
+    const active = svc.getActive();
+
+    assert.equal(active.dimensions.length, 12);
+    const risk = active.dimensions.find((d) => d.key === "risk")!;
+    const keyValidation = active.dimensions.find((d) => d.key === "key_validation")!;
+    const market = active.dimensions.find((d) => d.key === "market")!;
+    assert.equal(risk.criticality, "critical");
+    assert.equal(keyValidation.criticality, "critical");
+    assert.equal(market.criticality, "normal");
+    // weights come from the STORED version (not re-derived)
+    assert.equal(market.weight, 0.1);
+    const sum = active.dimensions.reduce((a, d) => a + d.weight, 0);
+    assert.ok(Math.abs(sum - 1) < 1e-9, `weights should sum to 1, got ${sum}`);
+  });
+});
+
+describe("S1 T-A2 E1 requirement importance + conditions from methodology", () => {
+  test("ingest derives importance + conditions from the ACTIVE methodology (not constant 5)", async () => {
+    const db = new ResearchDb({ path: ":memory:" });
+    const repo = new ResearchRepository(db.db);
+    const artifacts = new SqliteArtifactStore({ path: ":memory:" });
+    const msvc = new MethodologyService(repo);
+    msvc.getActive(); // bootstrap v1
+
+    const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+    const res = await svc.ingestMaterial({ materialText: "x", industryName: "新能源" });
+    const reqs = repo.listRequirements(res.industry.industryId);
+
+    const market = reqs.find((r) => r.dimension === "market")!;
+    const supply = reqs.find((r) => r.dimension === "supply")!;
+    // importance derived from weight (market 0.10 → 5, supply 0.06 → 3), NOT constant 5
+    assert.equal(market.importance, 5);
+    assert.equal(supply.importance, 3);
+    // conditions inherited verbatim from the methodology dimension
+    assert.equal(market.confirmedCondition, "至少 1 条可溯源 TAM + 结构拆分");
+    assert.equal(market.uncertainCondition, "仅有单一来源或口径不一致");
+    assert.equal(supply.unknownCondition, "无供给数据");
+    assert.deepEqual(market.preferredPositionKinds, []);
+    db.close();
+  });
+
+  test("importance follows the ACTIVE version when methodology changes", async () => {
+    const db = new ResearchDb({ path: ":memory:" });
+    const repo = new ResearchRepository(db.db);
+    const artifacts = new SqliteArtifactStore({ path: ":memory:" });
+    const msvc = new MethodologyService(repo);
+    msvc.getActive();
+
+    // activate a version where "supply" is promoted to weight 0.10 (→ importance 5)
+    const dims = METHODOLOGY_V1.dimensions.map((d) => (d.key === "supply" ? { ...d, weight: 0.1 } : d));
+    const { candidate } = msvc.propose({ proposedDimensions: dims, rationale: "提高供给维度权重" });
+    msvc.decide({ candidateId: candidate.candidateId, decision: "approved", operator: "bufan" });
+
+    const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+    const res = await svc.ingestMaterial({ materialText: "x", industryName: "光伏" });
+    const supply = repo.listRequirements(res.industry.industryId).find((r) => r.dimension === "supply")!;
+    assert.equal(supply.importance, 5, "importance must follow the new ACTIVE version");
+    db.close();
   });
 });

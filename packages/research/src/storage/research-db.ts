@@ -235,6 +235,7 @@ export class ResearchDb {
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();
+    this.ensureRequirementConditionColumns();
   }
 
   /**
@@ -268,6 +269,30 @@ export class ResearchDb {
       const after = this.db.prepare("PRAGMA table_info(methodology)").all() as { name: string }[];
       if (!after.some((c) => c.name === "dimensions_json")) throw err;
     }
+  }
+
+  /**
+   * E1: information_requirement inherits the methodology dimension's judgement
+   * conditions + preferred position kinds. Added via PRAGMA pre-check.
+   */
+  private ensureRequirementConditionColumns(): void {
+    const cols = this.db.prepare("PRAGMA table_info(information_requirement)").all() as { name: string }[];
+    const add = (name: string, ddl: string): void => {
+      if (cols.some((c) => c.name === name)) return;
+      try {
+        this.db.exec(ddl);
+      } catch (err) {
+        const after = this.db.prepare("PRAGMA table_info(information_requirement)").all() as { name: string }[];
+        if (!after.some((c) => c.name === name)) throw err;
+      }
+    };
+    add("confirmed_condition", "ALTER TABLE information_requirement ADD COLUMN confirmed_condition TEXT");
+    add("uncertain_condition", "ALTER TABLE information_requirement ADD COLUMN uncertain_condition TEXT");
+    add("unknown_condition", "ALTER TABLE information_requirement ADD COLUMN unknown_condition TEXT");
+    add(
+      "preferred_position_kinds_json",
+      "ALTER TABLE information_requirement ADD COLUMN preferred_position_kinds_json TEXT",
+    );
   }
 
   close(): void {

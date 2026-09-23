@@ -3,6 +3,11 @@
  * This is a FROZEN baseline: model must NOT auto-modify v1.
  * Changes go through Material → MethodologyCandidate → Human Review → New Version.
  * Mirror file: config/methodology-v1.json (human-editable source).
+ *
+ * B3: each dimension carries two kinds of data —
+ *   - Research Framework (what to research): key/name/.../unknownCondition
+ *   - Evaluation Policy   (how it is judged) : weight + criticality
+ * Aggregation Policy (12→7) is NOT part of v1 (later phase).
  */
 
 import type { MethodologyVersion } from "../domain/methodology.js";
@@ -23,6 +28,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "至少 1 条可溯源 TAM + 结构拆分",
       uncertainCondition: "仅有单一来源或口径不一致",
       unknownCondition: "无任何规模数据",
+      weight: 0.1,
+      criticality: "normal",
     },
     {
       key: "market_growth",
@@ -33,6 +40,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "历史 + 预期均有来源",
       uncertainCondition: "仅历史或仅预期其一",
       unknownCondition: "无增速数据",
+      weight: 0.08,
+      criticality: "normal",
     },
     {
       key: "demand",
@@ -43,6 +52,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "有真实订单或一手客户证据",
       uncertainCondition: "仅有意向/访谈二手",
       unknownCondition: "无需求侧信息",
+      weight: 0.1,
+      criticality: "normal",
     },
     {
       key: "supply",
@@ -53,6 +64,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "有产能/成本一手数据",
       uncertainCondition: "仅有估算",
       unknownCondition: "无供给数据",
+      weight: 0.06,
+      criticality: "normal",
     },
     {
       key: "competition",
@@ -63,6 +76,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "份额 + 壁垒均有来源",
       uncertainCondition: "仅玩家名单无份额",
       unknownCondition: "无竞争信息",
+      weight: 0.1,
+      criticality: "normal",
     },
     {
       key: "technology",
@@ -73,6 +88,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "路线 + 里程碑有证据",
       uncertainCondition: "路线存在分歧",
       unknownCondition: "无技术信息",
+      weight: 0.08,
+      criticality: "normal",
     },
     {
       key: "industry_chain",
@@ -83,6 +100,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "链条完整 + 利润分配有证据",
       uncertainCondition: "链条有但利润分布缺失",
       unknownCondition: "无链条信息",
+      weight: 0.07,
+      criticality: "normal",
     },
     {
       key: "business_model",
@@ -93,6 +112,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "单位经济有一手数据",
       uncertainCondition: "仅模式描述无数据",
       unknownCondition: "无模式信息",
+      weight: 0.07,
+      criticality: "normal",
     },
     {
       key: "profitability",
@@ -103,6 +124,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "多期财务数据",
       uncertainCondition: "单期或预测",
       unknownCondition: "无盈利数据",
+      weight: 0.07,
+      criticality: "normal",
     },
     {
       key: "policy",
@@ -113,6 +136,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "政策原文 + 时效",
       uncertainCondition: "仅转述",
       unknownCondition: "无政策信息",
+      weight: 0.07,
+      criticality: "normal",
     },
     {
       key: "risk",
@@ -123,6 +148,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "风险已识别并有缓解证据",
       uncertainCondition: "风险列举但未验证",
       unknownCondition: "无风险分析",
+      weight: 0.1,
+      criticality: "critical",
     },
     {
       key: "key_validation",
@@ -133,6 +160,8 @@ export const METHODOLOGY_V1: MethodologyVersion = {
       confirmedCondition: "假设已被一手证据验证",
       uncertainCondition: "假设列出但未验证",
       unknownCondition: "未识别关键假设",
+      weight: 0.1,
+      criticality: "critical",
     },
   ],
 };

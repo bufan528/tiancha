@@ -30,6 +30,7 @@ import type {
   Provenance,
 } from "../domain/index.js";
 import { createIndustry } from "../domain/industry.js";
+import { dimensionImportance } from "../domain/methodology.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 import { KnowledgeProjectionService } from "./knowledge-projection-service.js";
 import { MethodologyService } from "./methodology-service.js";
@@ -134,8 +135,14 @@ export class OpportunityDiscoveryService {
         subjectId: industry.industryId,
         dimension: dim.key,
         description: dim.requiredInfo,
-        importance: 5,
+        // E1: importance + judgement conditions come from the ACTIVE methodology,
+        // never hard-coded (was: importance = 5).
+        importance: dimensionImportance(dim.weight),
         requiredEvidenceType: dim.requiredInfo,
+        confirmedCondition: dim.confirmedCondition,
+        uncertainCondition: dim.uncertainCondition,
+        unknownCondition: dim.unknownCondition,
+        preferredPositionKinds: [],
         status: "open",
         createdAt: nowIso,
         updatedAt: nowIso,

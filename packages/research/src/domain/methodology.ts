@@ -5,7 +5,17 @@
  * Human Review → New Version → Activate.
  */
 
+/**
+ * MethodologyDimension — one research dimension of a methodology version.
+ *
+ * B3: three responsibilities stay semantically separate even though they live in
+ * one aggregate:
+ *   - Research Framework : key/name/description/whyNeeded/requiredInfo + 三个 condition
+ *   - Evaluation Policy  : weight + criticality（how this dimension is judged）
+ *   - Aggregation Policy : NOT here（12→7 位于聚合策略，后续阶段）
+ */
 export interface MethodologyDimension {
+  // --- Research Framework：该研究什么 ---
   key: string;
   name: string;
   description: string;
@@ -14,6 +24,25 @@ export interface MethodologyDimension {
   confirmedCondition: string;
   uncertainCondition: string;
   unknownCondition: string;
+  // --- Evaluation Policy：怎么评 ---
+  /** Relative weight of this dimension in research evaluation (0..1). */
+  weight: number;
+  /** Critical dimension: insufficient evidence here must block a direct "reserve" conclusion. */
+  criticality: "normal" | "critical";
+}
+
+/**
+ * E1: derive a requirement's 1..5 importance level from the dimension's
+ * Evaluation-Policy weight. Kept in the domain so that changing a dimension's
+ * weight (through methodology evolution) changes requirement importance,
+ * instead of relying on a hard-coded constant.
+ */
+export function dimensionImportance(weight: number): number {
+  if (weight >= 0.1) return 5;
+  if (weight >= 0.08) return 4;
+  if (weight >= 0.06) return 3;
+  if (weight >= 0.04) return 2;
+  return 1;
 }
 
 export interface MethodologyVersion {

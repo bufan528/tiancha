@@ -14,8 +14,15 @@ export interface InformationRequirement {
   subjectId: string;
   dimension: string;
   description: string;
+  /** Derived from the ACTIVE methodology dimension — never hard-coded. */
   importance: number;
   requiredEvidenceType: string;
+  // --- E1: inherited from the methodology dimension, used to judge "is this enough?" ---
+  confirmedCondition: string;
+  uncertainCondition: string;
+  unknownCondition: string;
+  /** Where to look first (ResearchPosition kinds); Phase B populates this. */
+  preferredPositionKinds: string[];
   status: RequirementStatus;
   createdAt: string;
   updatedAt: string;
