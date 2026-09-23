@@ -28,6 +28,7 @@ import type {
   KnowledgeBelief,
   KnowledgeConflict,
   KnowledgeSubjectKind,
+  NextAction,
   PoolStatus,
   ResearchGap,
   StateItemRef,
@@ -403,5 +404,78 @@ export class KnowledgeProjectionService {
         if (active) repo.upsertGap({ ...active, status: "resolved", updatedAt: now });
       }
     }
+  }
+
+  /**
+   * Gap -> NextAction refresh. One-way: reads Gap, writes only NextAction.
+   * Idempotent: stable actionId = `act-<gapId>`; a gap with an existing open
+   * action is not duplicated; actions whose gap is no longer active are cancelled.
+   */
+  refreshNextActions(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
+    const repo = new ResearchRepository(this.db);
+    const gaps = repo
+      .listGaps(subjectId)
+      .filter((g) => g.status === "open" || g.status === "mitigating");
+    const existing = repo.listNextActions(subjectId);
+    const now = new Date().toISOString();
+
+    const byGap = new Map<string, NextAction>();
+    for (const a of existing) {
+      const gapId = a.params?.gapId;
+      if (typeof gapId === "string") byGap.set(gapId, a);
+    }
+    const activeGapIds = new Set(gaps.map((g) => g.gapId));
+
+    for (const gap of gaps) {
+      const existingAction = byGap.get(gap.gapId);
+      if (existingAction && existingAction.status === "open") continue;
+      repo.upsertNextAction({
+        actionId: existingAction?.actionId ?? `act-${gap.gapId}`,
+        subjectKind,
+        subjectId,
+        kind: "retrieve_data",
+        params: { gapId: gap.gapId },
+        dependsOn: [],
+        priority: 0,
+        rationale: "信息缺失，需补全",
+        status: "open",
+        createdBy: "planner",
+        createdAt: existingAction?.createdAt ?? now,
+        updatedAt: now,
+      });
+    }
+
+    for (const a of existing) {
+      const gapId = a.params?.gapId;
+      if (typeof gapId === "string" && !activeGapIds.has(gapId) && a.status === "open") {
+        repo.upsertNextAction({ ...a, status: "cancelled", updatedAt: now });
+      }
+    }
+  }
+
+  /**
+   * Full one-way refresh for a subject: Knowledge -> Pool -> Gaps -> NextActions -> State.
+   * Single entry point for ingest and claim backfill. Idempotent. keyQuestionIds are
+   * preserved (created by the caller, e.g. ingest); gap/nextAction ids are synced here.
+   */
+  refreshSubject(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
+    this.reconcilePool(subjectId, subjectKind);
+    this.refreshGaps(subjectId, subjectKind);
+    this.refreshNextActions(subjectId, subjectKind);
+    this.refreshState(subjectId, subjectKind);
+
+    const repo = new ResearchRepository(this.db);
+    const prev = repo.getStateBySubject(subjectKind, subjectId);
+    if (!prev) return;
+    const gaps = repo
+      .listGaps(subjectId)
+      .filter((g) => g.status === "open" || g.status === "mitigating");
+    const actions = repo.listNextActions(subjectId).filter((a) => a.status === "open");
+    repo.upsertState({
+      ...prev,
+      researchGapIds: gaps.map((g) => g.gapId),
+      nextActionIds: actions.map((a) => a.actionId),
+      updatedAt: new Date().toISOString(),
+    });
   }
 }

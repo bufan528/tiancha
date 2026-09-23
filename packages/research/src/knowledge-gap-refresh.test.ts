@@ -142,3 +142,37 @@ describe("Gap evaluation (Requirement-centered)", () => {
     assert.equal(after.status, before.status);
   });
 });
+
+describe("Gap -> NextAction refresh", () => {
+  test("creates one action per active gap, idempotent", () => {
+    const { repo, svc } = setup();
+    const subj = "ind-" + randomUUID();
+    const r = mkReq(subj, "market", 3);
+    repo.upsertRequirement(r);
+    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
+    svc.refreshGaps(subj, "industry");
+    svc.refreshNextActions(subj, "industry");
+    assert.equal(repo.listNextActions(subj).length, 1);
+    assert.equal(repo.listNextActions(subj)[0].status, "open");
+    // idempotent: second refresh does not duplicate
+    svc.refreshNextActions(subj, "industry");
+    assert.equal(repo.listNextActions(subj).length, 1);
+  });
+
+  test("cancels the action when its gap resolves", () => {
+    const { repo, svc } = setup();
+    const subj = "ind-" + randomUUID();
+    const r = mkReq(subj, "technology", 3);
+    repo.upsertRequirement(r);
+    repo.upsertPoolEntry(mkPool(subj, "technology", "unknown"));
+    svc.refreshGaps(subj, "industry");
+    svc.refreshNextActions(subj, "industry");
+    assert.equal(repo.listNextActions(subj)[0].status, "open");
+    // resolve the gap by confirming its pool entry
+    const entry = repo.listPoolEntries(subj)[0];
+    repo.upsertPoolEntry({ ...entry, status: "confirmed" });
+    svc.refreshGaps(subj, "industry");
+    svc.refreshNextActions(subj, "industry");
+    assert.equal(repo.listNextActions(subj)[0].status, "cancelled");
+  });
+});
