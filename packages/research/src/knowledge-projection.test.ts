@@ -130,9 +130,4 @@ describe("KnowledgeProjectionService", () => {
     // only one header row (current projection), not version history rows
     assert.equal(k.beliefs.length, 3);
   });
-
-  test("refreshState still reserved for Step 2-B-2", () => {
-    const { svc } = setup();
-    assert.throws(() => svc.refreshState("x"), /Step 2-B-2/);
-  });
 });

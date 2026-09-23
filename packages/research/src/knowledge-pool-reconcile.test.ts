@@ -145,9 +145,4 @@ describe("Knowledge -> InformationPool reconcile", () => {
     // B: must NOT inherit A's conflict; its own support drives partial
     assert.equal(poolOf(repo, subjB, "demand").status, "partial");
   });
-
-  test("State is NOT touched in this step (refreshState still throws)", () => {
-    const { svc } = setup();
-    assert.throws(() => svc.refreshState("anything"), /Step 2-B-2/);
-  });
 });

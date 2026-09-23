@@ -29,6 +29,7 @@ import type {
   KnowledgeConflict,
   KnowledgeSubjectKind,
   PoolStatus,
+  StateItemRef,
 } from "../domain/index.js";
 
 export type KnowledgeEvolution = "SUPPORT" | "REVISE" | "CONFLICT" | "SUPERSEDE" | "NEW";
@@ -271,7 +272,62 @@ export class KnowledgeProjectionService {
     return [entry.topic];
   }
 
-  refreshState(_subjectId: string): void {
-    throw new Error("KnowledgeProjectionService.refreshState: not implemented in Step 2-B-2");
+  /**
+   * Pool -> ResearchState (one-way projection). Input to classification is the
+   * CURRENT InformationPool projection; we do NOT map Knowledge directly to State.
+   * Never writes Pool/Knowledge/Claim/Evidence. Existing researchGapIds /
+   * nextActionIds / keyQuestionIds are READ and preserved (never created/deleted here).
+   * Idempotent: same Pool + same existing ids -> same State projection, version+1.
+   */
+  refreshState(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
+    const repo = new ResearchRepository(this.db);
+    const entries = repo.listPoolEntries(subjectId);
+    const prev = repo.getStateBySubject(subjectKind, subjectId);
+    const now = new Date().toISOString();
+
+    const known: StateItemRef[] = [];
+    const confirmed: StateItemRef[] = [];
+    const uncertain: StateItemRef[] = [];
+    const conflicting: StateItemRef[] = [];
+    const unknown: StateItemRef[] = [];
+
+    for (const e of entries) {
+      const ref: StateItemRef = { ref: e.entryId };
+      switch (e.status) {
+        case "confirmed":
+          confirmed.push(ref);
+          known.push(ref);
+          break;
+        case "partial":
+          known.push(ref);
+          uncertain.push(ref);
+          break;
+        case "conflict":
+          conflicting.push(ref);
+          break;
+        case "unknown":
+        default:
+          unknown.push(ref);
+          break;
+      }
+    }
+
+    repo.upsertState({
+      stateId: prev?.stateId ?? `state-${subjectKind}-${subjectId}`,
+      subjectKind,
+      subjectId,
+      known,
+      confirmed,
+      uncertain,
+      conflicting,
+      unknown,
+      // carry over existing auxiliary ids; never create/delete here
+      keyQuestionIds: prev?.keyQuestionIds ?? [],
+      researchGapIds: prev?.researchGapIds ?? [],
+      nextActionIds: prev?.nextActionIds ?? [],
+      version: (prev?.version ?? 0) + 1,
+      createdAt: prev?.createdAt ?? now,
+      updatedAt: now,
+    });
   }
 }
