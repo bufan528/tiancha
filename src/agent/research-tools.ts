@@ -15,10 +15,12 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import type { ResearchRepository } from "@tiancha/research";
 import type { OpportunityDiscoveryService } from "@tiancha/research";
+import type { MethodologyService } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
   service: OpportunityDiscoveryService;
+  methodology: MethodologyService;
 }
 
 function json(text: string) {
@@ -29,8 +31,24 @@ const NameParam = Type.Object({
   name: Type.String({ description: "行业标准名（canonical name），如：人形机器人" }),
 });
 
+const DimensionParam = Type.Object({
+  key: Type.String({ description: "维度 key，如 market" }),
+  name: Type.String({ description: "维度中文名" }),
+  description: Type.String(),
+  whyNeeded: Type.String(),
+  requiredInfo: Type.String(),
+  confirmedCondition: Type.String(),
+  uncertainCondition: Type.String(),
+  unknownCondition: Type.String(),
+});
+
+const ProposeMethodologyParams = Type.Object({
+  rationale: Type.String({ description: "为什么提出这个修订（来自哪些材料或调研反例）" }),
+  dimensions: Type.Array(DimensionParam, { description: "修订后的完整维度列表（含原有维度）" }),
+});
+
 export function buildResearchTools(deps: ResearchToolDeps) {
-  const { repo, service } = deps;
+  const { repo, service, methodology } = deps;
 
   const research_industry_show = defineTool({
     name: "research_industry_show",
@@ -143,6 +161,92 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     },
   });
 
+  const research_methodology_show = defineTool({
+    name: "research_methodology_show",
+    label: "查看研究方法论",
+    description:
+      "查看当前已激活的行业研究方法论（研究框架）版本与维度。当用户问“你是怎么研究一个行业的 / 你的研究框架是什么 / 从哪些维度看”时使用。",
+    promptSnippet: "查看研究方法论",
+    parameters: Type.Object({}),
+    async execute() {
+      const active = methodology.getActive();
+      return json(
+        JSON.stringify(
+          {
+            versionTag: active.versionTag,
+            versionId: active.versionId,
+            activatedAt: active.activatedAt,
+            dimensions: active.dimensions.map((d) => ({ key: d.key, name: d.name, whyNeeded: d.whyNeeded })),
+          },
+          null,
+          2,
+        ),
+      );
+    },
+  });
+
+  const research_methodology_list = defineTool({
+    name: "research_methodology_list",
+    label: "列出方法论版本与提案",
+    description:
+      "列出研究框架的历史版本，以及仍在等待人工审批的修订提案。当用户问“方法论改过吗 / 有没有待批准的修订”时使用。",
+    promptSnippet: "列出方法论版本与提案",
+    parameters: Type.Object({}),
+    async execute() {
+      return json(
+        JSON.stringify(
+          {
+            versions: methodology.history().map((v) => ({
+              versionTag: v.versionTag,
+              dims: v.dimensions.length,
+              activatedAt: v.activatedAt,
+            })),
+            pendingCandidates: methodology.pendingCandidates().map((c) => ({
+              candidateId: c.candidateId,
+              baseVersionId: c.baseVersionId,
+              dims: c.proposedDimensions.length,
+              rationale: c.rationale,
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+    },
+  });
+
+  // NOTE: there is deliberately NO "decide/activate" tool. The model may only
+  // PROPOSE; activation requires a human decision via `tiancha methodology decide`
+  // (Invariant 6). The approval token is never exposed to the model.
+  const research_methodology_propose = defineTool({
+    name: "research_methodology_propose",
+    label: "提出方法论修订提案",
+    description:
+      "当你发现现有研究框架缺少某个维度、或某个维度的判据不适用时，提出方法论修订提案（给出修订后的完整维度列表）。重要：提案不会立即生效，必须由人工审批后才能激活；不要向用户声称它已生效。",
+    promptSnippet: "提出方法论修订提案",
+    parameters: ProposeMethodologyParams,
+    async execute(_id, params: Static<typeof ProposeMethodologyParams>) {
+      const res = methodology.propose({
+        proposedDimensions: params.dimensions,
+        rationale: params.rationale,
+        createdBy: "agent",
+      });
+      return json(
+        JSON.stringify(
+          {
+            candidateId: res.candidate.candidateId,
+            baseVersionId: res.candidate.baseVersionId,
+            dimensionCount: res.candidate.proposedDimensions.length,
+            status: "pending",
+            note: "提案已记录，等待人工审批（tiancha methodology decide）。目前尚未生效。",
+          },
+          null,
+          2,
+        ),
+      );
+    },
+  });
+
   return [
     research_industry_ingest,
     research_industry_show,
@@ -150,5 +254,8 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     research_gap_list,
     research_next_action_list,
     research_state_show,
+    research_methodology_show,
+    research_methodology_list,
+    research_methodology_propose,
   ];
 }

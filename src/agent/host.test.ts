@@ -14,18 +14,19 @@ import {
   SqliteArtifactStore,
   EchoDataProvider,
   OpportunityDiscoveryService,
+  MethodologyService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 
 describe("T6 research tools delegate to repository (no keyword classifier)", () => {
-  test("six tools registered; industry_show returns structured research data", async () => {
+  test("research tools registered; industry_show returns structured research data", async () => {
     const db = new ResearchDb({ path: ":memory:" });
     const repo = new ResearchRepository(db.db);
     const artifacts = new SqliteArtifactStore({ path: ":memory:" });
     const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
     await svc.ingestMaterial({ materialText: "测试材料", industryName: "固态电池" });
 
-    const tools = buildResearchTools({ repo, service: svc });
+    const tools = buildResearchTools({ repo, service: svc, methodology: new MethodologyService(repo) });
     const names = tools.map((t: any) => t.name);
     for (const n of [
       "research_industry_ingest",
@@ -34,9 +35,15 @@ describe("T6 research tools delegate to repository (no keyword classifier)", () 
       "research_question_list",
       "research_gap_list",
       "research_next_action_list",
+      "research_methodology_show",
+      "research_methodology_list",
+      "research_methodology_propose",
     ]) {
       assert.ok(names.includes(n), `missing tool ${n}`);
     }
+    // Invariant 6: the model may PROPOSE methodology changes but must never be
+    // able to DECIDE/activate one — no such tool may be exposed.
+    assert.ok(!/methodology_(decide|approve|activate)/.test(names.join(",")), "no methodology decide tool");
 
     const show = tools.find((t: any) => t.name === "research_industry_show") as any;
     const res = await show.execute("call-1", { name: "固态电池" });

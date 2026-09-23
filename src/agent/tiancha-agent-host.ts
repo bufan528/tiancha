@@ -29,6 +29,7 @@ import {
   SqliteArtifactStore,
   EchoDataProvider,
   OpportunityDiscoveryService,
+  MethodologyService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 
@@ -62,7 +63,8 @@ export class TianchaAgentHost {
     const artifacts = new SqliteArtifactStore({ path: artifactDbPath });
     const repo = new ResearchRepository(db.db);
     const service = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
-    const customTools = buildResearchTools({ repo, service });
+    const methodology = new MethodologyService(repo);
+    const customTools = buildResearchTools({ repo, service, methodology });
 
     const services = await createAgentSessionServices({
       cwd,
