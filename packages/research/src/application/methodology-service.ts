@@ -20,6 +20,12 @@ import type {
 } from "../domain/index.js";
 import type { ResearchRepository } from "../storage/research-repository.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
+import { createHumanGate, consumeResumeToken } from "../runtime/human-gate.js";
+
+/** Scope binding for methodology approval credentials. */
+const METHODOLOGY_GATE_PROJECT_ID = "tiancha";
+/** Approval credential lifetime (7 days). */
+const APPROVAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface ProposeMethodologyInput {
   /** Version this proposal is based on; defaults to the active version. */
@@ -32,12 +38,24 @@ export interface ProposeMethodologyInput {
   now?: Date;
 }
 
+export interface ProposeMethodologyResult {
+  candidate: MethodologyCandidate;
+  /** Plaintext, single-use, expiring approval credential. Returned ONCE. */
+  resumeToken: string;
+}
+
 export interface DecideMethodologyInput {
   candidateId: string;
   decision: "approved" | "rejected";
   /** Human operator. Required: without it there is no human gate (Invariant 6). */
   operator: string;
   comment?: string;
+  /**
+   * Optional single-use approval credential returned by propose(). When given,
+   * it is scope-checked, expiry-checked and consumed; a bad/expired/replayed
+   * token is rejected.
+   */
+  resumeToken?: string;
   /** Explicit tag for the new version; defaults to the next vN. */
   nextVersionTag?: string;
   now?: Date;
@@ -66,7 +84,7 @@ export class MethodologyService {
   }
 
   /** Propose a change. Never activates anything by itself. */
-  propose(input: ProposeMethodologyInput): MethodologyCandidate {
+  propose(input: ProposeMethodologyInput): ProposeMethodologyResult {
     const now = (input.now ?? new Date()).toISOString();
     const candidate: MethodologyCandidate = {
       candidateId: `mwc-${randomUUID()}`,
@@ -78,8 +96,22 @@ export class MethodologyService {
       createdBy: input.createdBy ?? "agent",
       createdAt: now,
     };
-    this.repo.upsertMethodologyCandidate(candidate);
-    return candidate;
+    // The candidate and its approval credential are created together: a proposal
+    // is an explicit request for a human decision (Invariant 6).
+    return this.repo.transaction(() => {
+      this.repo.upsertMethodologyCandidate(candidate);
+      const gateId = `gate-${candidate.candidateId}`;
+      const { gate, resumeToken } = createHumanGate({
+        gateId,
+        taskId: candidate.candidateId,
+        type: "methodology_activate",
+        scope: { projectId: METHODOLOGY_GATE_PROJECT_ID, runId: candidate.candidateId, gateId },
+        ttlMs: APPROVAL_TTL_MS,
+        now: input.now,
+      });
+      this.repo.upsertHumanGate(gate);
+      return { candidate, resumeToken };
+    });
   }
 
   /**
@@ -101,6 +133,30 @@ export class MethodologyService {
       }
 
       const now = (input.now ?? new Date()).toISOString();
+
+      // Optional approval credential: accepted once, then consumed.
+      if (input.resumeToken !== undefined) {
+        const gateId = `gate-${candidate.candidateId}`;
+        const gate = this.repo.getHumanGate(gateId);
+        if (!gate) throw new Error(`HumanGate ${gateId} not found`);
+        const checked = consumeResumeToken(
+          gate,
+          input.resumeToken,
+          { projectId: METHODOLOGY_GATE_PROJECT_ID, runId: candidate.candidateId, gateId },
+          input.now,
+        );
+        if (!checked.ok) throw new Error(`resume token rejected (${checked.reason})`);
+        this.repo.upsertHumanGate({
+          ...gate,
+          status: input.decision,
+          decision: input.decision,
+          operator: input.operator,
+          comment: input.comment,
+          decidedAt: now,
+          resumeTokenConsumed: true,
+        });
+      }
+
       const decided: MethodologyCandidate = {
         ...candidate,
         status: input.decision,

@@ -17,6 +17,7 @@ import type {
   NextAction,
   MethodologyVersion,
   MethodologyCandidate,
+  HumanGate,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -494,6 +495,46 @@ export class ResearchRepository {
     ) as any[];
     return rows.map(rowToMethodologyCandidate);
   }
+
+  // ---- HumanGate (durable approval credential; plaintext token never stored) ----
+  upsertHumanGate(g: HumanGate): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO human_gate
+         (gate_id, task_id, type, status, requested_at, decided_at, decision, operator, comment,
+          resume_token_hash, resume_token_scope_json, resume_token_expires_at, resume_token_consumed)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        g.gateId,
+        g.taskId,
+        g.type,
+        g.status,
+        g.requestedAt,
+        g.decidedAt ?? null,
+        g.decision ?? null,
+        g.operator ?? null,
+        g.comment ?? null,
+        g.resumeTokenHash ?? null,
+        g.resumeTokenScope ? JSON.stringify(g.resumeTokenScope) : null,
+        g.resumeTokenExpiresAt ?? null,
+        g.resumeTokenConsumed ? 1 : 0,
+      );
+  }
+
+  getHumanGate(id: string): HumanGate | undefined {
+    const row = this.db.prepare("SELECT * FROM human_gate WHERE gate_id = ?").get(id) as any;
+    return row ? rowToHumanGate(row) : undefined;
+  }
+
+  listHumanGates(status?: HumanGate["status"]): HumanGate[] {
+    const rows = (
+      status
+        ? this.db.prepare("SELECT * FROM human_gate WHERE status = ? ORDER BY requested_at ASC").all(status)
+        : this.db.prepare("SELECT * FROM human_gate ORDER BY requested_at ASC").all()
+    ) as any[];
+    return rows.map(rowToHumanGate);
+  }
 }
 
 function rowToIndustry(row: any): Industry {
@@ -556,5 +597,23 @@ function rowToMethodologyCandidate(row: any): MethodologyCandidate {
     decidedAt: row.decided_at ?? undefined,
     operator: row.operator ?? undefined,
     comment: row.comment ?? undefined,
+  };
+}
+
+function rowToHumanGate(row: any): HumanGate {
+  return {
+    gateId: row.gate_id,
+    taskId: row.task_id,
+    type: row.type,
+    status: row.status,
+    requestedAt: row.requested_at,
+    decidedAt: row.decided_at ?? undefined,
+    decision: row.decision ?? undefined,
+    operator: row.operator ?? undefined,
+    comment: row.comment ?? undefined,
+    resumeTokenHash: row.resume_token_hash ?? undefined,
+    resumeTokenScope: row.resume_token_scope_json ? JSON.parse(row.resume_token_scope_json) : undefined,
+    resumeTokenExpiresAt: row.resume_token_expires_at ?? undefined,
+    resumeTokenConsumed: row.resume_token_consumed === 1,
   };
 }

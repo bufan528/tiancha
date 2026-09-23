@@ -215,6 +215,23 @@ export class ResearchDb {
         comment TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_candidate_status ON methodology_candidate(status);
+
+      CREATE TABLE IF NOT EXISTS human_gate (
+        gate_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        requested_at TEXT NOT NULL,
+        decided_at TEXT,
+        decision TEXT,
+        operator TEXT,
+        comment TEXT,
+        resume_token_hash TEXT,
+        resume_token_scope_json TEXT,
+        resume_token_expires_at TEXT,
+        resume_token_consumed INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_gate_status ON human_gate(status);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();

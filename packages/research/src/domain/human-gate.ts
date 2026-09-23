@@ -17,7 +17,7 @@ export interface HumanGateScope {
 export interface HumanGate {
   gateId: string;
   taskId: string;
-  type: "before_reserve" | "before_major_conclusion";
+  type: "before_reserve" | "before_major_conclusion" | "methodology_activate";
   status: HumanGateStatus;
   requestedAt: string;
   decidedAt?: string;

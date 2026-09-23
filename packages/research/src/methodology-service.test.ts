@@ -59,13 +59,14 @@ describe("P1 Methodology versioning", () => {
   test("propose creates a pending candidate and NEVER activates it", () => {
     const { svc } = setup();
     svc.getActive();
-    const c = svc.propose({
+    const { candidate: c, resumeToken } = svc.propose({
       proposedDimensions: [...METHODOLOGY_V1.dimensions, extraDimension()],
       rationale: "某行业因缺少供应链维度而误判",
       evidenceRefs: ["artifact:claim/x"],
       createdBy: "agent",
     });
     assert.equal(c.status, "pending");
+    assert.ok(resumeToken.length > 0, "propose issues an approval credential");
     assert.equal(svc.pendingCandidates().length, 1);
     // still v1: no activation without a human decision
     assert.equal(svc.getActive().versionId, METHODOLOGY_V1.versionId);
@@ -74,7 +75,7 @@ describe("P1 Methodology versioning", () => {
 
   test("decide without an operator throws (no human gate)", () => {
     const { svc } = setup();
-    const c = svc.propose({ proposedDimensions: [...METHODOLOGY_V1.dimensions], rationale: "x" });
+    const { candidate: c } = svc.propose({ proposedDimensions: [...METHODOLOGY_V1.dimensions], rationale: "x" });
     assert.throws(
       () => svc.decide({ candidateId: c.candidateId, decision: "approved", operator: "" }),
       /human gate/,
@@ -84,7 +85,7 @@ describe("P1 Methodology versioning", () => {
   test("approval activates a NEW version and keeps the previous one", () => {
     const { svc } = setup();
     const active0 = svc.getActive();
-    const c = svc.propose({
+    const { candidate: c } = svc.propose({
       proposedDimensions: [...METHODOLOGY_V1.dimensions, extraDimension()],
       rationale: "补齐供应链维度",
     });
@@ -110,7 +111,7 @@ describe("P1 Methodology versioning", () => {
   test("rejection never activates", () => {
     const { svc } = setup();
     const active0 = svc.getActive();
-    const c = svc.propose({ proposedDimensions: [extraDimension()], rationale: "maybe bad" });
+    const { candidate: c } = svc.propose({ proposedDimensions: [extraDimension()], rationale: "maybe bad" });
     const res = svc.decide({ candidateId: c.candidateId, decision: "rejected", operator: "bufan", comment: "证据不足" });
     assert.equal(res.activatedVersion, undefined);
     assert.equal(res.candidate.status, "rejected");
@@ -120,7 +121,7 @@ describe("P1 Methodology versioning", () => {
 
   test("a candidate cannot be decided twice (failed decide leaves no partial write)", () => {
     const { repo, svc } = setup();
-    const c = svc.propose({ proposedDimensions: [extraDimension()], rationale: "x" });
+    const { candidate: c } = svc.propose({ proposedDimensions: [extraDimension()], rationale: "x" });
     svc.decide({ candidateId: c.candidateId, decision: "approved", operator: "bufan" });
     assert.throws(
       () => svc.decide({ candidateId: c.candidateId, decision: "rejected", operator: "bufan" }),
@@ -161,7 +162,7 @@ describe("P1 methodology drives ingest", () => {
     const msvc = new MethodologyService(repo);
     msvc.getActive(); // bootstrap v1
 
-    const c = msvc.propose({
+    const { candidate: c } = msvc.propose({
       proposedDimensions: [...METHODOLOGY_V1.dimensions, extraDimension()],
       rationale: "补齐供应链安全维度",
     });
@@ -174,5 +175,64 @@ describe("P1 methodology drives ingest", () => {
     assert.equal(res.questionCount, 13);
     assert.equal(res.requirementCount, 13);
     db.close();
+  });
+});
+
+describe("P1 approval credential (human gate token)", () => {
+  test("valid token approves and is consumed; a wrong token is rejected", () => {
+    const { repo, svc } = setup();
+    svc.getActive();
+    const { candidate, resumeToken } = svc.propose({
+      proposedDimensions: [extraDimension()],
+      rationale: "r",
+    });
+
+    // wrong token: rejected, nothing decided
+    assert.throws(
+      () =>
+        svc.decide({
+          candidateId: candidate.candidateId,
+          decision: "approved",
+          operator: "bufan",
+          resumeToken: "bogus",
+        }),
+      /resume token rejected/,
+    );
+    assert.equal(repo.getMethodologyCandidate(candidate.candidateId)!.status, "pending");
+
+    // correct token: approval activates and the gate is consumed
+    const res = svc.decide({
+      candidateId: candidate.candidateId,
+      decision: "approved",
+      operator: "bufan",
+      resumeToken,
+    });
+    assert.ok(res.activatedVersion);
+    const gate = repo.getHumanGate(`gate-${candidate.candidateId}`)!;
+    assert.equal(gate.status, "approved");
+    assert.equal(gate.resumeTokenConsumed, true);
+  });
+
+  test("token is bound to its candidate: another candidate's token is rejected", () => {
+    const { svc } = setup();
+    svc.getActive();
+    const a = svc.propose({ proposedDimensions: [extraDimension()], rationale: "a" });
+    const b = svc.propose({ proposedDimensions: [extraDimension()], rationale: "b" });
+    svc.decide({
+      candidateId: a.candidate.candidateId,
+      decision: "approved",
+      operator: "bufan",
+      resumeToken: a.resumeToken,
+    });
+    assert.throws(
+      () =>
+        svc.decide({
+          candidateId: b.candidate.candidateId,
+          decision: "approved",
+          operator: "bufan",
+          resumeToken: a.resumeToken,
+        }),
+      /resume token rejected/,
+    );
   });
 });
