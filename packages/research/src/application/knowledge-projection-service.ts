@@ -29,6 +29,7 @@ import type {
   KnowledgeConflict,
   KnowledgeSubjectKind,
   PoolStatus,
+  ResearchGap,
   StateItemRef,
 } from "../domain/index.js";
 
@@ -329,5 +330,72 @@ export class KnowledgeProjectionService {
       createdAt: prev?.createdAt ?? now,
       updatedAt: now,
     });
+  }
+
+  /**
+   * Gap evaluation centered on InformationRequirement (not every unknown entry).
+   * One-way: reads Pool/Requirement/Question; writes only ResearchGap. Never touches
+   * Pool/Knowledge/State/Claim/Evidence. Idempotent: stable gapId = `gap-<requirementId>`.
+   *
+   * Rules (A-E, conservative; importance >= 2 is "high"):
+   *  - A: high + Pool unknown (req still open)      -> open Gap
+   *  - B: low  + unknown                            -> no Gap
+   *  - C: high + Pool partial (partial != sufficient) -> open Gap
+   *  - D: confirmed / requirement met                -> close active Gap (open/mitigating -> resolved), row kept
+   *  - E: high + Pool conflict                      -> open Gap ("unresolved disagreement"), never auto-resolved
+   */
+  refreshGaps(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
+    const repo = new ResearchRepository(this.db);
+    const reqs = repo.listRequirements(subjectId);
+    if (reqs.length === 0) return;
+    const entries = repo.listPoolEntries(subjectId);
+    const now = new Date().toISOString();
+
+    const activeByReq = new Map<string, ResearchGap>();
+    for (const g of repo.listGaps(subjectId)) {
+      if (g.status === "open" || g.status === "mitigating") {
+        for (const rid of g.relatedRequirementIds) activeByReq.set(rid, g);
+      }
+    }
+
+    for (const req of reqs) {
+      const entry = entries.find(
+        (e) => e.relatedRequirementIds.includes(req.requirementId) || e.topic === req.dimension,
+      );
+      const poolStatus = entry?.status ?? "unknown";
+      const isHigh = req.importance >= 2;
+
+      const need =
+        poolStatus === "confirmed" || req.status === "met"
+          ? false
+          : poolStatus === "conflict"
+            ? isHigh
+            : poolStatus === "partial"
+              ? isHigh
+              : isHigh;
+
+      const uncertainty =
+        poolStatus === "unknown" ? 0.9 : poolStatus === "partial" ? 0.6 : poolStatus === "conflict" ? 0.8 : 0.1;
+
+      if (need) {
+        const existing = activeByReq.get(req.requirementId);
+        repo.upsertGap({
+          gapId: existing?.gapId ?? `gap-${req.requirementId}`,
+          subjectKind,
+          subjectId,
+          description: `[${req.dimension}] ${req.description}`,
+          importance: req.importance,
+          uncertainty,
+          relatedRequirementIds: [req.requirementId],
+          relatedQuestionIds: [req.questionId],
+          status: "open",
+          discoveredAt: existing?.discoveredAt ?? now,
+          updatedAt: now,
+        });
+      } else {
+        const active = activeByReq.get(req.requirementId);
+        if (active) repo.upsertGap({ ...active, status: "resolved", updatedAt: now });
+      }
+    }
   }
 }
