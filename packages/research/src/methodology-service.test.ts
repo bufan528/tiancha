@@ -118,14 +118,38 @@ describe("P1 Methodology versioning", () => {
     assert.equal(svc.history().length, 1);
   });
 
-  test("a candidate cannot be decided twice", () => {
-    const { svc } = setup();
+  test("a candidate cannot be decided twice (failed decide leaves no partial write)", () => {
+    const { repo, svc } = setup();
     const c = svc.propose({ proposedDimensions: [extraDimension()], rationale: "x" });
     svc.decide({ candidateId: c.candidateId, decision: "approved", operator: "bufan" });
     assert.throws(
       () => svc.decide({ candidateId: c.candidateId, decision: "rejected", operator: "bufan" }),
       /not pending/,
     );
+    // atomic: only v1 + v2 exist and the candidate stays approved
+    assert.equal(repo.listMethodologies().length, 2);
+    assert.equal(svc.getActive().versionTag, "v2");
+    assert.equal(repo.getMethodologyCandidate(c.candidateId)!.status, "approved");
+  });
+
+  test("repository.transaction rolls back on throw", () => {
+    const { repo } = setup();
+    const before = repo.listMethodologies().length;
+    assert.throws(
+      () =>
+        repo.transaction(() => {
+          repo.upsertMethodology({
+            versionId: "mw-tx",
+            versionTag: "tx",
+            dimensions: [],
+            isHumanApprovedBaseline: true,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          });
+          throw new Error("boom");
+        }),
+      /boom/,
+    );
+    assert.equal(repo.listMethodologies().length, before);
   });
 });
 

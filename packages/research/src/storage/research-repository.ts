@@ -22,6 +22,22 @@ import type {
 export class ResearchRepository {
   constructor(public readonly db: DatabaseSync) {}
 
+  /**
+   * Run fn inside a single SQLite transaction; rolls back on any throw.
+   * Used for atomic multi-row decisions (e.g. methodology activation check+write).
+   */
+  transaction<T>(fn: () => T): T {
+    this.db.exec("BEGIN");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   // ---- Industry ----
   upsertIndustry(i: Industry): void {
     this.db

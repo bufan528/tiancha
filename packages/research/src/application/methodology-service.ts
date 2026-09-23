@@ -91,35 +91,39 @@ export class MethodologyService {
     if (!input.operator) {
       throw new Error("operator is required: methodology cannot activate without a human gate (Invariant 6)");
     }
-    const candidate = this.repo.getMethodologyCandidate(input.candidateId);
-    if (!candidate) throw new Error(`MethodologyCandidate ${input.candidateId} not found`);
-    if (candidate.status !== "pending") {
-      throw new Error(`MethodologyCandidate ${input.candidateId} is not pending (status=${candidate.status})`);
-    }
+    // Check-then-write must be atomic: two concurrent decisions on the same
+    // candidate must not both pass the pending check and activate.
+    return this.repo.transaction(() => {
+      const candidate = this.repo.getMethodologyCandidate(input.candidateId);
+      if (!candidate) throw new Error(`MethodologyCandidate ${input.candidateId} not found`);
+      if (candidate.status !== "pending") {
+        throw new Error(`MethodologyCandidate ${input.candidateId} is not pending (status=${candidate.status})`);
+      }
 
-    const now = (input.now ?? new Date()).toISOString();
-    const decided: MethodologyCandidate = {
-      ...candidate,
-      status: input.decision,
-      decidedAt: now,
-      operator: input.operator,
-      comment: input.comment,
-    };
-    this.repo.upsertMethodologyCandidate(decided);
+      const now = (input.now ?? new Date()).toISOString();
+      const decided: MethodologyCandidate = {
+        ...candidate,
+        status: input.decision,
+        decidedAt: now,
+        operator: input.operator,
+        comment: input.comment,
+      };
+      this.repo.upsertMethodologyCandidate(decided);
 
-    if (input.decision === "rejected") return { candidate: decided };
+      if (input.decision === "rejected") return { candidate: decided };
 
-    const nextTag = input.nextVersionTag ?? this.nextVersionTag();
-    const activatedVersion: MethodologyVersion = {
-      versionId: `mw-${nextTag}`,
-      versionTag: nextTag,
-      dimensions: candidate.proposedDimensions,
-      isHumanApprovedBaseline: true,
-      createdAt: now,
-      activatedAt: now,
-    };
-    this.repo.upsertMethodology(activatedVersion);
-    return { candidate: decided, activatedVersion };
+      const nextTag = input.nextVersionTag ?? this.nextVersionTag();
+      const activatedVersion: MethodologyVersion = {
+        versionId: `mw-${nextTag}`,
+        versionTag: nextTag,
+        dimensions: candidate.proposedDimensions,
+        isHumanApprovedBaseline: true,
+        createdAt: now,
+        activatedAt: now,
+      };
+      this.repo.upsertMethodology(activatedVersion);
+      return { candidate: decided, activatedVersion };
+    });
   }
 
   /** Version history, oldest first (never overwritten). */
