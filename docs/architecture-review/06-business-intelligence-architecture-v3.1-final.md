@@ -408,6 +408,23 @@ Research → Research Experience → Experience Pattern
 
 ---
 
+## 11.5 一致性锁定（Consistency Lock：B1 / B2 / B3 / C5）
+
+> 本轮只锁 **4 个语义边界**，**不改变 v3.1 的任何结论**。落地细节见 `07 §3.1 / §3.7 / §3.8 / §7` 与 `08 §4`。
+
+**B1 · 三层语义**：`Evidence（原始证据）→ Claim/Fact（原子事实）→ Belief（认知）`；**PoolItem 只是 Claim 的组织引用，不是第四种事实**；`Fact` = "结构化数值型的 Claim"，与 Claim 同层。
+
+**B2 · Evaluation 四层**：`Evidence Assessment（够不够）→ Dimension Evaluation（够则给分）→ Investment Aggregation（12→7）→ Decision（是否储备）`。**禁止**把四层揉成一个巨型 Service。
+
+**B3 · Methodology 三类职责**（同一聚合内语义分层）：`Research Framework（该研究什么）` / `Evaluation Policy（怎么评）` / `Aggregation Policy（怎么汇总 12→7）`。**改研究重点不得误伤评分算法**。
+
+**C5 · Decision 与"证据不足"分离**：
+- `insufficient_evidence` 是 **Evaluation 的知识状态**；
+- `reserve / watch / park / pending` 是 **Decision 的决策状态**；
+- **证据不足 ⇒ `decisionStatus = pending`**，绝不把 `insufficient_evidence` 当作决策枚举值。
+
+**（同列为纪律，暂不阻塞 S1）**：JSON 列只承载值对象/快照（C4）；ResearchTarget 与 TargetSelection 分离（C1）；ResearchChain 是投影而非 SoT（C2）；Claim 的时间语义 `asOf/observedAt` vs `recordedAt`（C3）——这四项在 **Phase B/C 前**锁死。
+
 ## 12. Phase 微调（按本轮 7 点）
 
 | Phase | 名字 | 变化 |

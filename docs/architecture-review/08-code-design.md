@@ -118,7 +118,11 @@ src/
 
 ## 4. Domain 层设计（关键对象的精确要素）
 
+> **B1 三层语义**（详见 `07 §3.7`）：`Evidence（原始证据）→ Claim/Fact（原子事实）→ Belief（认知）`；**PoolItem 只是 Claim 的组织引用，不是第四种事实**。实现时不得在这三层之间混用语义。
+
 ### 4.1 MethodologyDimension（扩展）
+
+> **B3 三层职责（语义分层，详见 `07 §3.1`）**：`MethodologyVersion` 内必须能区分三类职责——① **Research Framework**（Dimension / Requirement，该研究什么）② **Evaluation Policy**（weight / criticality / scoring / decision 规则，怎么评）③ **Aggregation Policy**（12→7，怎么汇总）。可物理同存，但**字段分组与访问入口必须分开**（改研究重点不应误伤评分算法）。
 
 ```
 key, name, description, whyNeeded, requiredInfo,
@@ -163,31 +167,46 @@ InformationPoolItem {
 
 > **I5 守护点**：`InformationPoolItem.claimRef` 为必填；Repository 层在写入时校验 claim 存在。
 
-### 4.4 InvestmentEvaluation（新增）
+### 4.4 InvestmentEvaluation（新增，**四层结构 B2 + Decision 分离 C5**）
 
 ```
-InvestmentEvaluation {
-  evaluationId, subjectKind, subjectId,
-  methodologyVersionId: string,          // 绑定方法论版本
-  dimensionEvaluations: DimensionEvaluation[],
-  coverage: { evaluated: number; insufficient: number; conflicting: number; notApplicable: number; total: number },
-  overallDecision: "reserve" | "watch" | "park" | "insufficient_evidence",
-  createdAt
-}
-
+// ① Evidence Assessment（够不够）—— 不是独立对象，而是 ② 的 status 判定
+// ② Dimension Evaluation
 DimensionEvaluation {
   dimension: string,
-  status: "evaluated" | "insufficient_evidence" | "conflicting" | "not_applicable",
+  status: "evaluated" | "insufficient_evidence" | "conflicting" | "not_applicable",   // 知识状态
   score?: number,                        // 仅 status=evaluated 时存在
   scoreScale?: string,                   // 量纲引用（由 Methodology 定义）
   rationale: string,
   evidenceRefs: string[],
-  sufficiency: { independentSources: number; firstHand: boolean },  // 证据充分度
+  sufficiency: { independentSources: number; firstHand: boolean },
   conflictingClaimRefs?: string[]
+}
+
+// ③ 12→7 Aggregation
+Aggregation { sevenDimScores: Record<string, number | null> }   // null = 该投资维度证据不足
+
+// ④ Decision（**独立于 Evaluation 状态**）
+ReserveDecision {
+  decisionStatus: "reserve" | "watch" | "park" | "pending",   // pending = 证据不足、暂不决定
+  decisionReason: string,
+  decidedAt: string
+}
+
+InvestmentEvaluation {
+  evaluationId, subjectKind, subjectId,
+  methodologyVersionId: string,
+  dimensionEvaluations: DimensionEvaluation[],   // ②
+  aggregation: Aggregation,                       // ③
+  coverage: { evaluated: number; insufficient: number; conflicting: number; notApplicable: number; total: number },
+  sufficiencySummary: { minIndependentSources: number; anyFirstHand: boolean },
+  criticalFlags: Record<string, boolean>,         // critical 维度是否达标
+  decision: ReserveDecision,                      // ④（不是 evaluation 的 status）
+  createdAt
 }
 ```
 
-> **I10/I11 守护点**：`status !== "evaluated"` ⇒ `score` 必须为 undefined；`coverage` 与 `dimensionEvaluations` 必须一起产出。
+> **I10/I11/I16 守护点**：`status !== "evaluated"` ⇒ `score` 必须为 undefined；`coverage`/`sufficiencySummary`/`criticalFlags`/`decision` 必须一起产出；**证据不足 ⇒ `decision.decisionStatus = "pending"`，绝不允许把 `"insufficient_evidence"` 当作 decisionStatus**。
 
 ### 4.5 ResearchExperience / ExperiencePattern（**Phase D 预留**；Phase A 不建、不写）
 
@@ -230,28 +249,25 @@ IndustryDossier { dossierId, industryId, knowledgeVersion, methodologyVersionId,
 | `OpportunityDiscoveryService`（改） | `ingestMaterial(input)` | 材料 → Industry → **幂等** Question/Requirement/Slot → Claim → 投影 | I6, I7, I13 |
 | | `ingestClaims(input)`（已有） | 调研回填 | I2, I5 |
 | `KnowledgeProjectionService`（已存在，扩） | `projectFromClaim / reconcilePool / refreshGaps / refreshState / refreshSubject` | 认知投影链 | I2, I3, I4 |
-| `EvaluationService`（新） | `evaluate(subjectKind, subjectId, methodologyVersionId)` → InvestmentEvaluation | 维度评分（证据驱动，不足不出分） | I10, I11, I13 |
+| `EvaluationService`（新，**四层 B2**） | 见下方分层（`assessEvidence` / `evaluateDimension` / `aggregate` / `decide`） | 评估编排（**不揉成巨型 Service**） | I10, I11, I13, I16 |
 | `PriorityService`（新） | `rank(subjectId)` → 排序后的 (requirement, gap, priority) | Priority 计算 + 生成 NextAction | Rationale 可追溯 |
 | `ExperienceService`（**Phase D**，薄） | `record(experience)`；`formPatterns()` | 记录经验与模式 | I9 |
 | `MethodologyService`（已存在，扩） | `propose({ rationales, sourceExperienceIds, ... })` | 方法论提案（带经验来源） | I8 |
 
-**`EvaluationService.evaluate` 的核心流程（伪逻辑）**：
+**`EvaluationService` 的**四层**（B2；逻辑分层，可同文件但必须分职责）**：
 
 ```
-for each dimension in activeMethodology.dimensions:
-    req = requirement(subject, dimension)
-    items = poolItems(slot(subject, dimension))
-    if no items satisfying req.confirmedCondition:
-        → status = insufficient_evidence, score = undefined
-    else if open conflict on dimension:
-        → status = conflicting, score = undefined
-    else:
-        → status = evaluated, score = scoringRule(dimension, items)   // 评分规则来自方法论
-coverage = count by status
-overallDecision = decisionRule(dimensionEvaluations, coverage)        // 规则来自方法论
+// ① Evidence Assessment：够不够（纯判定，不产分）
+assessEvidence(subject, dimension) → status ∈ {sufficient, insufficient, conflicting, not_applicable}
+// ② Dimension Evaluation：够才给分
+evaluateDimension(dimension, items) → DimensionEvaluation（不足 ⇒ score = undefined）
+// ③ Investment Aggregation：12 → 7
+aggregate(dimensionEvaluations) → Aggregation（7 维，null = 证据不足）
+// ④ Decision：满足方法论储备条件才决定（不足 ⇒ pending）
+decide(evaluation, coverage, criticalFlags) → ReserveDecision
 ```
 
-**关键**：`scoringRule` / `decisionRule` / `criticality` 都是**方法论的属性**，Service 只做编排（v3.1 §7.3）。
+**关键**：`scoringRule` / `decisionRule` / `criticality` / **12→7 贡献矩阵** 都是**方法论的属性**（Evaluation Policy / Aggregation Policy），Service 只做编排（v3.1 §7.3）。
 
 ---
 
@@ -267,6 +283,7 @@ overallDecision = decisionRule(dimensionEvaluations, coverage)        // 规则�
 
 **写入纪律**：
 - 所有 `_json` 列用 `JSON.stringify/parse`；
+- **JSON 纪律（C4）**：`_json` 列**只能承载"不可独立查询的值对象 / 快照"**（如 `dimension_evaluations_json`、`coverage_json`、`sections_json`、`scope_json`），**不得把核心领域实体藏进 JSON**（例如不得把多个 `Target` / `Belief` 塞进 `targets_json` / `beliefs_json`）——否则"找出所有回答某问题的 Target"这类查询会极痛苦；
 - 加列走 PRAGMA 预检查；
 - **Slot/Item 写入时校验 claimRef 存在**（I5）。
 
@@ -346,7 +363,7 @@ tiancha research experience list          # 研究经验与模式（**Phase D**�
 | T-A4 | Pool Slot/Item | Item 必须带 claimRef；多口径并列保留；status 判定按 confirmedCondition |
 | T-A5 | Evaluation 不足无分 | 未满足条件的维度 `score === undefined` 且 status=insufficient_evidence |
 | T-A6 | Evaluation 四面 | 缺任一维度（coverage/sufficiency）构造失败 |
-| T-A7 | Critical 维度 | critical 维度证据不足 ⇒ overallDecision 不得为 reserve |
+| T-A7 | Critical 维度 | critical 维度证据不足 ⇒ `decision.decisionStatus` 不得为 reserve（应为 `pending`） |
 | T-A8 | Priority | 排序输入可追溯（importance × uncertainty × 可得性） |
 | T-A9 | Experience（**Phase D**） | judgement 必填；<N 条不成 Pattern |
 | T-A10 | 投影 | 生成 report/dossier 后 Claim/Belief/Pool 数量不变 |

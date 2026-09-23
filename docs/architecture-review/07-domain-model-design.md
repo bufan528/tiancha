@@ -104,6 +104,7 @@ Discovery ─→ Industry ─→ Inquiry ─→ Information ─→ Knowledge ─
 |---|---|
 | Root | MethodologyVersion |
 | 内部实体 | Dimension（值对象集合） |
+| **语义分层（B3）** | **同一个聚合，三类职责必须语义分开**（可物理同存，但字段分组与访问入口必须分开）：<br>① **Research Framework** —— Dimension / Requirement / research rationale：**该研究什么**<br>② **Evaluation Policy** —— weight / criticality / sufficiency 规则 / scoring 规则 / decision 规则：**怎么评**<br>③ **Aggregation Policy** —— 12→7 贡献矩阵：**怎么汇总成投资判断**<br>**纪律**：改①不应误伤②③（"研究重点变了" ≠ "评分算法变了"）；三者演进节奏不同，变更时必须能分别识别。 |
 | 关键要素 | versionTag、dimensions（每维含：key/name/whyNeeded/requiredInfo/confirmedCondition/uncertainCondition/unknownCondition/**weight**/**industryTypeRules**/**criticality**）、isHumanApproved、activatedAt |
 | 不变量 | ①已激活版本不可修改；②同一时刻只有一个"当前激活"版本；③任何版本必须经 HumanGate 批准 |
 | 生命周期 | `draft → approved → activated`（旧版本永久保留） |
@@ -300,6 +301,19 @@ Discovery ─→ Industry ─→ Inquiry ─→ Information ─→ Knowledge ─
 
 ### 3.7 Evidence Context（SoT）
 
+> **B1 · 三层语义（必须严格锁死，实现时不得含糊）**
+>
+> | 层 | 回答 | 例 | 是否 SoT |
+> |---|---|---|---|
+> | **Evidence** | 「原始材料里有什么证据？」 | 财报第 37 页写着：2026 年企业客户数 1,200 家 | 是（原始证据） |
+> | **Claim** | 「天查可引用的**原子事实/断言**是什么？」 | "A 公司 2026 年企业客户数为 1,200 家" | 是（原子事实） |
+> | **Belief** | 「基于多个 Claim，我们现在怎么理解这个行业？」 | "企业级 Agent 的商业化目前集中在头部客户" | **否**（认知判断，属 C1 IndustryKnowledge） |
+> | **PoolItem** | —— | —— | **否**：它只是 **Claim 的组织引用**，**不是第四种事实** |
+>
+> **Fact 的定位（此前未讲清，现锁死）**：`Fact` 是**原子事实层内"结构化数值型"的 Claim**（`metric + value + unit + asOf + caliber`），用于可比较的数值断言；`Claim` 承载陈述型断言。**二者同层，Fact 不是独立于 Claim 的第三层**。PoolItem 可引用 Claim 或 Fact。
+>
+> 一句话：`Evidence（证据）→ Claim/Fact（原子事实）→ Belief（认知）`；**PoolItem 只是把原子事实按槽位组织起来的引用**。
+
 #### G1 `Source` / `Material` / `Fragment`（聚合根 = Material）
 | 项 | 内容 |
 |---|---|
@@ -330,10 +344,12 @@ Discovery ─→ Industry ─→ Inquiry ─→ Information ─→ Knowledge ─
 | 项 | 内容 |
 |---|---|
 | Root | InvestmentEvaluation |
-| 内部实体 | DimensionEvaluation |
-| 关键要素 | evaluationRef、subject、**methodologyVersionRef**（评估绑定方法论版本）、dimensionEvaluations[]、**coverage**（已评/证据不足/冲突/不适用的计数）、overallDecision、createdAt |
-| DimensionEvaluation 关键要素 | dimension、status（**evaluated / insufficient_evidence / conflicting / not_applicable**）、**score?（仅 evaluated 时有值）**、rationale、evidenceRefs、**sufficiency**（几条独立来源/几手）、conflictingClaimRefs? |
-| 不变量 | ①**未满足 confirmedCondition ⇒ status=insufficient_evidence 且 score 必须为空**（"不知道"≠"低分"）；②score 必须可回溯到 evidence；③**总分规则、critical 判定、sufficiency 阈值不在本聚合写死**——它们是 Methodology 的属性（v3.1 §7.3） |
+| **四层结构（B2）** | 评估必须**逻辑分层**，禁止揉成一个巨型 Service：<br>① **Evidence Assessment** —— 够不够？（`sufficient / insufficient / conflicting / not_applicable`）<br>② **Dimension Evaluation** —— 够的话是多少？（`score / rationale / evidenceRefs`）<br>③ **Investment Aggregation** —— 12 → 7 汇总<br>④ **Decision** —— 是否满足方法论储备条件 |
+| 内部实体 | DimensionEvaluation（②层） |
+| 关键要素 | evaluationRef、subject、**methodologyVersionRef**、dimensionEvaluations[]、**coverage**（计数）、**sufficiency**（充分度汇总）、**criticalFlags**（关键维度是否达标）、createdAt |
+| DimensionEvaluation 关键要素 | dimension、status（**evaluated / insufficient_evidence / conflicting / not_applicable**）、**score?（仅 evaluated 时有值）**、rationale、evidenceRefs、sufficiency、conflictingClaimRefs? |
+| **Decision（C5：与"证据不足"分离）** | **Decision 不是 Evaluation 的一种状态**：`decisionStatus ∈ { reserve / watch / park / pending }` + `decisionReason` + `decidedAt`。<br>**证据不足 ⇒ `decisionStatus = pending`**（"我还不能决定"），**而不是**把 `insufficient_evidence` 塞进 decision 枚举。<br>即：**`insufficient_evidence` 是知识状态（属 Evaluation），`reserve/watch/park` 是投资决策状态（属 Decision）**。 |
+| 不变量 | ①**未满足 confirmedCondition ⇒ DimensionEvaluation.status=insufficient_evidence 且 score 必须为空**（"不知道"≠"低分"）；②score 必须可回溯到 evidence；③**scoring / decision / aggregation 规则、critical 判定、sufficiency 阈值不在本聚合写死**——属 Methodology 的 Evaluation Policy / Aggregation Policy（v3.1 §7.3）；④**Decision 与 Evaluation 状态不得混用同一枚举** |
 | 现状 | **新建**（现有 `scoring/` 是空壳 + 与 12 维冲突的 7 维 0–100 模型，**不废弃、改为上层**） |
 
 #### 3.8a 评分口径裁决：**两层映射（不是二选一）**
@@ -462,6 +478,8 @@ Industry ──< Company                    ┌───────────
 | I12 | ResearchTarget `isFallback=true` ⇒ caveat 必填；DiligenceQuestion 必须可溯源 | 静默降级、通用模板 |
 | I13 | 占位数据（isRealExternalData=false）不得进入 Knowledge/Evaluation | 假证据污染判断 |
 | I14 | Report/Dossier 是投影，重算不产生新真相 | 报告变 SoT |
+| I15 | **Evidence / Claim（含 Fact）/ Belief 三层语义不得混用**；PoolItem 只是 Claim 的组织引用，**不是第四种事实** | 事实层与认知层串味 |
+| I16 | **Decision 的决策状态（reserve/watch/park/pending）与 Evaluation 的知识状态（insufficient_evidence）不得混用同一枚举** | "不知道"被当成"已决定" |
 
 ---
 
@@ -474,8 +492,9 @@ Industry ──< Company                    ┌───────────
 | `ResearchGap` | open → mitigating → resolved \| accepted |
 | `ResearchTarget` | proposed → selected → contacted → scheduled → visited → completed \| dropped |
 | `TargetCandidate` | eligible → selected \| rejected |
-| `InvestmentEvaluation` | 无状态机（不可变记录）；`overallDecision ∈ {reserve, watch, park, insufficient_evidence}` |
-| `DimensionEvaluation` | status ∈ {evaluated, insufficient_evidence, conflicting, not_applicable} |
+| `InvestmentEvaluation` | 无状态机（不可变记录） |
+| `DimensionEvaluation` | status ∈ {evaluated, insufficient_evidence, conflicting, not_applicable}（**知识状态**） |
+| `ReserveDecision`（评估产物，**独立于** Evaluation 状态） | `decisionStatus ∈ {reserve, watch, park, pending}` + `decisionReason`；**证据不足 ⇒ pending**（**决策状态**，不得与 `insufficient_evidence` 混用） |
 | `PoolSlot` | unknown → partial → sufficient（或 conflicting，可回退到 partial） |
 | `ResearchExperience` | recorded → partOfPattern → promotedToCandidate |
 | `DiscoveryCandidate` | new → standardized → promoted_to_industry \| dismissed |
