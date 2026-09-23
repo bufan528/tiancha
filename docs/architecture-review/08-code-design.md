@@ -18,7 +18,7 @@ Phase A 代码工作（本文详设）
   A3  Pool 重定义（Slot + Item）
   A4  Evaluation（四面结构 + 证据驱动评分）
   A5  Priority / Planning
-  A6  Experience（薄）+ Report/Dossier（投影）
+  A6  Report/Dossier（投影）              ← 投影随 A 具备最小形态；Experience 属 Phase D，不在 Phase A
   A7  CLI / Agent 工具
 （Phase B–E 仅预留）
 ```
@@ -47,7 +47,7 @@ src/
 |---|---|
 | `domain/information-pool.ts` | **重写**：PoolSlot / PoolItem |
 | `domain/evaluation.ts` | 新增：InvestmentEvaluation / DimensionEvaluation / Coverage / Sufficiency |
-| `domain/experience.ts` | 新增：ResearchExperience / ExperiencePattern |
+| `domain/experience.ts` | **Phase D 预留**：ResearchExperience / ExperiencePattern |
 | `domain/chain.ts` | 预留（Phase B）：ResearchChain / ResearchPosition |
 | `domain/research-target.ts` | 预留（Phase B）：ResearchTarget |
 | `domain/question-target-fit.ts` | 预留（Phase B） |
@@ -57,7 +57,7 @@ src/
 | `domain/report.ts` | 新增（投影）：ReportSnapshot / IndustryDossier |
 | `application/evaluation-service.ts` | 新增 |
 | `application/priority-service.ts` | 新增（Priority + NextAction 生成） |
-| `application/experience-service.ts` | 新增（薄） |
+| `application/experience-service.ts` | **Phase D 预留** |
 | `storage/*-repository.ts` | 按聚合增加 |
 | `application/*.test.ts` / `*.test.ts` | 同目录测试 |
 
@@ -102,9 +102,9 @@ src/
 | `information_pool_slot` | slot_id, subject_kind, subject_id, dimension, status, coverage_judgement, created_at, updated_at | A3 |
 | `information_pool_item` | item_id, slot_id, value_text, caliber, as_of, **claim_ref**, source_ref, relation, created_at | A3 |
 | `investment_evaluation` | evaluation_id, subject_kind, subject_id, methodology_version_id, dimension_evaluations_json, coverage_json, overall_decision, created_at | A4 |
-| `research_experience` | experience_id, kind, observation, scope_json, judgement, evidence_refs_json, industry_refs_json, status, pattern_id, created_at | A6 |
-| `experience_pattern` | pattern_id, statement, scope_json, recurrence_count, member_experience_ids_json, first_seen_at, last_seen_at | A6 |
 | `report_snapshot` | report_id, subject_kind, subject_id, methodology_version_id, generated_at, sections_json | A6 |
+| `research_experience` | experience_id, kind, observation, scope_json, judgement, evidence_refs_json, industry_refs_json, status, pattern_id, created_at | **Phase D**（不提前建表） |
+| `experience_pattern` | pattern_id, statement, scope_json, recurrence_count, member_experience_ids_json, first_seen_at, last_seen_at | **Phase D**（不提前建表） |
 
 ### 3.3 废弃 / 迁移
 
@@ -135,7 +135,7 @@ requirementId, questionId, subjectKind, subjectId, dimension, description,
 importance: number,          // 来自 MethodologyDimension（不再恒 5）
 requiredEvidenceType,
 confirmedCondition, uncertainCondition, unknownCondition,   // 新增
-preferredSourceKinds: string[],                              // 新增（Phase B 用）
+preferredPositionKinds: string[],                              // 新增（Phase B 用）
 status, createdAt, updatedAt
 ```
 
@@ -189,7 +189,7 @@ DimensionEvaluation {
 
 > **I10/I11 守护点**：`status !== "evaluated"` ⇒ `score` 必须为 undefined；`coverage` 与 `dimensionEvaluations` 必须一起产出。
 
-### 4.5 ResearchExperience / ExperiencePattern（新增，薄）
+### 4.5 ResearchExperience / ExperiencePattern（**Phase D 预留**；Phase A 不建、不写）
 
 ```
 ResearchExperience {
@@ -232,7 +232,7 @@ IndustryDossier { dossierId, industryId, knowledgeVersion, methodologyVersionId,
 | `KnowledgeProjectionService`（已存在，扩） | `projectFromClaim / reconcilePool / refreshGaps / refreshState / refreshSubject` | 认知投影链 | I2, I3, I4 |
 | `EvaluationService`（新） | `evaluate(subjectKind, subjectId, methodologyVersionId)` → InvestmentEvaluation | 维度评分（证据驱动，不足不出分） | I10, I11, I13 |
 | `PriorityService`（新） | `rank(subjectId)` → 排序后的 (requirement, gap, priority) | Priority 计算 + 生成 NextAction | Rationale 可追溯 |
-| `ExperienceService`（新，薄） | `record(experience)`；`formPatterns()` | 记录经验与模式 | I9 |
+| `ExperienceService`（**Phase D**，薄） | `record(experience)`；`formPatterns()` | 记录经验与模式 | I9 |
 | `MethodologyService`（已存在，扩） | `propose({ rationales, sourceExperienceIds, ... })` | 方法论提案（带经验来源） | I8 |
 
 **`EvaluationService.evaluate` 的核心流程（伪逻辑）**：
@@ -262,7 +262,7 @@ overallDecision = decisionRule(dimensionEvaluations, coverage)        // 规则�
 | `ResearchRepository`（已有，扩） | 增加 `information_pool_slot` / `information_pool_item` CRUD；`upsertRequirement` 写新列 |
 | `KnowledgeRepository`（已有） | 不变（belief 可选加 statement） |
 | `EvaluationRepository`（新） | `upsertEvaluation / getLatestEvaluation(subject)` |
-| `ExperienceRepository`（新） | `upsertExperience / listExperiences / upsertPattern / listPatterns` |
+| `ExperienceRepository`（**Phase D**） | `upsertExperience / listExperiences / upsertPattern / listPatterns` |
 | `ReportRepository`（新，只读投影） | `saveSnapshot / getLatestSnapshot` |
 
 **写入纪律**：
@@ -295,7 +295,7 @@ tiancha research evaluate <行业>          # 产出 InvestmentEvaluation（Qual
 tiancha research pool <行业>              # 展示信息槽位（Slot + Item，含口径）
 tiancha research priority <行业>          # 展示优先级排序（下一步最值得研究什么）
 tiancha research report <行业>            # 生成投影报告（只读）
-tiancha research experience list          # 研究经验与模式（薄）
+tiancha research experience list          # 研究经验与模式（**Phase D**）
 ```
 
 ### Agent 工具新增
@@ -348,10 +348,10 @@ tiancha research experience list          # 研究经验与模式（薄）
 | T-A6 | Evaluation 四面 | 缺任一维度（coverage/sufficiency）构造失败 |
 | T-A7 | Critical 维度 | critical 维度证据不足 ⇒ overallDecision 不得为 reserve |
 | T-A8 | Priority | 排序输入可追溯（importance × uncertainty × 可得性） |
-| T-A9 | Experience | judgement 必填；<N 条不成 Pattern |
+| T-A9 | Experience（**Phase D**） | judgement 必填；<N 条不成 Pattern |
 | T-A10 | 投影 | 生成 report/dossier 后 Claim/Belief/Pool 数量不变 |
 | T-A11 | 占位防护 | 占位 claim 不进 belief、不参与评分 |
-| T-A12 | 回归 | 既有 64 用例全绿 + smoke PASS |
+| T-A12 | 回归 | 既有全量用例全绿 + smoke PASS |
 | T-A13 | 两层映射 | 7 维汇总分由 12 维按贡献权重聚合得出；改方法论版本后映射随之变化；`exit_env` 在 v1 为 `insufficient_evidence` 时不参与总分 |
 
 ---
@@ -367,16 +367,16 @@ tiancha research experience list          # 研究经验与模式（薄）
 | **S3** | ⚠️ **破坏性变更**：Pool 重定义（Slot + Item + 状态词映射 + 老数据迁移 + 双读）——**必须在 S2 之后**（详见 `07 §3.5` 破坏性变更声明） | T-A4, T-A11 绿 |
 | **S4** | EvaluationService（四面 + 证据驱动 + critical） | T-A5, T-A6, T-A7 绿 |
 | **S5** | PriorityService + NextAction 扩展 | T-A8 绿 |
-| **S6** | ExperienceService（薄）+ Report/Dossier 投影 | T-A9, T-A10 绿 |
+| **S6** | Report/Dossier 投影（投影能力随 A 具备最小形态；**Experience 属 Phase D**） | T-A10 绿 |
 | **S7** | CLI + Agent 工具 | 手工验证 + T-A12 绿 |
 
 ---
 
 ## 12. 兼容与回归
 
-- **Phase 1/2A/2B/2C/P0/P1 行为必须保持**（Invariant 8）：S1–S7 每一步都要跑既有 64 用例；
+- **Phase 1/2A/2B/2C/P0/P1 行为必须保持**（Invariant 8）：S1–S7 每一步都要跑**既有全量用例**；
 - `information_pool_entry` 迁移期**双读**（新 Slot 优先，老 entry 兜底），迁移完成后删列；
-- `scoring/` 与 `config/scoring.json` **不接线、不删除**（标记 legacy，避免破坏 legacy host）；
+- `scoring/` 与 `config/scoring.json`：7 维是**上层汇总层的目标形态（不是 legacy、不废弃）**，在 **S4 EvaluationService 落地时接线**（由 12 维按贡献矩阵聚合）；在此之前**暂不接线**。**「legacy」一词只用于旧 host 资产，不得用于此处**；
 - Composition Root 与 Agent Host 的装配方式不变（新 Service 由 host 构造注入）。
 
 ---
