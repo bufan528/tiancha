@@ -18,6 +18,8 @@ import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import { SqliteArtifactStore } from "./storage/artifact-store.js";
 import { ReportRepository } from "./storage/report-repository.js";
 import { ReportService } from "./application/report-service.js";
+import { PriorityService } from "./application/priority-service.js";
+import { PRIORITY_POLICY_V1 } from "./domain/priority-policy.js";
 import { EvaluationService } from "./application/evaluation-service.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
 import { EchoDataProvider } from "./providers/echo-data-provider.js";
@@ -186,5 +188,64 @@ describe("S6: append-only history", () => {
     assert.equal((latest as IndustryDossier).dossierId, b.dossierId);
     // both are retrievable by id
     assert.ok(reports.getProjection(a.dossierId));
+  });
+});
+
+describe("S6-R1: the projection READS the persisted priority — it never recomputes", () => {
+  test("the report reflects the PERSISTED priority (proves it reads, not recomputes)", async () => {
+    const { db, repo, sid } = await seed();
+    const target = repo.listNextActions(sid).filter((a) => a.status === "open")[0];
+    assert.ok(target, "an action with a persisted priority exists");
+
+    // rewrite the persisted priority to a value no policy could ever produce
+    repo.upsertNextAction({ ...target, priority: 42, rationale: "tampered rationale" });
+
+    const dossier = new ReportService(db.db).generateDossier(sid);
+    const line = dossier.sections.priority.find((p) => p.gapId === target.params.gapId)!;
+    assert.ok(line, "the line is present");
+    assert.equal(line.score, 42, "the report shows the PERSISTED score");
+    assert.equal(line.rationale, "tampered rationale", "…and the PERSISTED rationale");
+  });
+
+  test("changing the PriorityPolicy changes rank() but NOT the projection", async () => {
+    const { db, sid } = await seed();
+    const persisted = new PriorityService(db.db).currentPriorities(sid);
+    assert.ok(persisted.length > 0, "S5 has persisted priorities");
+
+    // a policy that WOULD produce different scores if anything recomputed
+    const extreme = new PriorityService(db.db, {
+      ...PRIORITY_POLICY_V1,
+      versionId: "prio-s6r1-extreme",
+      weights: {
+        importance: 1,
+        criticality: 0,
+        uncertainty: 0,
+        coverageGap: 0,
+        acquisitionValue: 0,
+        acquisitionCost: 0,
+      },
+    });
+    const persistedByGap = new Map(persisted.map((p) => [p.gapId, p.score]));
+    const wouldDiffer = extreme.rank(sid).filter((p) => persistedByGap.get(p.gapId) !== p.score);
+    assert.ok(wouldDiffer.length > 0, "the injected policy WOULD give different scores");
+
+    // …yet the projection still carries exactly the persisted values + version
+    const dossier = new ReportService(db.db).generateDossier(sid);
+    assert.deepEqual(
+      dossier.sections.priority.map((p) => p.score),
+      persisted.map((p) => p.score),
+      "the projection is unaffected by the current policy",
+    );
+    assert.ok(dossier.sections.priority.every((p) => p.policyVersionId === "prio-v1"));
+  });
+
+  test("with no persisted priority nothing is fabricated (the section is empty)", async () => {
+    const { db, repo, sid } = await seed();
+    for (const a of repo.listNextActions(sid)) {
+      repo.upsertNextAction({ ...a, status: "cancelled" });
+    }
+    const dossier = new ReportService(db.db).generateDossier(sid);
+    assert.equal(dossier.sections.priority.length, 0, "no persisted priority -> empty section");
+    assert.ok(dossier.sections.gaps.length > 0, "gaps still exist — they simply have no priority");
   });
 });

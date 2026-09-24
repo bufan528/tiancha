@@ -127,6 +127,41 @@ export class PriorityService {
     return this.policy.actionKindByGapType[gapType];
   }
 
+  // ---- READ-ONLY face (S6-R1) ------------------------------------------------
+
+  /**
+   * S6-R1: READ-ONLY view of the priorities ALREADY produced and persisted by S5.
+   *
+   * `refreshNextActions` writes the factor breakdown + policy version onto every action,
+   * so this rebuilds ResearchPriority from what is already stored — it recomputes NOTHING
+   * and consults NO policy. Projection consumers (Report/Dossier) MUST use this: calling
+   * `rank()`/`computeFor()` at projection time would recompute the priority under the
+   * CURRENT rules and break snapshot semantics (a report must show the priority OF ITS TIME).
+   *
+   * Actions without a persisted breakdown are skipped — nothing is fabricated.
+   */
+  currentPriorities(subjectId: string): ResearchPriority[] {
+    const repo = new ResearchRepository(this.db);
+    const out: ResearchPriority[] = [];
+    for (const a of repo.listNextActions(subjectId)) {
+      if (a.status !== "open") continue;
+      const gapId = a.params?.gapId;
+      const factors = a.params?.priorityBreakdown;
+      const policyVersionId = a.params?.priorityPolicyVersionId;
+      if (typeof gapId !== "string" || !factors || typeof policyVersionId !== "string") continue;
+      out.push({
+        gapId,
+        subjectKind: a.subjectKind,
+        subjectId: a.subjectId,
+        policyVersionId,
+        score: a.priority,
+        factors: factors as ResearchPriority["factors"],
+        rationale: a.rationale,
+      });
+    }
+    return out;
+  }
+
   // ---- helpers ---------------------------------------------------------------
 
   private factor(raw: number, normalized: number, weight: number, subtract = false): PriorityFactor {

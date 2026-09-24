@@ -175,9 +175,12 @@ export class ReportService {
         }
       : null;
 
-    // 优先级 = READ-ONLY presentation of the S5 priorities (never recomputed here).
+    // 优先级 (S6-R1) = a READ of the priority S5 has ALREADY persisted (stored on the
+    // actions). This must never call rank()/computeFor(): recomputing at projection time
+    // would make the snapshot reflect the CURRENT rules instead of the state it was taken
+    // from. `currentPriorities()` is the read-only face; it consults no policy.
     const priority: PriorityLine[] = new PriorityService(this.db)
-      .rank(subjectId, subjectKind)
+      .currentPriorities(subjectId)
       .map((p) => ({
         gapId: p.gapId,
         score: p.score,
