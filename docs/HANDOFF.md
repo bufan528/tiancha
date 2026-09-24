@@ -1,8 +1,8 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-23 重写** · HEAD `181299b` · 远端 `https://github.com/bufan528/tiancha`（main，已同步）
-> 本文档已与真实代码状态**逐项核对**（`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **64 tests 全过** · `research smoke` PASS）。
-> 旧版 HANDOFF 已过时（写的是 `5375000`、2C 未接线、方法论纯静态），本版取代它。
+> **2026-09-24 全面重写** · HEAD `bcbe453` · 远端 `https://github.com/bufan528/tiancha`（main，已同步）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **88 tests 全过（27 suites）** · `research smoke` PASS。
+> 取代此前所有版本的 HANDOFF。**README.md 已落后（仍写 Phase 2C），以其为准的是本文件。**
 
 ---
 
@@ -10,369 +10,455 @@
 
 | 你的目的 | 直接看 |
 |---|---|
-| 搞清楚「要做成什么」 | §1 定位原则、§2 需求对照 |
-| 想知道「现在做到哪了 / 哪些是空的」 | §2 缺口表、§9 Phase 进度、§11 技术债 |
-| 上手开发 | §4 目录、§5 命令、§12 规范、§14 接手第一步 |
-| 改数据模型 | §7 数据模型 |
-| 防止踩红线 | §3 依赖红线、§10 八条 Invariant |
+| 弄清「天查到底要做什么」 | §1（含**用户的完整原始需求**） |
+| 弄清「现在做到哪了」 | §2 真实状态、§9 实施进展 |
+| 理解「为什么这样设计」 | §3 架构三层（业务 v3.1 → 领域模型 → 代码设计） |
+| 改代码前防踩红线 | §8 不变量、§10 关键决策、§12 踩坑 |
+| 找工作 | §4 目录、§6 命令面、§13 文档索引 |
 
 ---
 
-## 1. 项目定位、产品愿景与设计原则
+## 1. 项目定位与完整需求
 
-Tiancha 是 **local-first、长期记忆、自然语言为入口的一级市场 Research Intelligence Agent**。
+### 1.1 一句话
 
-它**不是**通用聊天 Agent、不是 Pi 改版、不是 PDF/RAG/自动报告工具。用户在和「天查」这一个研究伙伴对话，研究系统（ResearchState / Pool / Gap / TaskGraph / Agent 名）全部藏在后面。
+**天查是一个 local-first、长期记忆、自然语言为入口的一级市场投资研究 Agent**——不是通用聊天 Agent、不是 Pi 改版、不是 PDF/RAG/报告生成器。
 
-### 1.1 核心飞轮
+**天查的本质定义（用户 5 次迭代后锁定）**：
 
-```
-发现机会 → 当前研究状态 → Research Gap → Research Question → Research Target
-→ Diligence 准备 → 人工调研 → 碎片输入 → Evidence/Claim/Event
-→ Knowledge / Information Pool 更新 → ResearchState 更新 → 新 Gap → 下一轮
-```
+> **天查 = 两个知识体系驱动的长期投资研究学习系统。**
 
-### 1.2 设计原则（不可违背）
+判据只有一条：**用得越久，它研究一个行业的速度、深度、判断准确度是否在提升？**
 
-- **自然语言优先**：不向普通用户暴露 ResearchState / Pool / TaskGraph / Agent 名 / service 名。
-- **local-first**：结构化实体、状态、事件、Claim/Evidence metadata 存 SQLite；原始材料/报告/录音/Artifact 存文件系统。
-- **evidence-first**：Evidence/Claim/Fact/Event 是 Source of Truth；Report/Profile/Dossier 是 Snapshot（可重算）。
-- **单向链路**：`Knowledge → InformationPool → ResearchState → Gap`；**State 永不回写 Pool**，禁止 Pool→State→Pool 循环。
-- **历史永不覆盖**：新旧 Evidence/Claim/Belief 并存并比较（SUPPORT/REVISE/CONFLICT/SUPERSEDE）。
-- **Conflict 不选边**：冲突双方全保留，状态 = open，不自动判对错。
-- **Methodology Human Gate**：方法论只能「提案 → 人批准 → 激活新版本」，模型**永不**自动改方法论。
+### 1.2 用户的完整工作链路（原始需求 · 25 步）
 
----
+用户（一级市场投资人）的真实工作流程，逐条记录：
 
-## 2. 需求 ↔ 架构对照（本次第一手复核）
+**A. 发现与筛选**
+1. 自动化搜集高价值行业研究报告、新闻、数据
+2. 从资料中识别行业/赛道，建立标准化 Industry
+3. 对行业补全多维度信息（必要时接入 Wind）
+4. 按一套**经人工确认的投资研究方法论**，从多维度评估行业
+5. 将有投资价值/值得继续研究的行业纳入**储备体系**
 
-> 本节是「需求与架构是否有出入」的结论。判断原则：把用户的**业务链路**逐条映射到**代码里的承载物**，标注真实状态。
+**B. 长期知识维护**
+6. 为每个潜力行业**长期维护行业研究知识**
+7. 持续接收新的行业报告、研究资料、调研资料
+8. 比较新旧信息，发现新的事实/观点/修正/冲突/未知
+9. 根据当前信息缺口决定下一步研究什么
 
-### 2.1 业务六步链路
+**C. 调研准备（用户最关心的主线）**
+10. 针对潜力行业设计**研究链条**：上游、下游、核心企业、客户、贸易商、咨询机构、专家
+11. 从产业链各环节选择适合的**调研对象**
+12. 判断某对象**为什么适合回答某些问题、为什么不适合回答另一些**
+13. 最佳对象无法联系但问题重要时，允许**次优对象**，并显式标注"非最佳信息来源，需降低置信度并交叉验证"
+14. 根据选定对象生成**针对性的调研准备材料**（目的 / 对象简介 / 行业提问 / 企业提问）
 
-| # | 需求 | 代码承载物 | 真实状态 | 出入 |
-|---|---|---|---|---|
-| ① | 自动化信息搜集，识别赛道、提取行业名称 | **无**（行业名靠 `tiancha industry ingest` 手动喂） | ❌ 未实现 | 飞轮第一环是手动的，产品目前是「演示级」而非「能跑」 |
-| ② | 借助 Wind 等数据源补全行业各维度信息 | `ports/data-provider.port.ts`（接口就绪）+ `providers/echo-data-provider.ts`（占位） | 🟡 接口在，实现是占位 | Wind 未接；`src/wind-bridge.ts` 是 legacy mock，非当前路径 |
-| ③ | 多维标准打分，有价值纳入储备体系 | `industry.reserve_status` 字段（在，未写业务逻辑）+ `config/scoring.json`（legacy） | ❌ 打分模型未实现 | `scoring/` 是空壳 |
-| ④ | 信息沉淀机制，形成随新信息动态调整的行业档案 | `IndustryKnowledge / KnowledgeBelief / KnowledgeConflict` + 四种 Evolution + `reconcilePool/refreshGaps/refreshState` | ✅ **已实现并接线** | 无（见 §2.3 的「档案」定位澄清） |
-| ⑤a | 调研准备：推荐调研链条（上游/下游/贸易商/咨询机构）+ 企业（龙头）+ 针对性提纲 | `industry_chain` 维度（12 维之一）+ `company` 表（**零调用**）+ `TargetCandidate`（占位） | ❌ 未实现 | **用户最关心的主线，目前只有「回填」这一半** |
-| ⑤b | 调研回填：碎片信息 → 深度报告 → 回填信息池 | `OpportunityDiscoveryService.ingestClaims`（碎片 → Claim → 投影 → 刷新）+ `research_source`（溯源） | 🟡 回填已实现；**报告生成未实现** | `evidence/evidence-extractor.ts` 是空壳；无「录音稿→报告」链路 |
-| ⑥ | 基于信息池对重点标的形成研究规划建议 | `next_action` 表 + `refreshNextActions`（Gap→NextAction 幂等） | 🟡 Gap→NextAction 已实现；**研究规划未实现** | `planning/` 是空壳 |
+**D. 调研回填**
+15. 调研结束后用户提供**碎片化材料**（如会议录音文字稿）
+16. 从原始材料中提取 **Fragment → Evidence → Claim**
+17. 新 Claim 与既有 Knowledge 比较
+18. 判断 **SUPPORT / REVISE / CONFLICT / SUPERSEDE** 认知变化
+19. 更新 **Information Pool**
+20. 更新 **Research State**
+21. 重新发现 **Research Gap**
+22. 给出下一步研究建议
 
-### 2.2 两大知识体系（用户明确点名的项目灵魂）
+**E. 产出与学习**
+23. 基于 Knowledge + Evidence + Claims + Conflict + State + Methodology 生成**高质量调研报告**
+24. 报告重要判断必须能**追溯到 Evidence / 原始材料**
+25. 长期研究经验可形成 **Methodology Candidate**，但任何方法论变化**必须经 Human Gate**
 
-| 体系 | 用户表述 | 代码承载物 | 状态 |
-|---|---|---|---|
-| ① **专业投资知识体系**（怎么筛选好行业） | 「要能通过我提供的资料，逐步提升行业投资能力」 | `methodology` + `methodology_candidate` + `human_gate` 表 + `MethodologyService` + `config/methodology-v1.json`（12 维 Human-approved baseline） | ✅ **已实现**（版本化 + Human-in-the-loop，模型只能提案） |
-| ② **行业研究知识体系**（怎么把一个行业研究明白） | 「每个潜力行业各维护一套知识库，越沉淀越懂这个行业」 | `industry_knowledge / knowledge_belief / knowledge_conflict` + 四种 Evolution + 全历史保留 | ✅ **已实现并接线**（ingest 与回填都会沉淀） |
+### 1.3 用户明确的"两个知识体系 + 两个 Loop"
 
-### 2.3 术语澄清（容易误读，务必对齐）
+**两个知识体系**（不是平行数据库，而是相互反馈）：
 
-用户口语里的三个词，在代码里跨了不同层次，**不是同一个东西**：
-
-| 口语 | 代码里的真实所指 | 说明 |
+| 体系 | 回答 | 存什么 |
 |---|---|---|
-| 「信息池」 | `information_pool_entry`（**覆盖度状态**：维度框好没有、填了没有）+ `Claim/Evidence`（**信息内容**） | 池子是「框架 + 覆盖状态」，**不是**信息本身 |
-| 「知识库」 | `industry_knowledge / knowledge_belief`（**认知**：对某维度的判断 + 演变历史） | 是「理解」，不是「资料堆」 |
-| 「行业档案」 | **不含独立存储** —— 它是「当前认知的视图/快照」，随时可重算 | 见 §13 决策 |
+| **① 专业投资知识体系**<br>Investment Methodology | 「**应该怎么研究**一个行业、判断一个行业、判断一家企业？」 | 研究/拆解方法、产业链分析方法、不同行业类型该重点看什么、问题→信息映射、证据→判断映射、成功/失败经验、方法修正 |
+| **② 行业研究知识体系**<br>Industry Research Knowledge | 「**这个具体行业**到底是什么情况？」 | 行业结构、产业链、上下游、客户、竞争、模式、技术、市场空间（含口径）、关键变量/企业、专家与咨询机构观点、政策、事件、历史变化、**相互矛盾的观点** |
 
-**信息内容的 Source of Truth 是 `Claim`（存 `artifacts.sqlite`）**，不是池子。
+**两个 Loop**（天查与普通 Research Agent 的根本区别）：
 
-### 2.4 一条容易误解的「方向」
+- **内环**（把行业研究得越来越透）：`Knowledge → Gap → Priority → Question → Strategy → Target → Research → Evidence → Knowledge`
+- **外环**（把研究方法变得越来越好）：`Research → Research Experience → Experience Pattern → Methodology Candidate → Human Gate → Methodology → 下一轮`
 
-用户表述：「信息池提供基础信息，知识库基于这些基础信息不断完善对行业的理解。」
-代码里存在箭头：`Knowledge → InformationPool`。
+### 1.4 四类知识（v3.1 锁定）
 
-**这两者不矛盾，是不同层次的两件事**：
+| # | 类型 | 回答 |
+|---|---|---|
+| ① | **投资方法论知识** | 「应该怎么研究？」（跨行业） |
+| ② | **行业事实 / 信息** | 「这个行业现在发生了什么？」 |
+| ③ | **行业认知** | 「据这些信息，我们怎么理解这个行业？」（只对本行业） |
+| ④ | **研究经验** | 「我们从研究过程中发现，以后应该怎么研究？」（跨行业、可能改方法论） |
 
-```
-Claim/Evidence（信息内容，SoT）
-      │ projectFromClaim
-      ▼
-KnowledgeBelief（认知 + 演变历史）   ←── 用户说的「知识库」
-      │ reconcilePool
-      ▼
-InformationPool（覆盖度状态）        ←── 用户说的「信息池」的「框架/进度」面
-      │ refreshState
-      ▼
-ResearchState（快照） → ResearchGap（缺口） → NextAction（下一步）
-```
+> **② 与 ④ 的分界是极易做错处**："这个行业的需求被高估了" 是 ③；"**用厂商披露客户数判断需求，在这类行业普遍无效**" 才是 ④。
 
-- 「信息 → 理解」是 `Claim → Belief`（认知形成）；
-- 「有了确信的认知 → 更新覆盖度」是 `Knowledge → Pool`（`reconcilePool`：某维度有 `confirmed` belief，池子才从 `unknown` → `partial`）。
+### 1.5 术语澄清（用户反复强调，必须对齐）
 
-### 2.5 结论
+| 口语 | 代码里的真实所指 |
+|---|---|
+| 「**信息池**」 | `information_pool_slot` + `information_pool_item`（**信息组织层**，item 必须指向 Claim） |
+| 「**知识库**」 | `industry_knowledge` / `knowledge_belief`（**认知** + 演变历史） |
+| 「**行业档案**」 | **不含独立存储**——它是"当前认知的视图/快照"，可重算 |
+| 信息的**内容** | 唯一真相是 `Claim`（存 `artifacts.sqlite`），不是池子 |
 
-**架构与需求没有方向性冲突。** 现有缺口**全部是「尚未实现的 Phase」**（①③⑤a⑤b 报告生成⑥ 规划），不是设计走样；已实现的 ④ 与两大知识体系与需求高度吻合。
+**数据流**：`Claim（SoT）→ Belief（认知）→ Pool（覆盖度/组织）→ State（快照）→ Gap（缺口）`。
 
-真正需要钉住的只有两点（都属「表述/边界」而非 bug）：
-1. **术语层次**（§2.3）必须在文档与对话里统一，否则会出现「以为池子存信息」的误用；
-2. **飞轮第一环（①）缺失**导致系统目前所有入口都是「人先给行业名」，这是与「工作流自动化」诉求差得最远的一环。
+### 1.6 设计红线（用户"绝对禁止"清单）
+
+1. 不推倒重做 Pi Runtime / Tiancha Runtime ✚ 不重实现 Agent Loop
+2. Research Core 不得依赖 Pi Coding Agent
+3. 不把 InformationPool 做成 Knowledge
+4. 不把 Report 做成 Knowledge SoT
+5. 不让 State 回写 Pool
+6. 不让 Knowledge 静默覆盖历史 Claim
+7. Conflict 必须保留（不选边）
+8. 不让 Agent 自动修改 Methodology
+9. 不因为"未来需要 Experience"就现在造空壳 Experience 表
+10. 不把 **Investment Target** 和 **Research Target** 混为一谈
+11. 不把"公司很优秀"和"公司适合回答某个问题"混为一谈
+12. 不把"信息未知"和"行业表现差"混为一谈
+13. **不用 LLM 随便生成 0–100 分作为投资判断**
+14. 不重复创建同一行业的 ResearchQuestion / Requirement
+15. 不为完成任务提前实现不成熟的 Report / Web / Wind
 
 ---
 
-## 3. 整体架构与依赖红线
+## 2. 当前真实状态（代码事实，非文档推测）
+
+### 2.1 已实现并测试通过
+
+| 能力 | 关键代码 | 证据 |
+|---|---|---|
+| Runtime 契约（Run/Round/TaskGraph/Attempt/Artifact/EventStore/ChildSession/HumanGate） | `runtime/*` | smoke PASS（child-session=real） |
+| 2A 研究记忆底座（11 表 + Methodology v1 + Echo + 链路） | `storage/research-db.ts`、`application/opportunity-discovery-service.ts` | T1–T9 |
+| 2B Agent 主入口（REPL / ask + 9 个研究工具 + 语义选择） | `src/agent/*` | `host.test.ts` |
+| 2C Knowledge 投影（三表 + 四种 Evolution + 单向链路 + 已接线） | `application/knowledge-projection-service.ts` | `knowledge*.test.ts` |
+| P0 沉淀/回填接线（Echo 不污染、`ingestClaims`、Gap→NextAction 幂等、溯源） | 同上 + `storage/` | `foundation.test.ts` |
+| P1 方法论版本化 + Human Gate（candidate/token/CLI/提案工具） | `application/methodology-service.ts`、`src/cli/tiancha.ts` | `methodology-service.test.ts` |
+| **S1** Methodology Extension + E1（weight/criticality + Requirement 承接方法论条件） | `domain/methodology.ts`、`domain/information-requirement.ts` | T-A1/T-A2 |
+| **S2** 幂等 identity（确定性 key + match-or-create） | `domain/identity.ts`、`opportunity-discovery-service.ts` | T-A3–T-A8 |
+| **S3** Pool 迁移 Entry → Slot + Item（identity 保持） | `domain/information-pool.ts`、`storage/research-db.ts` | S3-T1 等 5 个 |
+| **S3-R1** PoolItem 历史保留 + relation + 迁移原子性 | `knowledge-projection-service.ts`、`research-repository.ts` | S3-R1 5 个 |
+| **S4** EvaluationService 四面模型（policy 驱动 + critical 门控） | `application/evaluation-service.ts`、`domain/evaluation*.ts` | 7 个 |
+
+### 2.2 只有 Domain Contract（有类型、无实现/无闭环）
+
+`TargetCandidate` / `ScreeningRun` / `ScreeningRule` / `TargetDecision`（`domain/target-candidate.ts`，**零调用**）；`Evidence` / `EvidenceAssertion`（无表无写入）；`Fact`；`Company` / `CompanyIndustryRelation`（有表**零调用**）；`DocumentFragment`；`Run`/`Round`/`Task`（未落库）。
+
+### 2.3 只有 Placeholder
+
+`evidence/evidence-engine.ts`（返回 `[]`）、`evidence/evidence-extractor.ts`（返回 `0`）、`planning/research-planner.ts`（只 interface）、`dossier/`、`scoring/`、`scheduler/`、`agents/*`（5 个骨架）。
+
+### 2.4 未实现（属路线图，不是缺陷）
+
+**调研准备（链条/对象/适配/提纲）**、**Field Research（Material/Fragment/Evidence/Claim）**、**报告**、**Priority**、**自动发现行业 + Wind**、**Research Experience** —— 见 §9。
+
+### 2.5 验证基线
+
+```
+npx tsc --noEmit                             → exit 0
+npm --prefix packages/research run typecheck → exit 0
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts → 88 tests / 88 pass / 0 fail
+node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
+```
+
+---
+
+## 3. 架构设计（三层文档体系）
+
+### 3.1 分层与依赖红线（实测）
 
 ```
 Composition Root: src/cli/tiancha.ts   ← 唯一装配点，唯一 import @earendil-works/pi-coding-agent
         │
 TianchaAgentHost (src/agent/tiancha-agent-host.ts)
-   ├─ 交互 REPL / askOneShot（共享同一套 Agent 装配）
+   ├─ 交互 REPL / askOneShot（共享同一装配）
    ├─ 天查系统提示 + 9 个研究 customTools（src/agent/research-tools.ts）
    └─ 经 TianchaAgentSessionFactory → Pi Runtime（复用，不重写 Loop/Session）
-        └─ Research Core (packages/research) 仅依赖 Port，绝不 import coding-agent
+        └─ Research Core (packages/research)：仅依赖 Port，绝不 import coding-agent
 ```
 
-依赖方向（gate 强制）：`pi-ai ← agent-core(coding-agent) ← research-core ← composition-root`。
-
+依赖方向：`pi-ai ← agent-core(coding-agent) ← research-core ← composition-root`。
 **实测**：`packages/research/src` 全树 `@earendil|coding-agent|pi-coding` 命中均为**注释**，真实 import = 0。
+
+### 3.2 业务与智能模型（`06-...v3.1-final.md`）
+
+十四节完整模型。要点：
+
+- **四类知识**（§1.4）+ **两个 Loop**（§1.3）；
+- **Information Pool = 信息组织层，不是第二套 SoT**（item 必须指向 Claim）；
+- **Research Priority 在内环**（Gap → Priority → Question），综合：对投资判断的重要程度 × 当前不确定程度 × 获取价值/成本；
+- **Investment Evaluation 四面**：Quality / Coverage / Sufficiency / Critical；**总分算法不在此拍死，由 Methodology 定义**；
+- **Report = Projection**（横向能力，非末端 Phase）；**自动发现行业 = 入口能力**（业务不可后置，工程可后置）；
+- **Experience 是方法论与行业知识之间的缓冲层**（回答"是行业特殊，还是方法有问题"），**防过拟合**：单例只记经验，模式才改方法，且必须 Human Gate。
+
+### 3.3 领域模型（`07-domain-model-design.md`）
+
+**10 个限界上下文**：Methodology / Industry / Inquiry / Information / Knowledge / Evidence / Strategy / Evaluation / Experience / Discovery（+ Reporting 横向投影）。
+
+**关键聚合**：`MethodologyVersion`(+Dimension) · `MethodologyCandidate` · `HumanGate` · `Industry` · `Company` · `ResearchChain`(+Position)† · `ResearchQuestion`(+Requirement) · `ResearchGap` · `NextAction` · `InformationPool`(Slot+Item) · `ResearchState` · `IndustryKnowledge`(Belief/Conflict) · `Source`/`Material`/`Fragment`† · `Evidence`/`Claim`(SoT) · `InvestmentEvaluation` · `ResearchTarget`† · `TargetCandidate` · `QuestionTargetFit`† · `DiligencePreparation`† · `ResearchExperience`†/`ExperiencePattern`† · `DiscoveryCandidate`† · `ReportSnapshot`/`IndustryDossier`（投影）
+（† = 尚未落地，属 Phase B–E）
+
+**14 条全局不变量（I1–I14）+ B1/2/3、C5** 见 §8。
+
+### 3.4 代码设计（`08-code-design.md`）
+
+Phase A 详细设计 + S1–S7 小步拆分。**注**：S1–S4 已实现；08 里对该进度的描述需按 §9 阅读。
 
 ---
 
-## 4. 目录结构
+## 4. 目录结构（现状）
 
 ```
 src/
-  cli/tiancha.ts                Composition Root；无参数进 Agent REPL，另含 ask/industry/state/methodology/session/research 子命令
+  cli/tiancha.ts                Composition Root；无参数进 Agent REPL + ask/industry/state/methodology/session/research
   agent/tiancha-agent-host.ts   TianchaAgentHost（startInteractive / askOneShot）
-  agent/research-tools.ts       9 个研究工具（语义工具选择，无关键词分类器）
-  agent/host.test.ts            T6/T7 + 方法论工具安全断言
-
-  # ---- legacy（Pi 工作台 v2.0，见 §11，不可再作为默认入口）----
-  server.ts / store.ts / invest-extension.ts / wind-bridge.ts / agent-factory.ts
-  tools/  （material_ingest / memory_search / pool_list / profile_read / profile_write / wind_query）
-web/  data/  tools/wind_query.py  （旧 Web 界面 + JSON 仓储 + Wind 桥，legacy）
+  agent/research-tools.ts       9 个研究工具（主模型语义选择，无关键词分类器）
+  agent/host.test.ts
+  # legacy（Pi 工作台 v2.0，见 §11）：server.ts / store.ts / invest-extension.ts / wind-bridge.ts / agent-factory.ts / tools/*
+web/  data/  tools/wind_query.py   （旧 Web + JSON 仓储 + Wind 桥，legacy）
 
 packages/research/src/
-  domain/           领域对象（Industry/Company/Question/Requirement/Gap/Pool/State/Claim/Evidence/Fact/
-                    Methodology/MethodologyCandidate/IndustryKnowledge/KnowledgeBelief/KnowledgeConflict/HumanGate…）
-  ports/            Port 抽象（AgentSessionFactory/EventBus/Session/DataProvider/ModelResolver…）
-  storage/          research-db.ts（建表 + PRAGMA 迁移）、research-repository.ts、knowledge-repository.ts、
-                    artifact-store.ts、research-event-store.ts
-  application/      methodology-service.ts（P1）、knowledge-projection-service.ts（2C）、
-                    opportunity-discovery-service.ts（2A + 回填）
-  providers/        echo-data-provider.ts（占位）
-  runtime/          tiancha-runtime / task-engine / orchestrator / child-session / human-gate / model-router / event-adapter
-  migration/        pi-to-tiancha、readonly-session-manager
-  methodology/      methodology-v1.ts（12 维 baseline 常量）
-  agents/ planning/ scheduler/ evidence/ dossier/ scoring/   ← 空壳占位（Phase 3+）
-  *.test.ts         13 个测试文件（64 个用例）
+  domain/          33 个领域文件（含 identity.ts / evaluation.ts / evaluation-policy.ts / information-pool.ts）
+  ports/           Port 抽象（AgentSessionFactory/EventBus/Session/DataProvider/ModelResolver…）
+  storage/         research-db.ts（19 表 + PRAGMA 迁移）、research-repository.ts、knowledge-repository.ts、
+                   artifact-store.ts、research-event-store.ts
+  application/     evaluation-service.ts(S4) · knowledge-projection-service.ts(2C) ·
+                   methodology-service.ts(P1) · opportunity-discovery-service.ts(2A + 回填)
+  providers/       echo-data-provider.ts（占位）
+  runtime/         tiancha-runtime / task-engine / orchestrator / child-session / human-gate / model-router / event-adapter
+  migration/       pi-to-tiancha、readonly-session-manager
+  methodology/     methodology-v1.ts（12 维 baseline）
+  agents/ planning/ scheduler/ evidence/ dossier/ scoring/   ← 空壳（Phase B+）
+  *.test.ts        16 个测试文件（88 用例）
 
-config/methodology-v1.json      12 维 Human-approved baseline（**镜像文件，运行时不读**，见 §11）
-config/scoring.json             旧评分模型配置（legacy）
-docs/phase0/                    P0 设计（01–09）
-docs/architecture-review/       Gap Report / Blueprint v1/v2/v2.1-final-lock / rebaseline v3.1
-docs/phase2c/implementation-design.md
-docs/PROJECT_STATUS.md          旧状态报告（部分已过时，见 §11）
-docs/HANDOFF.md                 本文件
-vendor/pi/                      Pi 源码快照（MIT，1827 文件）
-samples/                        示例材料
+config/methodology-v1.json     12 维 Human-approved baseline（mirror；含 weight/criticality）
+config/scoring.json            旧评分模型配置（legacy，**不接线**）
+docs/                          见 §13
+vendor/pi/                     Pi 源码快照（MIT，1827 文件）
+samples/                       示例材料
 ```
 
 ---
 
 ## 5. 环境、安装、构建、运行、验证
 
-- **Node ≥ 22.19**（本机实测 v24.13.0）。
-- 依赖：`@earendil-works/pi-coding-agent ^0.86.1`、`@earendil-works/pi-ai ^0.86.1`、`typebox ^1.3.27`；dev：`tsx`、`esbuild`、`typescript`。
-
-```powershell
-npm install
-npx tsc --noEmit                                  # 根类型检查
-npm --prefix packages/research run typecheck      # 研究包类型检查
-npm run build:cli                                 # esbuild → dist/cli/tiancha.js
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts
-node --import tsx src/cli/tiancha.ts research smoke   # 预期 PASS (child-session=real)
-```
-
-- `npm run tiancha` = `node --import tsx src/cli/tiancha.ts`。
-- 配置目录 `~/.tiancha/`：`agent/`（Pi 会话/扩展）、`db/tiancha.sqlite`（研究库）、`db/artifacts.sqlite`（Claim/Evidence blob）。
-- 凭据 `.pi/auth.json`、`.pi/models-store.json`、`.tiancha/`、`*.sqlite`、`dist`、`node_modules` 均 gitignore。
-- **PowerShell 提示**：esbuild/smoke 会写 stderr（含 SQLite ExperimentalWarning），PowerShell 报 `NativeCommandError` 属**正常现象**，不是失败。
-
----
-
-## 6. CLI 命令与研究工具
-
-### 6.1 CLI（`tiancha`）
-
-| 命令 | 说明 |
-|---|---|
-| `tiancha`（无参数） | 天查 Agent 交互 REPL（**产品主入口**） |
-| `tiancha ask "<NL>"` | 非交互单轮（与 REPL 共享同一装配） |
-| `tiancha industry ingest <file> --name <行业>` | 行业材料入库 |
-| `tiancha industry show <行业>` / `state show <行业>` | 查看行业概况 / ResearchState |
-| `tiancha methodology show` | 查看**当前已激活**的方法论版本与维度 |
-| `tiancha methodology list` | 方法论版本历史 + 待审批提案 |
-| `tiancha methodology propose <file.json> --rationale <文本> [--by agent\|user]` | 提出方法论修订提案（**不生效**），输出一次性审批 token |
-| `tiancha methodology decide <candidateId> (--approve\|--reject) --operator <名> [--comment <文本>] [--token <token>]` | **人工**审批；approve 才激活新版本 |
-| `tiancha research smoke` | 运行时自检 |
-| `tiancha session readonly <path>` | 只读恢复会话 |
-
-### 6.2 研究 customTools（9 个，主模型语义选择）
-
-`research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list`（2A/2B）
-`+ research_methodology_show / research_methodology_list / research_methodology_propose`（P1）
-
-> **重要**：**没有** `research_methodology_decide`。模型只能**提案**，激活必须由人通过 CLI 完成（Invariant 6）。审批 token 从不暴露给模型。`host.test.ts` 有硬断言钉住这条。
-
----
-
-## 7. 数据模型
-
-### 7.1 SQLite 表（同库 `~/.tiancha/db/tiancha.sqlite`，共 16 张）
-
-**2A 业务表（11）**：`industry`、`company`、`research_question`、`information_requirement`、`research_gap`、`information_pool_entry`、`research_state`、`research_source`、`research_document`、`next_action`、`methodology`。
-
-**2C 知识表（3）**：`industry_knowledge`、`knowledge_belief`、`knowledge_conflict`。
-
-**P1 演进表（2）**：`methodology_candidate`、`human_gate`。
-
-加列均走 **PRAGMA table_info 预检查**（`industry.current_knowledge_id`、`methodology.dimensions_json`），try/catch 仅并发兜底。
-Claim/Evidence blob 存 `artifacts.sqlite`。
-
-### 7.2 四类长期资产
-
-1. **Investment Methodology**（如何研究）：`methodology` + `methodology_candidate`；12 维 Human-approved baseline；**版本化、Human-gated**。
-2. **Industry/Company Knowledge**（知道什么）：`industry_knowledge / knowledge_belief / knowledge_conflict`。
-3. **Information Pool / State**（需要什么·已知多少）：`information_pool_entry` + `research_state`。
-4. **Research Experience**（未来一等概念，本阶段不实现）：未来由 Research Event 派生。
-
-### 7.3 追溯链与四种 Evolution
-
-**追溯链**：`IndustryKnowledge → Belief(claimRef/sourceRef/evidenceRef) → Claim(Artifact) → Evidence → Source → Document`。
-
-**四种 Evolution**（`knowledge-projection-service.ts`，保守判定）：
-- **SUPPORT**（同 subject + 同 dimension 且无 hint → 安全默认）
-- **REVISE**（显式 hint → 旧 `revised`，新 `confirmed`）
-- **CONFLICT**（显式 hint → 双方 `conflicting` + 一条 `open` conflict 行，**不选边**）
-- **SUPERSEDE**（显式 hint → 旧 `superseded`，新 `confirmed`）
-
-**跨 dimension 永不自动判定**；无 Metric Ontology，不做数值区间/口径/时间窗的自动冲突推断。占位数据（`isRealExternalData=false`）**永不进入 Knowledge**（投影返回 `SKIPPED`）。
-
-### 7.4 代码级链路（ingest / 回填）
-
-```
-材料或调研碎片 → Claim(isRealExternalData) → projectFromClaim → KnowledgeBelief
-→ reconcilePool → refreshGaps → refreshNextActions → refreshState → ResearchState
-```
-
-`OpportunityDiscoveryService.ingestClaims({subjectKind, subjectId, claims[], sourceType?, sourceTitle?})` 即「调研回填」入口：每条 claim 落盘 + 投影，`relationHint` 驱动 Evolution，最后跑完整刷新。
-
----
-
-## 8. 数据源与模型系统
-
-- **EchoDataProvider**（`providers/echo-data-provider.ts`）：确定性占位，强制 `isRealExternalData=false` / `sourceType=echo_placeholder`，禁止据此做真实投资判断。
-- **DataProvider Port**：未来接 Wind/Web/公司官网/上传/MCP。旧 `src/wind-bridge.ts` 为 mock/legacy。
-- **模型系统**：复用 Pi 的 Provider/Auth/ModelRegistry/Model Policy/Router，经 composition root 注入；研究包不直接依赖。无 key 时语义路由未端到端验收（技术债）。
-
----
-
-## 9. Phase 进度与路线图
-
-| Phase | 状态 | 说明 |
-|---|---|---|
-| 0 架构审计/Lock | ✅ | Gap Report / Blueprint v2.1-final-lock / rebaseline v3.1 |
-| 1 Runtime 契约 | ✅ | Run/Round/TaskGraph/TaskAttempt/Artifact/EventStore/Child Session |
-| 2A 研究记忆底座 | ✅ | 11 表 + Methodology v1 + Echo + OpportunityDiscoveryService |
-| 2B Agent 主入口 | ✅ | TianchaAgentHost + 研究工具 + 语义路由 |
-| 2C Knowledge 投影 | ✅ **已接线** | 三表 + 四种 Evolution + 单向链路；**ingest 与回填均已接线** |
-| **P0 知识沉淀/回填接线** | ✅ | Echo 占位不再污染；真实数据沉淀；Gap→NextAction 幂等；回填入口；溯源修复 |
-| **P1 方法论版本化演进** | ✅ | candidate + Human Gate token + CLI + 天查提案工具（模型不能激活） |
-| 2D 重启恢复/持久化回归 | ⏳ | Session 仍 `inMemory`，不跨进程 |
-| 3 Industry Research Engine | ⏳ | 含**自动搜集 + 赛道识别**（飞轮第一环）、打分模型 |
-| 4 Research Target / Chain / Recommendation | ⏳ | 调研链条推荐依赖 `industry_chain` + `company`（未用） |
-| 5 Diligence Preparation | ⏳ | 针对性调研提纲 |
-| 6 Field Research Ingestion | ⏳ | 碎片 → Claim 的结构化抽取（现仅有人工结构化入口） |
-| 7 Evidence-linked Report | ⏳ | 调研报告生成 |
-| 8 Research Planning | ⏳ | 研究规划建议 |
-
-**按因果依赖推荐的下一步优先级**（与业务链路对齐，而非按功能排）：
-**P2 自动搜集 + 赛道识别**（飞轮起点，目前最缺） → **调研准备链**（用户最关心的主线） → 打分模型 + Wind 真源 → 报告生成 + 规划。
-
----
-
-## 10. 八条 Invariant 与落地证据
-
-| # | Invariant | 落地证据 | 状态 |
-|---|---|---|---|
-| 1 | Pool ≠ Knowledge | `foundation.test.ts` T3 + 两套表物理分离 | ✅ 有测试 |
-| 2 | Evolution 永不静默删历史 | `knowledge.test.ts`、`knowledge-projection.test.ts`（revised/superseded 行保留） | ✅ 有测试 |
-| 3 | Conflict 永不静默选边 | 投影 CONFLICT 测试 + reconcile「both beliefs retained」+ gap「no auto-resolution」 | ✅ 有测试 |
-| 4 | State 永不回写 Pool | `refreshState` / `refreshGaps` 的 one-way 测试 | ✅ 有测试 |
-| 5 | Echo 占位永不变成真实外部证据 | `projectFromClaim` 占位 `SKIPPED` + T3「echo never promotes pool/state」 | ✅ 有测试 |
-| 6 | Methodology 无 Human Gate 不能 Activate | `decide` 强制 `operator`；**无 decide 工具**（host.test 断言）；无 operator 抛错测试 | ✅ 有测试 |
-| 7 | Knowledge 可回溯 Claim/Evidence/Source/Doc | belief `claimRef/sourceRef` + 回填测试断言「sourceRef resolves to a research_source row」 | ✅ 部分（Evidence 仍占位） |
-| 8 | Phase1/2A/2B 行为不变 | foundation/storage/task-graph/event-adapter/migration/readonly 全绿 + smoke + host.test | ✅ |
-
----
-
-## 11. 已知技术债与边界
-
-**行为已修正（注意旧文档过时）**：
-- 接线后 **Echo 不再假装填满 12 维**：`tiancha industry ingest` 的输出从 `gaps=0/nextActions=0` 变为 `gaps=12/nextActions=12`。`docs/PROJECT_STATUS.md` 中「Echo 覆盖全部 12 维 → 首次 gaps=0」的记录**已过时**。
-
-**遗留债务**：
-
-| 债务 | 影响 | 归属 |
-|---|---|---|
-| **飞轮第一环缺失**（无自动搜集/赛道识别） | 所有入口需人先给行业名 | Phase 3 |
-| `company` 表零调用、`industry_chain` 维度未被利用 | 调研链条推荐无数据基础 | Phase 4 |
-| Gap 的「低重要性」分支不可达（`ingestMaterial` 恒 `importance=5`，阈值 `>=2`） | 缺口分级失效 | Phase 3 |
-| `ingest` 非幂等（重复 ingest 同行业会再建一套 Question/Requirement/Pool） | 重复数据 | 2D/3 |
-| Agent Session 用 `SessionManager.inMemory` | 对话历史不跨进程 | 2D |
-| 回复非流式（`agent_end` 一次性取文本） | 体验 | 2B 后续 |
-| `config/methodology-v1.json` 与 `methodology-v1.ts` 手工镜像、**运行时不读** | 改 json 不生效 | P1 后续 |
-| `nextVersionTag()` 用版本计数、`getActive()` lazy-bootstrap 有写副作用、`isHumanApprovedBaseline` 命名漂移 | 低危 | 顺手清 |
-| `evidence/`、`dossier/`、`scoring/`、`planning/`、`agents/`、`scheduler/` 为空壳 | 相关能力未实现 | Phase 3+ |
-| 无模型 key 时语义路由未端到端验收 | T6/T7 为契约级 | 有模型环境后补 |
-
-**legacy 资产（保持现状，仅标注身份）**：`src/store.ts`、`invest-extension.ts`、`wind-bridge.ts`、`server.ts`、`agent-factory.ts`、`src/tools/*`、`web/`、`data/`、`tools/wind_query.py`、`.pi/skills/**`、`config/scoring.json`。
-**它们不是产品入口**：`tiancha` 无参数必须进天查 Agent，绝不能 fall through 到旧 host；`data/` 的 JSON 仓储与 SQLite 研究库**不是同一套真相**。
-
----
-
-## 12. 开发规范
-
-- **小步闸门式**：每步 build + typecheck + 全量测试 + smoke 全绿才进下一步；单一目的 commit、可回滚。
-- **Scope Fence**：不重写 Pi Loop；不建第二套 Session；Research Core 不 import coding-agent；不裸调 agentLoop；Task 输出不绕过 Artifact；Dossier 非 SoT；**模型永不激活方法论**。
-- **加列纪律**：改表加列务必走 `PRAGMA table_info` 预检查，别裸 `ALTER`。
-- **术语纪律**：区分「信息内容（Claim）/ 覆盖度（Pool）/ 认知（Belief）/ 快照（State、档案）」（见 §2.3）。
-
----
-
-## 13. 关键决策记录
-
-- **v3.1 边界**：Pool→State 单向；2C 不做真实 Material→Evidence 抽取；IndustryKnowledge 是长期 Cognition 而非 Claim 列表。
-- **Knowledge header = 当前投影**（version 递增，无快照表）；历史由 Belief + Relation + Conflict 保留。
-- **Claim 无 dimension 字段** → `projectFromClaim` 显式传 dimension。
-- **占位数据不进 Knowledge**：`Claim.isRealExternalData=false` → 投影 `SKIPPED`（Invariant 5）。
-- **方法论演进 = 版本化 + Human-in-the-loop**：模型提案（candidate），人批准后激活新版本，旧版本永不删除；审批凭据 `resumeToken` 一次性、限域、过期、只存哈希。
-- **「行业档案」= 视图，不是真相**：真相只有 `Claim/Evidence（SoT）→ Belief（认知）→ Pool（覆盖度）`；档案/报告可物化为文件，但系统内查询永不把它当真相，避免出现「两套真相」（这正是「沉淀转化难」的病根）。
-- **天查不给 decide 工具**：模型只能提案，防止「自己批准自己」。
-
----
-
-## 14. 接手第一步与踩坑
-
-**第一步（推荐）**：
+- **Node ≥ 22.19**（本机 v24.13.0）；依赖 `@earendil-works/pi-coding-agent ^0.86.1`、`pi-ai ^0.86.1`、`typebox ^1.3.27`。
 
 ```powershell
 npm install
 npx tsc --noEmit
 npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts   # 预期 64 pass
-node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS (child-session=real)
+npm run build:cli
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts
+node --import tsx src/cli/tiancha.ts research smoke
 ```
 
-**下一步功能**：Phase 3 的**自动搜集 + 赛道识别**（飞轮第一环），或 Phase 4/5 的**调研准备链**。
+- 配置目录 `~/.tiancha/`：`agent/`（Pi 会话/扩展）、`db/tiancha.sqlite`（研究库）、`db/artifacts.sqlite`（Claim/Evidence blob）。
+- **PowerShell 注意**：SQLite 的 ExperimentalWarning 写 stderr 会让 PS 报 `NativeCommandError`，**不是失败**。
 
-**踩坑清单**：
-1. 仓库改名/复制后 `node_modules/@tiancha/research` 的 junction 可能指向旧路径 → 根 `tsc` 报 `Cannot find module '@tiancha/research'`；重跑 `npm install` 或重建 junction 即可。
-2. PowerShell 下 stderr 的 `NativeCommandError` 是 esbuild/Smoke 写 stderr 的正常现象，不是失败。
-3. `git push` 已配置好（origin `https://github.com/bufan528/tiancha.git`），直接 `git push origin main`。
-4. 改 `industry` / `methodology` 表加列务必走 PRAGMA 预检查。
-5. 任何把占位数据（Echo）当真实证据的改动，都会被 Invariant 5 的测试挡住 —— 这是**有意的**。
-6. 不要给天查加「激活方法论」的工具或路径。
+---
+
+## 6. CLI 命令与研究工具
+
+### CLI（`tiancha`）
+| 命令 | 说明 |
+|---|---|
+| `tiancha`（无参数） | 天查 Agent 交互 REPL（**产品主入口**） |
+| `tiancha ask "<NL>"` | 非交互单轮（同一装配） |
+| `tiancha industry ingest <file> --name <行业>` | 行业材料入库（**幂等**：同行业不重复建骨架） |
+| `tiancha industry show <行业>` / `state show <行业>` | 行业概况 / ResearchState |
+| `tiancha methodology show\|list\|propose\|decide` | 方法论查看 / 提案 / **人工审批**（approve 才激活新版本） |
+| `tiancha research smoke` | 运行时自检 |
+| `tiancha session readonly <path>` | 只读恢复会话 |
+
+### 研究工具（9 个，主模型语义选择）
+`research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list`（2A/2B）
+`+ research_methodology_show / research_methodology_list / research_methodology_propose`（P1）
+
+> **没有** `research_methodology_decide` —— 模型只能**提案**，激活必须人通过 CLI（Invariant 6）。`host.test.ts` 有硬断言。
+
+---
+
+## 7. 数据模型（19 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
+
+**2A（11）**：industry · company · research_question · information_requirement · research_gap · information_pool_entry(legacy) · research_state · research_source · research_document · next_action · methodology
+
+**2C（3）**：industry_knowledge · knowledge_belief · knowledge_conflict
+
+**P1（2）**：methodology_candidate · human_gate
+
+**S3（2，Pool 新模型）**：information_pool_slot · information_pool_item
+
+**S4（1）**：investment_evaluation
+
+**加列（PRAGMA 预检查）**：`industry.current_knowledge_id`、`methodology.dimensions_json`、`information_requirement.{confirmed,uncertain,unknown}_condition` + `preferred_position_kinds_json`
+
+**Claim / Evidence blob** 存 `artifacts.sqlite`。
+
+### 关键 identity（S2 锁定，确定性、无时间戳/UUID/顺序）
+```
+Question    : q-<subjectId>-<dimensionKey>
+Requirement : ir-<subjectId>-<dimensionKey>
+PoolSlot    : slot-<subjectId>-<dimensionKey>   （迁移自 pe-<subjectId>-<dimensionKey>，同一后缀）
+Gap         : gap-<requirementId>
+NextAction  : act-<gapId>
+PoolItem    : item-<slotId>-<normalizedClaimRef>
+```
+
+---
+
+## 8. 不变量（I1–I16 + B1/B2/B3/C5）
+
+| # | 不变量 |
+|---|---|
+| I1 | Claim/Evidence 是唯一 SoT；Pool/Knowledge/State/Dossier/Report 都不得成为事实来源 |
+| I2 | 认知类对象历史不覆盖（Belief/Claim/Evaluation/MethodologyVersion） |
+| I3 | Conflict 双方并列保留，永不静默选边 |
+| I4 | State 永不回写 Pool |
+| I5 | **PoolItem 必须指向 Claim**；无来源的"信息"不得入库 |
+| I6 | Requirement 的 importance + 条件**来自当前激活方法论**（不硬编码） |
+| I7 | Requirement/Question/PoolSlot 在 subject+dimension 上**唯一**（幂等） |
+| I8 | Methodology 变更必须经 HumanGate；Experience **永不**直接改方法论 |
+| I9 | Experience 必须带 judgement（行业特殊 vs 方法问题）；**单例不构成 Pattern** |
+| I10 | 未满足 confirmedCondition ⇒ DimensionEvaluation `insufficient_evidence` **且无 score** |
+| I11 | Evaluation 必须同时给出 Quality / Coverage / Sufficiency / Critical |
+| I12 | `ResearchTarget.isFallback=true` ⇒ caveat 必填；DiligenceQuestion 必须可溯源 |
+| I13 | 占位数据（isRealExternalData=false）不得进入 Knowledge/Evaluation |
+| I14 | Report/Dossier 是投影，重算不产生新真相 |
+| I15 | **Evidence / Claim（含 Fact）/ Belief 三层语义不得混用**；PoolItem 只是组织引用，不是第四种事实 |
+| I16 | **Decision 的决策状态（reserve/watch/park/pending）与 Evaluation 的知识状态（insufficient_evidence）不得混用同一枚举** |
+
+**B1/B2/B3/C5（语义锁定）**：
+- **B1 三层语义**：`Evidence（原始证据）→ Claim/Fact（原子事实）→ Belief（认知）`；Fact 是"结构化数值型的 Claim"，**同层**。
+- **B2 Evaluation 四层**：`Evidence Assessment → Dimension Evaluation → Investment Aggregation → Decision`（禁止揉成巨型 Service）。
+- **B3 Methodology 三类职责**（同一聚合内语义分层）：`Research Framework` / `Evaluation Policy` / `Aggregation Policy`；**改研究重点不得误伤评分算法**。
+- **C5**：`insufficient_evidence` 是评价状态；证据不足 ⇒ `decisionStatus = pending`。
+
+---
+
+## 9. 实施进展与未来方向
+
+### 9.1 已完成
+
+| 阶段 | 内容 |
+|---|---|
+| 0–1 | 架构审计/Lock · Runtime 契约 |
+| 2A/2B/2C | 研究记忆底座 · Agent 主入口 · Knowledge 投影（**已接线**） |
+| P0 | 知识沉淀/回填接线（Echo 不污染、`ingestClaims`、Gap→NextAction 幂等、溯源） |
+| P1 | 方法论版本化 + Human Gate（CLI + 提案工具） |
+
+### 9.2 Phase A（单行业研究闭环）—— 代码实现进度
+
+| 步 | 内容 | 状态 |
+|---|---|---|
+| **S1** | Methodology 扩展（weight/criticality）+ E1（Requirement 承接方法论条件，importance 不再硬编码） | ✅ |
+| **S2** | 幂等 identity（确定性 key + match-or-create） | ✅ |
+| **S3** | Pool 迁移 Entry → Slot + Item（**S3-T1 Identity Preservation**） | ✅ |
+| **S3-R1** | PoolItem 历史保留 + relation + 迁移原子性 | ✅ |
+| **S4** | EvaluationService **四面模型**（policy 驱动 + critical 门控 + `insufficient_evidence→pending`） | ✅ |
+| **S5** | PriorityService + NextAction 扩展（"下一步最值得研究什么"） | ⏳ **下一个** |
+| **S6** | Report/Dossier 投影（最小形态） | ⏳ |
+| **S7** | CLI + Agent 工具（pool/evaluate/priority/report） | ⏳ |
+
+### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
+
+| Phase | 内容 | 说明 |
+|---|---|---|
+| **A** | 单行业研究闭环 | S1–S7（进行中） |
+| **B** | 研究策略闭环 | ResearchChain / ResearchPosition / ResearchTarget / QuestionTargetFit / DiligencePreparation |
+| **C** | 调研回填闭环 | Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新 |
+| **D** | 双体系协同闭环（外环） | Research Experience → Pattern → Methodology Candidate → Human Gate |
+| **E** | 自动化与规模化 | 自动搜集 + 赛道识别 + Wind 接入（**入口能力**） |
+| F（横向） | Report（投影） | 任何阶段可生成；不占 Phase |
+| （横向） | Research Planning / Priority | 属**内环**，不占 Phase |
+
+### 9.4 已知缺口（Phase B–E 前须处理）
+
+- **`exit_env` 无 12 维来源**：Aggregation Policy 里 `sources: []` → v1 输出 `null`。建议通过方法论演进补 `exit_environment` 维度（外环首次演练）。
+- **`firstHand` 恒 false**：Evidence 层未落地（Phase C），sufficiency 的"一手"规则暂不生效。
+- **`caliber_differs` / `complements` 未启用**：Belief 不带 caliber（Phase C/E）。
+- **Migration 假设 legacy `evidence_refs` = Claim refs**（**S3-NOTE**）。
+- **`poolItemId` 编码可能非 injective**（不同 claimRef 归一成同一 id，**S3-FOLLOWUP**）。
+- **S2-NOTE：stable identity ≠ immutable content** —— 方法论版本变化后，已存在的 Requirement 哪些字段应重投影，需在后续生命周期设计中明确。
+
+---
+
+## 10. 关键决策记录
+
+- **「行业档案」= 视图，不是真相**（真相只有 Claim → Belief → Pool）。
+- **Information Pool = 信息组织层**（Slot + Item，item 必须指向 Claim），**不是第二套 SoT**。
+- **方法论演进 = 版本化 + Human-in-the-loop**（模型只能提案；`resumeToken` 一次性、限域、过期、只存哈希）。
+- **天查不给 decide 工具**（防止模型自己批准自己）。
+- **四类知识 + 两个 Loop**；**Experience 是缓冲层**（防过拟合）。
+- **评分口径 = 两层映射**：底层 12 维（研究维度）× 上层 7 维（投资汇总）；12→7 贡献矩阵写进 Aggregation Policy **并版本化**；`exit_env` 暂无来源 → null。
+- **Evaluation 四面 + 规则全部走可注入 Policy**（`EVALUATION_POLICY_V1` / `AGGREGATION_POLICY_V1`），Service 不硬编码公式。
+- **占位数据不进 Knowledge/Evaluation**（`isRealExternalData` + `SKIPPED`）。
+- **Pool 迁移在 DB 初始化时幂等执行**（不做长期 dual-read）；legacy `information_pool_entry` 保留为迁移源/回滚。
+
+---
+
+## 11. 已知技术债与边界
+
+| 债务 | 影响 | 归属 |
+|---|---|---|
+| **飞轮第一环缺失**（无自动搜集/赛道识别） | 所有入口需人先给行业名 | Phase E |
+| **调研准备链完全缺失**（链条/对象/适配/提纲） | 用户最关心的主线 | Phase B |
+| **Field Research 缺失**（Material/Fragment/Evidence） | 碎片无法进入研究系统 | Phase C |
+| `company` 表零调用、`industry_chain` 维度未被利用 | 调研链条推荐无数据基础 | Phase B |
+| `ingest` 幂等已修（S2）；**但 Claim/Source 每次新增**（设计如此） | — | — |
+| Agent Session 用 `SessionManager.inMemory` | 对话历史不跨进程 | Phase A 后续 (2D) |
+| 回复非流式 | 体验 | 后续 |
+| `config/methodology-v1.json` 与 `methodology-v1.ts` **手工镜像** | 改 json 不生效 | 后续 |
+| 默认 scoring rule 是"证据强度分"，**不是投资锚点评分** | 真实评分需替换 rule | 方法论演进 |
+| `nextVersionTag()` 用计数、`getActive()` lazy-bootstrap 有写副作用、`isHumanApprovedBaseline` 命名漂移 | 低危 | 顺手清 |
+| `evidence/`、`dossier/`、`scoring/`、`planning/`、`agents/`、`scheduler/` 空壳 | 相关能力未实现 | Phase B+ |
+| 无模型 key 时语义路由未端到端验收 | 契约级测试 | 有模型环境后补 |
+
+**legacy 资产（保持现状，仅标注）**：`src/store.ts`、`invest-extension.ts`、`wind-bridge.ts`、`server.ts`、`agent-factory.ts`、`src/tools/*`、`web/`、`data/`、`tools/wind_query.py`、`.pi/skills/**`、`config/scoring.json`。
+**它们不是产品入口**；`data/` 的 JSON 仓储与 SQLite 研究库**不是同一套真相**。
+
+---
+
+## 12. 接手第一步与踩坑
+
+**第一步**：
+```powershell
+npm install
+npx tsc --noEmit && npm --prefix packages/research run typecheck
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts   # 预期 88 pass
+node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
+```
+
+**下一步功能**：**S5（PriorityService + NextAction）**，随后 S6/S7；再进 Phase B（调研策略）。
+
+**踩坑**：
+1. 改名/复制仓库后 `node_modules/@tiancha/research` 的 junction 可能指向旧路径 → 根 tsc 报 `Cannot find module '@tiancha/research'`；重跑 `npm install`。
+2. PowerShell 的 `NativeCommandError`（esbuild/SQLite 写 stderr）**不是失败**。
+3. `git push` 已配置（origin `https://github.com/bufan528/tiancha.git`），直接 `git push origin main`。
+4. 加列必经 `PRAGMA table_info` 预检查。
+5. **任何把占位数据（Echo）当真实证据的改动都会被 Invariant 13 的测试挡住**——这是有意的。
+6. **不要给天查加"激活方法论"的工具或路径**。
+7. 迁移（S3）在 `ResearchDb` 构造时**原子执行**；构造失败会关闭连接并抛错（有意设计，测试有覆盖）。
+
+---
+
+## 13. 文档索引（按权威性排序）
+
+| 文档 | 作用 |
+|---|---|
+| **`docs/HANDOFF.md`** | 本文件——总入口，与代码同步 |
+| `docs/architecture-review/06-business-intelligence-architecture-v3.1-final.md` | **业务与知识模型（最终锁定）**：四类知识 / 两个 Loop / 四面 Evaluation / Report=Projection |
+| `docs/architecture-review/07-domain-model-design.md` | **领域模型**：10 上下文 / 聚合 / 14 不变量 / identity / 生命周期 / §3.8a 评分口径 |
+| `docs/architecture-review/08-code-design.md` | **代码设计**：Phase A 详细 + S1–S7 拆分 + 表/接口/工具 |
+| `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
+| `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
+| `docs/architecture-review/01/02/03-*` | 早期 Gap Report / Blueprint v2 / v2.1-final-lock / rebaseline v3.1（**历史，部分过时**） |
+| `docs/phase0/*`、`docs/phase2c/implementation-design.md` | Phase 0/2C 设计（历史） |
+| `docs/SCORING_MODEL.md` | 旧 7 维 0–100 模型（**已被两层映射取代，仅作锚点参考**） |
+| `docs/PROJECT_STATUS.md` | 旧状态报告（**已过时**） |
+| `docs/ARCHITECTURE.md`、`docs/CORE_CUSTOMIZATION.md` | **legacy 工作台文档**，非当前架构 |
+
+**待更新**：`README.md`（仍写 Phase 2C / 6 个工具），建议按本文件 §2/§6/§9 对齐。
