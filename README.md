@@ -5,8 +5,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase%20A%20S4.5-R1%20signal%20integrity%20-%20done-green.svg)](#开发路线)
-[![Tests](https://img.shields.io/badge/tests-104%20passing-brightgreen.svg)](#开发)
+[![Status](https://img.shields.io/badge/Phase%20A%20S5%20priority%20-%20done-green.svg)](#开发路线)
+[![Tests](https://img.shields.io/badge/tests-114%20passing-brightgreen.svg)](#开发)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -92,7 +92,8 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
   - `S3` Information Pool 从单层 Entry 迁移为 **Slot + Item**（identity 保持，`pe-X → slot-X`）；
   - `S4` **EvaluationService 四面模型**：Evidence Assessment → Dimension Evaluation → Investment Aggregation（12→7）→ Decision；规则全部走可注入 Policy；**证据不足 ⇒ 不出分且决策 = `pending`**；critical 维度可阻止"储备"结论；
   - `S4.5` **Research Signal Integrity**：Gap 生命周期恢复（open → resolved → 可重新 open，带 `gap_type`）；Pool `sufficient` **真实可达**、`conflicting` 不再粘滞；**Pool 与 Evaluation 共用同一 Sufficiency Policy**；Gap 的产生改由 Pool 状态驱动（删除恒真的 `importance >= 2`）；Evaluation 在真实业务链上可达；Evaluation **版本化 provenance**（`methodology` + `evaluation` + `aggregation` 三个 version ref，policy 版本不可变）；
-  - `S4.5-R1` Pool 的 sufficiency policy **由 `Requirement.sufficiencyPolicyRef` 经 registry 解析**（不再硬编码版本；缺失/未知 ref 直接报错），从根上消除 Pool 与 Evaluation 的语义漂移。
+  - `S4.5-R1` Pool 的 sufficiency policy **由 `Requirement.sufficiencyPolicyRef` 经 registry 解析**（不再硬编码版本；缺失/未知 ref 直接报错），从根上消除 Pool 与 Evaluation 的语义漂移；
+  - `S5` **PriorityService + ResearchPriority + NextAction**：`ResearchPriority` 是**值对象**（可审计：raw / normalized / weight / contribution + policyVersionId）；六因子加权（**不是** importance 排序）；`acquisitionValue`（缺口解决价值）与 `acquisitionCost`（信息获取难度先验）**只由现有信号推导**，不伪造 Target/成本；`Priority` 决定"先做谁"、`Gap 状态`决定"做什么"。
 
 **能力边界：**
 - 当前数据源是 **Echo 占位 Provider**，所有 Evidence 标记 `isRealExternalData=false` / `sourceType=echo_placeholder`。**不能据此做真实投资判断、不给"值得/不值得"结论**；真实 Wind/Web/上传文档在 Phase E 接入。
@@ -133,7 +134,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 npx tsc --noEmit                                  # 根类型检查
 npm --prefix packages/research run typecheck      # 研究包类型检查
 npm run build:cli                                 # esbuild 产出 dist/cli/tiancha.js
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts   # 104 tests
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts   # 114 tests
 node --import tsx src/cli/tiancha.ts research smoke
 ```
 
@@ -154,7 +155,7 @@ node --import tsx src/cli/tiancha.ts research smoke
 | S4 | EvaluationService 四面模型（policy 驱动 + critical 门控） | ✅ |
 | S4.5 | Research Signal Integrity（Gap 生命周期 + Pool sufficient/conflict 恢复 + 共享 sufficiency + policy provenance） | ✅ |
 | S4.5-R1 | Pool 的 sufficiency policy 由 Requirement 解析（消除 Pool/Evaluation 漂移） | ✅ |
-| S5 | PriorityService + NextAction 扩展 | ⏸ HOLD（待 S4.5 验收） |
+| S5 | PriorityService + ResearchPriority + NextAction（六因子加权 + 可追溯） | ✅ |
 | S6 | Report / Dossier 投影（最小形态） | ⏳ |
 | S7 | CLI + Agent 工具（pool / evaluate / priority / report） | ⏳ |
 
