@@ -156,4 +156,16 @@ describe("S4 EvaluationService (four faces)", () => {
     // no evaluated dimension => no aggregated score anywhere
     for (const v of Object.values(evaluation.aggregation.sevenDimScores)) assert.equal(v, null);
   });
+
+  test("face ① is an independent method: assessEvidence judges but NEVER scores", () => {
+    const { repo, svc } = setup();
+    addSlot(repo, SID, "market", "partial");
+    addItem(repo, SID, "market", "artifact:claim/c1");
+
+    const assessment = svc.assessEvidence(SID, dim("market"));
+    assert.equal(assessment.status, "evaluated");
+    assert.equal((assessment as unknown as { score?: number }).score, undefined, "no score on face ①");
+    assert.equal(assessment.evidenceRefs.length, 1);
+    assert.equal(assessment.sufficiency.itemCount, 1);
+  });
 });

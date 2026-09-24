@@ -40,6 +40,13 @@ import type {
   ReserveDecision,
 } from "../domain/index.js";
 
+export interface EvidenceAssessment {
+  status: DimensionEvalStatus;
+  sufficiency: EvidenceSufficiency;
+  evidenceRefs: string[];
+  conflictingClaimRefs?: string[];
+}
+
 export class EvaluationService {
   constructor(
     private readonly db: DatabaseSync,
@@ -101,10 +108,12 @@ export class EvaluationService {
     return evaluation;
   }
 
-  // ---- ① Evidence Assessment + ② Dimension Evaluation ------------------------
+  // ---- ① Evidence Assessment -------------------------------------------------
 
-  /** Face ①+②: judge sufficiency, and score ONLY when sufficient. */
-  evaluateDimension(subjectId: string, dim: MethodologyDimension): DimensionEvaluation {
+  /**
+   * Face ①: is the evidence ENOUGH? Pure judgement — **never** produces a score.
+   */
+  assessEvidence(subjectId: string, dim: MethodologyDimension): EvidenceAssessment {
     const repo = new ResearchRepository(this.db);
     const slotId = poolSlotKey(subjectId, dim.key);
     const slot = repo.getPoolSlot(slotId);
@@ -113,37 +122,46 @@ export class EvaluationService {
     const sufficiency = sufficiencyOf(items);
     const evidenceRefs = items.map((i) => i.claimRef);
 
-    // ① Evidence Assessment (pure judgement, no score)
-    let status: DimensionEvalStatus;
-    let conflictingClaimRefs: string[] | undefined;
     if (!slot || slot.status === "unknown" || items.length === 0) {
-      status = "insufficient_evidence";
-    } else if (slot.status === "conflicting") {
-      status = "conflicting";
-      conflictingClaimRefs = items.filter((i) => i.relation === "contradicts").map((i) => i.claimRef);
-    } else if (isSufficient(sufficiency, this.policy.sufficiency)) {
-      status = "evaluated";
-    } else {
-      status = "insufficient_evidence";
+      return { status: "insufficient_evidence", sufficiency, evidenceRefs };
     }
+    if (slot.status === "conflicting") {
+      return {
+        status: "conflicting",
+        sufficiency,
+        evidenceRefs,
+        conflictingClaimRefs: items.filter((i) => i.relation === "contradicts").map((i) => i.claimRef),
+      };
+    }
+    if (isSufficient(sufficiency, this.policy.sufficiency)) {
+      return { status: "evaluated", sufficiency, evidenceRefs };
+    }
+    return { status: "insufficient_evidence", sufficiency, evidenceRefs };
+  }
+
+  // ---- ② Dimension Evaluation ------------------------------------------------
+
+  /** Face ②: score ONLY when face ① says the evidence is sufficient. */
+  evaluateDimension(subjectId: string, dim: MethodologyDimension): DimensionEvaluation {
+    const assessment = this.assessEvidence(subjectId, dim);
 
     const evaluation: DimensionEvaluation = {
       dimension: dim.key,
-      status,
-      rationale: rationaleFor(status, dim, sufficiency),
-      evidenceRefs,
-      sufficiency,
+      status: assessment.status,
+      rationale: rationaleFor(assessment.status, dim, assessment.sufficiency),
+      evidenceRefs: assessment.evidenceRefs,
+      sufficiency: assessment.sufficiency,
     };
-    if (conflictingClaimRefs && conflictingClaimRefs.length > 0) {
-      evaluation.conflictingClaimRefs = conflictingClaimRefs;
+    if (assessment.conflictingClaimRefs && assessment.conflictingClaimRefs.length > 0) {
+      evaluation.conflictingClaimRefs = assessment.conflictingClaimRefs;
     }
 
-    // ② score is attached ONLY for `evaluated` (and only if a scoring rule exists)
-    if (status === "evaluated" && this.policy.scoring) {
+    // score is attached ONLY for `evaluated` (and only if a scoring rule exists)
+    if (assessment.status === "evaluated" && this.policy.scoring) {
       evaluation.score = this.policy.scoring({
         dimension: dim.key,
         scoreScale: this.policy.scoreScale,
-        sufficiency,
+        sufficiency: assessment.sufficiency,
       });
       evaluation.scoreScale = this.policy.scoreScale;
     }
