@@ -436,7 +436,7 @@ LLM / 外部数据源 / Company Discovery / Evidence 全链 / Priority·Evaluati
 | **B2** | `ResearchTarget`（人录入 / stable ID / fallback / provenance / CLI；**不开放 Agent 写**） | ✅ `253decb` |
 | **B3** | `QuestionTargetFit`（规则判定；weak + important ⇒ fallback + caveat） | ✅ `e64ddd4` |
 | **B4** | `DiligencePreparation`（`common` / `target_specific` / `fit_derived` + 可追溯） | ✅ `1592b9f` |
-| **B5** | CLI / Agent 展示（含 `research chain / need / target / diligence`） | ⏳ |
+| **B5** | CLI / Agent 展示（含 `research chain / need / target / diligence`） | ✅ `6eb9ea2`（T-B24–T-B29） |
 
 > **B1 的实现修正**：`positionRef` 现**包含模板版本**
 > （`pos-<industryId>-<templateId>-<chainVersion>-<positionKey>`）。§4 的 identity 表原写作

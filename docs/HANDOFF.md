@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-24 重写 · Phase B v1 Step B4 后更新** · **代码 HEAD `1592b9f`**（HANDOFF 自身的提交见 §0.4） · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **186 tests 全过** · `research smoke` PASS。
+> **2026-09-25 更新 · Phase B v1 Step B5 后** · **代码 HEAD `6eb9ea2`**（文档同步提交紧随其后，见 §0.4） · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **196 tests 全过** · `research smoke` PASS。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。
 
 ---
@@ -12,11 +12,11 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **Phase B v1 · Step B4 已完成，等待独立验收；B5 待授权** |
-| HEAD / 远端 | `1592b9f`（代码）· `bd0948e`（文档）；`origin/main` 已同步 |
-| 验证基线 | root `tsc` 0 · research typecheck 0 · **186 tests 全过** · `research smoke` PASS |
-| 真实库 | `~/.tiancha/db/tiancha.sqlite`；`mw-v1` 已被 DATA-R1 修复（weight/criticality 齐全，`risk`/`key_validation` 恢复 critical）；**当前只有 `人形机器人` 一条行业**（历次验证残留均已清理） |
-| 下一步 | **B5**：CLI/Agent 暴露 `research chain / need / target / diligence`（以只读为主） |
+| 当前阶段 | **Phase B v1 · B1–B5 全部实现完成（B5 已交付，等待独立验收）；Phase C 待授权** |
+| HEAD / 远端 | `6eb9ea2`（代码）· 文档同步提交紧随其后；`origin/main` 已同步 |
+| 验证基线 | root `tsc` 0 · research typecheck 0 · **196 tests 全过** · `research smoke` PASS |
+| 真实库 | `~/.tiancha/db/tiancha.sqlite`；`mw-v1` 已被 DATA-R1 修复（weight/criticality 齐全，`risk`/`key_validation` 恢复 critical）；**当前只有 `人形机器人` 一条行业**（B5 真实库验证产生的 position / target / preparation 残留已清理） |
+| 下一步 | **Phase C**：调研回填闭环（Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新），待授权 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
 
@@ -46,7 +46,8 @@
 
 | commit | 含义 |
 |---|---|
-| `1592b9f` / `bd0948e` | **B4** DiligencePreparation + 文档同步（**当前 HEAD**） |
+| `6eb9ea2` + 本文档提交 | **B5** 调研准备链能力暴露（CLI `chain/need/diligence` + Agent 4 只读工具）+ 文档同步（**当前代码 HEAD**） |
+| `1592b9f` / `bd0948e` / `cd20cf6` | **B4** DiligencePreparation + 文档同步 + handover refresh |
 | `e64ddd4` / `6c12ac2` | **B3** QuestionTargetFit + 文档同步 |
 | `253decb` / `9232668` | **B2** ResearchTarget + 文档同步 |
 | `eb30a1f` / `f5d065a` | **B1** ChainTemplate + ResearchPosition + ResearchNeed + 文档同步 |
@@ -196,6 +197,7 @@
 | **B2**（Phase B v1 第二步）**ResearchTarget = Human-confirmed subject**（`createdBy` 硬编码 `user`；**无 Position→Target 路径**；fallback 必须带 ref + limitations；`targetCaveats()` 供下游） | `domain/research-target.ts`、`application/target-service.ts`、`src/cli/research-commands.ts` | `phase-b-step-b2.test.ts`（T-B6–T-B10/T-B12）、`target-cli.test.ts`（T-B11） |
 | **B3**（Phase B v1 第三步）**QuestionTargetFit = 规则判定**（纯函数 `evaluateFit()`：`targetKind × 服务问题 → strong/partial/weak/none`；weak/none + 重要问题 ⇒ `requiresFallback`；**只提出需求、不选对象**；不落表） | `domain/question-target-fit.ts`、`application/question-target-fit-service.ts` | `phase-b-step-b3.test.ts`（T-B13–T-B17） |
 | **B4**（Phase B v1 第四步）**DiligencePreparation = 研究什么**（三类来源 `common`/`target_specific`/`fit_derived` **结构化可区分**；每条问题可溯源 `fromRequirementRef`/`fromFitRef`；按 target-specific 派生；无 LLM、非报告） | `domain/diligence-preparation.ts`、`application/diligence-preparation-service.ts` | `phase-b-step-b4.test.ts`（T-B18–T-B23） |
+| **B5**（Phase B v1 第五步 = 收尾）**能力暴露**：CLI `research chain / need / diligence`（`chain` 是 `ChainProjectionService.project()` 在**生产中唯一的入口**，幂等，只写 `research_position`）+ `target list` 附**只读**适配概况 + Agent 4 个**只读**工具（14 → 18：`research_chain_show / research_need_list / research_target_list / research_diligence_show`） | `src/cli/research-commands.ts`、`src/cli/research-format.ts`、`src/agent/research-tools.ts`、`domain/question-target-fit.ts`（`FitSummary`/`summarizeFits`） | `phase-b-b5-cli.test.ts`（T-B24–T-B27/T-B29）、`phase-b-b5-exposure.test.ts`（T-B28/T-B29） |
 
 ### 2.2 只有 Domain Contract（有类型、无实现/无闭环）
 
@@ -207,8 +209,10 @@
 
 ### 2.4 未实现（属路线图，不是缺陷）
 
-**Phase B v1 的 B5（把 `chain/need/target/diligence` 暴露为 CLI/Agent）**、**完整 Field Research（Fragment / Evidence 全链）**、**自动发现行业 + Wind**、**Research Experience** —— 见 §9。
+**完整 Field Research（Fragment / Evidence 全链）**、**自动发现行业 + Wind**、**Research Experience** —— 见 §9。
 
+> **Phase B v1 已全部落地（B1–B5）**：链条 / 对象 / 适配 / 提纲 **已能由人通过 CLI 走通**（`research chain → target add → diligence`），Agent 侧只读展示这四类产物。
+>
 > **（C-MVP 已补上"入口"）** 现在有了最小材料入口：`tiancha research material add <行业> <文件>` 与 Agent 工具 `research_material_add`——真实材料经**规则解析**（`[CLAIM]` 块，**无 LLM**）产生 Claim，再走**既有** `ingestClaims`。仍未具备的是**真实数据源**（Phase E）与**完整** Material → Fragment → Evidence 链。
 
 ### 2.5 验证基线
@@ -216,7 +220,7 @@
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 186 tests / 186 pass / 0 fail
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 196 tests / 196 pass / 0 fail
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
@@ -261,7 +265,7 @@ TianchaAgentHost (src/agent/tiancha-agent-host.ts)
 
 ### 3.4 代码设计（`08-code-design.md`）
 
-Phase A 详细设计 + S1–S7 小步拆分。**注**：`S1–S7` 与 `Phase B v1 的 B1–B4` **均已实现**；该文档里对进度的描述**以本文 §9 为准**。
+Phase A 详细设计 + S1–S7 小步拆分。**注**：`S1–S7` 与 `Phase B v1 的 B1–B5` **均已实现**；该文档里对进度的描述**以本文 §9 为准**。
 
 ---
 
@@ -270,12 +274,13 @@ Phase A 详细设计 + S1–S7 小步拆分。**注**：`S1–S7` 与 `Phase B v
 ```
 src/
   cli/tiancha.ts                Composition Root；无参数进 Agent REPL + ask/industry/state/methodology/research/session
-  cli/research-commands.ts      **S7** composition seam（evaluate/pool/priority/report 的注入式 handler）
-  cli/research-format.ts        **S7** 纯 formatter（human + `--json`；`insufficient_evidence` → 证据不足）
+  cli/research-commands.ts      **S7/B2/B5** composition seam（evaluate/pool/priority/report 与 chain/need/diligence/target 的注入式 handler）
+  cli/research-format.ts        **S7/B5** 纯 formatter（human + `--json`；`insufficient_evidence` → 证据不足）
   cli/report-markdown.ts        **S7** Markdown 物化（纯函数）
   agent/tiancha-agent-host.ts   TianchaAgentHost（startInteractive / askOneShot）
-  agent/research-tools.ts       **13** 个研究工具（主模型语义选择，无关键词分类器）
-  agent/host.test.ts · s7-exposure.test.ts · cli/s7-cli.test.ts · cli/research-format.test.ts
+  agent/research-tools.ts       **18** 个研究工具（主模型语义选择，无关键词分类器）
+  agent/host.test.ts · s7-exposure.test.ts · phase-b-b5-exposure.test.ts
+  cli/s7-cli.test.ts · research-format.test.ts · target-cli.test.ts · material-cli.test.ts · phase-b-b5-cli.test.ts
   # legacy（Pi 工作台 v2.0，见 §11）：server.ts / store.ts / invest-extension.ts / wind-bridge.ts / agent-factory.ts / tools/*
 web/  data/  tools/wind_query.py   （旧 Web + JSON 仓储 + Wind 桥，legacy）
 
@@ -296,8 +301,9 @@ packages/research/src/
   methodology/     methodology-v1.ts（12 维 baseline）
   agents/ planning/ scheduler/ evidence/ dossier/ scoring/   ← 空壳（Phase B+）
   *.test.ts        **25 个测试文件**（研究包，含 `phase-b-step-b1..b4.test.ts`）
-                   ＋ `src/agent`、`src/cli` 的测试（含 `target-cli.test.ts`、`material-cli.test.ts` …）
-                   —— 合计 **186 用例**
+                   ＋ `src/agent`、`src/cli` 的测试（含 `target-cli.test.ts`、`material-cli.test.ts`、
+                   `phase-b-b5-cli.test.ts`、`phase-b-b5-exposure.test.ts` …）
+                   —— 合计 **196 用例**
 
 config/methodology-v1.json     12 维 Human-approved baseline（mirror；含 weight/criticality）
 config/scoring.json            旧评分模型配置（legacy，**不接线**）
@@ -343,19 +349,24 @@ node --import tsx src/cli/tiancha.ts research smoke
 | `tiancha research report <行业>` | **（S7）**生成只读投影：append 快照 + 物化 Markdown 到 `~/.tiancha/reports/` |
 | `tiancha research material add <行业> <文件>` | **（C-MVP）**把真实研究材料加入行业：规则解析 `[CLAIM]` 块 → Claim → 既有 `ingestClaims`；打印 before/after 变化 |
 | `tiancha research target add <行业> --kind <k> --name <主体> --position <posRef> --purpose <…> --reason <…> [--fallback-for <ref>] [--limitation <…>]…` | **（B2）**人确认一个具体研究对象——**产品内唯一的 target 写入路径**（`createdBy` 恒为 user） |
-| `tiancha research target list <行业>` | **（B2）**列出已确认的研究对象（含备选标记） |
+| `tiancha research target list <行业>` | **（B2/B5）**列出已确认的研究对象（含备选标记）及其**只读适配概况**（强/部分/弱/无 + 需备选对象数） |
+| `tiancha research chain <行业>` | **（B5）**展示调研链条（模板实例：位置 / 为什么重要 / 建议研究哪类对象 / 服务问题数）——**同时幂等生成** `ResearchPosition`（B1 投影在**生产中唯一的入口**，只写该表） |
+| `tiancha research need <行业>` | **（B5）**展示派生的研究需求（问题原文 + `whyStudyNotJustFetch` 规则解释 + 可服务的位置），**只读** |
+| `tiancha research diligence <行业> --target <ref>` | **（B5）**生成并展示调研准备（提纲 + cautions + 三类 source）；省略 `--target` 时**只读**列出现有准备 |
 | `tiancha session readonly <path>` | 只读恢复会话 |
 
-> 以上 4 条 research 命令均支持 `--json`（**输出格式切换**：与文本渲染消费同一个 service 结果）。
+> 以上 research 命令均支持 `--json`（**输出格式切换**：与文本渲染消费同一个 service 结果）。
 
-### 研究工具（14 个，主模型语义选择）
+### 研究工具（18 个，主模型语义选择）
 `research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list`（2A/2B）
 `+ research_methodology_show / research_methodology_list / research_methodology_propose`（P1）
 `+ research_pool_show / research_evaluate / research_priority / research_report`（**S7，只读**）
 `+ research_material_add`（**C-MVP，写一份 Material**——Agent 唯一可写的东西）
+`+ research_chain_show / research_need_list / research_target_list / research_diligence_show`（**B5，只读**）
 
 > **没有** `research_methodology_decide` —— 模型只能**提案**，激活必须人通过 CLI（Invariant 6）。`host.test.ts` 有硬断言。
 > **（S7/C-MVP）Agent 权限边界**：`research_evaluate` 读**已落库**的评估、**绝不**触发计算；`research_report` 只 append 投影；`research_material_add` 只写用户提供的材料（**不评估、不改 Priority**）。
+> **（B5）Agent 权限边界**：4 个 B5 工具**只读已生成的产物**；未生成时提示**由研究者执行 CLI**（与 `research_evaluate` 同一套治理）。Agent **不投影链条**（未注入 `ChainProjectionService`）、**不录入对象**（无 target 写工具）、**不生成提纲**。
 
 ---
 
@@ -380,6 +391,8 @@ node --import tsx src/cli/tiancha.ts research smoke
 **B2（1）**：research_target（**Human-confirmed subject**：`subject_key` 由人提供；`created_by` 恒 `user`）
 
 **B4（1）**：diligence_preparation（三类来源 `common`/`target_specific`/`fit_derived` 存于 `questions_json`；`dp-<targetRef>` 幂等）
+
+**（B5 不新增任何表）**：B5 只暴露 B1–B4 已存在的产物；`ResearchNeed` / `QuestionTargetFit` 仍是**派生值对象**，不落表。
 
 **加列（PRAGMA 预检查）**：`industry.current_knowledge_id`、`methodology.dimensions_json`、`information_requirement.{confirmed,uncertain,unknown}_condition` + `preferred_position_kinds_json` + `sufficiency_policy_ref`（S4.5）、`research_gap.gap_type`（S4.5）、`investment_evaluation.{evaluation,aggregation}_policy_version_id`（S4.5）
 
@@ -423,6 +436,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **B2 Evaluation 四层**：`Evidence Assessment → Dimension Evaluation → Investment Aggregation → Decision`（禁止揉成巨型 Service）。
 - **B3 Methodology 三类职责**（同一聚合内语义分层）：`Research Framework` / `Evaluation Policy` / `Aggregation Policy`；**改研究重点不得误伤评分算法**。
 - **C5**：`insufficient_evidence` 是评价状态；证据不足 ⇒ `decisionStatus = pending`。
+- **B5（暴露层不新增不变量）**：B5 只是把 B1–B4 的产物暴露给 CLI / Agent，**不新增不变量 / 不新增表**；其边界由测试守护 —— T-B24（`chain` 幂等、只写 `research_position`）/ T-B25（`need` 只读）/ T-B26（`target list` 只读 + fit 仅为聚合）/ T-B27（`diligence` 只写自己那一行，拒绝未知/跨行业对象）/ T-B28（Agent 4 工具只读、未生成时提示由人执行 CLI）/ T-B29（无 LLM / 无外部源 / 无 Evidence 新模型）。
 
 ---
 
@@ -438,7 +452,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | P1 | 方法论版本化 + Human Gate（CLI + 提案工具） |
 | **DATA-R1** | legacy `mw-v1` 数据修复迁移（补齐冻结基线自身的 `weight`/`criticality`；真实库已复验） |
 | **C-MVP** | 最小材料入口（`Material` 自带 subject provenance + 规则解析 + 复用 `ingestClaims` + 幂等） |
-| **Phase B v1 · B1–B4** | `ChainTemplate`/`Position`/`Need` · `ResearchTarget` · `QuestionTargetFit` · `DiligencePreparation` |
+| **Phase B v1 · B1–B5** | `ChainTemplate`/`Position`/`Need` · `ResearchTarget` · `QuestionTargetFit` · `DiligencePreparation` · CLI/Agent 暴露 |
 
 ### 9.2 代码实现进度（S1–S7 / DATA-R1 / C-MVP / Phase B v1）
 
@@ -461,13 +475,14 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **B2** | Phase B v1 第二步：`ResearchTarget` = Human-confirmed subject（`--name` 由人给；无 Position→Target 路径） | ✅ |
 | **B3** | Phase B v1 第三步：`QuestionTargetFit` = 规则判定（weak/none + 重要问题 ⇒ 提出备选需求，不选对象） | ✅ |
 | **B4** | Phase B v1 第四步：`DiligencePreparation` = 研究什么（三类来源可区分 + 每问可溯源；无 LLM/非报告） | ✅ |
+| **B5** | Phase B v1 收尾：**能力暴露** —— CLI `chain/need/diligence`（`chain` 是投影在生产中唯一入口）+ `target list` 附只读适配概况 + Agent 4 个只读工具（14 → 18） | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
 | Phase | 内容 | 说明 |
 |---|---|---|
 | **A** | 单行业研究闭环 | **S1–S7 已完成**（含 DATA-R1 legacy 修复、C-MVP 材料入口） |
-| **B** | Research Planning / 调研准备链 | **契约已冻结**（`docs/phaseB/implementation-contract.md`）；**B1–B4 已实现**，**B5 待授权** |
+| **B** | Research Planning / 调研准备链 | **B1–B5 已全部实现**（`docs/phaseB/implementation-contract.md` §12：无剩余 Step） |
 | **C** | 调研回填闭环 | Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新 |
 | **D** | 双体系协同闭环（外环） | Research Experience → Pattern → Methodology Candidate → Human Gate |
 | **E** | 自动化与规模化 | 自动搜集 + 赛道识别 + Wind 接入（**入口能力**） |
@@ -485,6 +500,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **S2-NOTE：stable identity ≠ immutable content** —— 方法论版本变化后，已存在的 Requirement 哪些字段应重投影，需在后续生命周期设计中明确。
 - **S4-FOLLOWUP（independentSources 口径）**：`sufficiencyFacts` 目前用 `sourceRef ?? claimRef` 计独立来源。Evidence 层（Phase C）落地后必须改为经 `Claim → Evidence → Source` 解析，否则"一份研报抽出 10 个 Claim"会被误算成 10 个独立来源。
 - **S4.5-NOTE（Policy 仍是代码常量）**：`eval-v1` / `agg-v1` / `suf-v1` 已版本化且不可变，但**仍定义在代码中**（未落 DB）；"改评分口径 = 改方法论版本"要等 Policy 可配置化。
+- **B5-NOTE（需求的可服务位置依赖链）**：`research need` 的 `suggestedPositionRefs` 来自**已投影**的 `ResearchPosition`；未投影时为空并在输出中明确提示（先跑 `research chain`）——这是显式边界，不是缺陷。
 
 ---
 
@@ -523,6 +539,10 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **（B3/B4 细节）Fit 的决策不吃 `canAnswer`**：`canAnswer(weak) === true` 是**派生展示**（"能提供一定信息"≠"足以回答"）；B4 的判定只用 `answerability` / `confidence` / `limitations` / `requiresFallback`（B3 验收者提示）。
 - **（S4.5）Policy provenance 不可伪造**：一次 Evaluation 记录 methodology + evaluation + aggregation 三个 version ref；`PolicyRegistry` 拒绝用不同内容重注册同一 versionId。
 - **（S4.5）S5 之前不写 Priority**：S4.5 只恢复到 Evaluation 为止；PriorityService / ResearchPriority / 优先级排序算法属 S5。
+- **（B5）B1 投影的「生产入口」就是人执行的 CLI `research chain`**：此前 `ChainProjectionService.project()` **只在测试里被调用**——B1 在生产不可达，`target add --position <ref>` 也无从取得 `positionRef`。B5 明确："人执行 CLI → 幂等投影（只写 `research_position`）"是唯一入口；让**派生规划**由明确触发者产生（与 S6/S7 同构）。
+- **（B5）Agent 只读「已生成」的规划产物**：4 个 B5 工具**不注入投影服务、无 target 写工具、不生成提纲**；未生成时**点名由研究者执行 CLI**（与 `research_evaluate` 同一治理）。理由：链条/对象/提纲是**规划产物**，生成时机由人掌握，模型只解释现状。
+- **（B5）适配概况是只读聚合，不是新判断**：`FitSummary` / `summarizeFits()` 只对 B3 已产出的 `QuestionTargetFit[]` 计数，CLI 与 Agent **共用**同一函数（避免两处各算一遍、口径漂移）。
+- **（B5）"没有已落库优先级"不渲染成 0 分**：`need`/`diligence` 输出里，优先分为 0 且无 policy 版本时显示"暂无已落库优先级"，避免把"没有数据"读成"最不重要"。
 
 ---
 
@@ -531,10 +551,10 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | 债务 | 影响 | 归属 |
 |---|---|---|
 | **飞轮第一环缺失**（无自动搜集/赛道识别） | 所有入口需人先给行业名 | Phase E |
-| ~~**调研准备链完全缺失**（链条/对象/适配/提纲）~~ **已由 Phase B v1 的 B1–B4 实现**：链条+位置+需求（B1）· 对象（B2）· 适配（B3）· 提纲（B4） | 剩余：**B5（暴露为 CLI/Agent）** | Phase B（仅剩 B5） |
+| ~~**调研准备链完全缺失**（链条/对象/适配/提纲）~~ **已由 Phase B v1 的 B1–B5 全部实现**：链条+位置+需求（B1）· 对象（B2）· 适配（B3）· 提纲（B4）· CLI/Agent 暴露（B5） | **无剩余 Step** | ✅ Phase B 收尾 |
 | **B4：`requestedMaterials` / `risks` 恒为 `[]`** —— 无真实来源时**不臆造** | 提纲中"要哪些材料 / 风险提示"暂时为空 | Phase C（真实材料链落地后填） |
 | **Field Research 缺失**（Material/Fragment/Evidence） | 碎片无法进入研究系统 | Phase C |
-| `company` 表零调用、`industry_chain` 维度未被利用 | 调研链条推荐无数据基础 | Phase B |
+| `company` 表零调用（链条位置是**模板实例**，未与真实公司数据关联） | 无"这家公司属于哪个位置"的数据基础 | Phase C/E |
 | `ingest` 幂等已修（S2）；**但 Claim/Source 每次新增**（设计如此） | — | — |
 | Agent Session 用 `SessionManager.inMemory` | 对话历史不跨进程 | Phase A 后续 (2D) |
 | 回复非流式 | 体验 | 后续 |
@@ -561,14 +581,15 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 186 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 196 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
-**下一步功能**：**Phase B v1 · Step B5** —— CLI/Agent 暴露 `research chain | need | target | diligence`（以只读为主）。
+**下一步功能**：**Phase C** —— 调研回填闭环（Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新），待用户授权。
+> Phase B v1 的 **B1–B5 已全部完成**（契约 §12 无剩余 Step）；B5 仅暴露既有能力，未新增表/未改语义。
 
-> **历史提醒（避免误判）**：`S1–S7`、`DATA-R1`、`C-MVP`、`Phase B v1 的 B1–B4` **均已完成**。
-> 若你看到旧版文档写着「S5 HOLD」「Phase B 待冻结」，那是**过时**信息。
+> **历史提醒（避免误判）**：`S1–S7`、`DATA-R1`、`C-MVP`、`Phase B v1 的 B1–B5` **均已完成**。
+> 若你看到旧版文档写着「S5 HOLD」「Phase B 待冻结」「B5 待授权」，那是**过时**信息。
 
 **踩坑**：
 1. 改名/复制仓库后 `node_modules/@tiancha/research` 的 junction 可能指向旧路径 → 根 tsc 报 `Cannot find module '@tiancha/research'`；重跑 `npm install`。
@@ -589,7 +610,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/architecture-review/06-business-intelligence-architecture-v3.1-final.md` | **业务与知识模型（最终锁定）**：四类知识 / 两个 Loop / 四面 Evaluation / Report=Projection |
 | `docs/architecture-review/07-domain-model-design.md` | **领域模型**：10 上下文 / 聚合 / 14 不变量 / identity / 生命周期 / §3.8a 评分口径 |
 | `docs/architecture-review/08-code-design.md` | **代码设计**：Phase A 详细 + S1–S7 拆分 + 表/接口/工具 |
-| `docs/phaseB/implementation-contract.md` | **Phase B v1 实现契约（未实现）**：Need → Position → Target → Fit → Diligence 的字段/identity/不变量/写入边界/T-B 验收 |
+| `docs/phaseB/implementation-contract.md` | **Phase B v1 实现契约（B1–B5 已全部实现，见其 §12）**：Need → Position → Target → Fit → Diligence 的字段/identity/不变量/写入边界/T-B 验收 |
 | `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
 | `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
 | `docs/architecture-review/01/02/03-*` | 早期 Gap Report / Blueprint v2 / v2.1-final-lock / rebaseline v3.1（**历史，部分过时**） |
@@ -598,4 +619,4 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/PROJECT_STATUS.md` | 旧状态报告（**已过时**） |
 | `docs/ARCHITECTURE.md`、`docs/CORE_CUSTOMIZATION.md` | **legacy 工作台文档**，非当前架构 |
 
-**待更新**：`README.md`（仍写 Phase 2C / 6 个工具），建议按本文件 §2/§6/§9 对齐。
+**待更新**：~~`README.md`（仍写 Phase 2C / 6 个工具）~~ **已随每次 Step 同步**（本次已更新 B5：`chain/need/diligence` 命令与 18 个工具）。
