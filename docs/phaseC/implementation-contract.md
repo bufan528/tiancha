@@ -1,6 +1,6 @@
 # Tiancha Phase C — Implementation Contract
 
-> **Phase C Full Contract v1 · Final Lock · rev 3**（已按 C-FIX-1…6 与第二轮 Final Lock Review 的 C-FIX-7…12 修订，见 §28.5 / §28.6）
+> **Phase C Full Contract v1 · Final Lock · rev 4**（已按 C-FIX-1…6、C-FIX-7…12 与 **C-FIX-13** 修订，见 §28.5 / §28.6 / §28.7）
 >
 > **状态：Final Lock Candidate —— 等待用户审批后冻结。`C1 未授权实现`。**
 > 基线：**Phase B v1 FINAL PASS**（B5 代码 `6eb9ea2` / B5 文档 `8ec8f6f` / acceptance closure `27b9a37` / final cleanup `7faa8e5` = 当前 HEAD）。
@@ -376,8 +376,8 @@ supersedes: artifact:claim/xxx                          # relation=SUPERSEDE 时
      revised / conflicting / superseded）
    → SKIPPED，reason = ALREADY_PROJECTED（exact no-op）
 
-② 演化目标校验（仅 REVISE / SUPERSEDE，C-FIX-8）
-   targetClaimRef 必须：存在 / 同 knowledge / 同 dimension / state == confirmed
+② 演化目标校验（仅 REVISE / SUPERSEDE，C-FIX-8 + C-FIX-13）
+   targetClaimRef 必须：存在 / 同 knowledge / 同 dimension / state ∈ { confirmed, conflicting }
    不满足 → SKIPPED，reason = INVALID_EVOLUTION_TARGET（不得有任何 mutation）
 
 ③ Open Conflict 优先（维度级，C-FIX-7）
@@ -386,8 +386,10 @@ supersedes: artifact:claim/xxx                          # relation=SUPERSEDE 时
         → 【禁止自动 NEW / confirmed】
         → 能构造可审候选 ⇒ candidate + Human Gate（§7）
         → 否则          ⇒ SKIPPED，reason = OPEN_CONFLICT_REQUIRES_REVIEW
-     显式 REVISE / SUPERSEDE（已通过 ②）
-        → 允许落地；但只要该维度仍有 open conflict，Pool 仍为 conflicting（§9 / §10）
+     显式 REVISE / SUPERSEDE（已通过 ②；target ∈ { confirmed, conflicting }）
+        → 允许落地：只改变 target 与新 belief 的**认知关系**（§6.7）
+        → **不自动关闭** conflict、**不替**其他 conflicting belief 选赢家
+        → 只要该维度仍有 open conflict，Pool 仍为 conflicting（§9 / §10）
 
 ④ 常规判定
    有合法 relation 声明            → 使用该 relation
@@ -439,15 +441,20 @@ supersedes: artifact:claim/xxx                          # relation=SUPERSEDE 时
 1. 该 claimRef 在本 knowledge 中确实存在一条 belief
 2. 属于同一个 knowledgeId（同 subject）
 3. 属于同一个 dimension
-4. 该 belief 的 state == "confirmed"（只有【当前认知】才能被修正 / 被取代）
+4. 该 belief 的 state ∈ { "confirmed", "conflicting" }
+   （C-FIX-13：只有【当前认知】或【未解决的冲突认知】才能被修正 / 被取代）
 ```
 
-任一不满足：
+任一不满足（例如 target 为 `candidate` / `rejected` / `revised` / `superseded`，或不存在 / 跨 knowledge / 跨 dimension）：
 
 ```text
 → SKIPPED，reason = INVALID_EVOLUTION_TARGET
 → 不得对任何 belief / conflict 产生 mutation（校验先行，写操作在后）
 ```
+
+> ★ **为什么 target 必须允许 `conflicting`（C-FIX-13）**：维度级 CONFLICT 会把该维度**全部** `confirmed` 变成 `conflicting`（§6.1）。
+> 如果 target 只能是 `confirmed`，那么 §6.4 / Rule F 里"显式 `REVISE` / `SUPERSEDE` 是解决冲突的合法路径"这条规则**永远不可达**（算法上自我封闭）。
+> **target 为 `conflicting` 时不是普通演化**：它只改变 target 与新 belief 的**认知生命周期关系**，**不**自动恢复其他 conflicting beliefs、**不**自动关闭 `KnowledgeConflict`、**不**选 winner —— 完整语义见 **§6.7**。
 
 > **反例（必须失败）**：`market` 维度有 A / B / C 三条 confirmed，新 Claim D 声明 `SUPERSEDE A`。
 > 正确结果：`A → superseded`、`D → confirmed`、**B / C 不受影响**。
@@ -534,8 +541,9 @@ Gap = conflict（若原本 resolved 则【重新打开】）
     → 能构造可审候选 ⇒ candidate + Human Gate
     → 否则          ⇒ SKIPPED，reason = OPEN_CONFLICT_REQUIRES_REVIEW
 
-显式 REVISE / SUPERSEDE（且目标合法，§5.2）
+显式 REVISE / SUPERSEDE（目标合法：target ∈ { confirmed, conflicting }，§5.2）
     → 允许落地（这是"解决冲突"的正式路径）
+    → 只改变 target 与该新 belief 的认知关系（§6.7）：**不自动关闭** conflict、**不选** winner
     → 但该维度只要仍有 open conflict，Pool 仍为 conflicting（§9 / §10）
 ```
 
@@ -575,7 +583,16 @@ resolveConflict()  只能：  open → resolved（或 accepted）
 
 只做 ① 不做 ② 时：该维度没有 confirmed ⇒ Pool 为 `unknown` / `partial`（不再 `conflicting`，也不存在 `sufficient`）。
 
-> 说明：`KnowledgeConflictStatus` 现有枚举 `open | resolved | accepted` 中，`accepted` 属**遗留值**（既有实现从未写入）；第一版只使用 `open → resolved`，`accepted` 保留但不产生。
+> 说明：`KnowledgeConflictStatus` 现有枚举 `open | resolved | accepted` 中，`accepted` 属**遗留值**（既有实现从未写入）；第一版只使用 `open → resolved`，`accepted` 保留但**不产生**。
+>
+> ★ **`accepted` 的硬约束（C1）**：
+> * **不得新增**任何产生 `accepted` 的路径；
+> * **不得**把 `accepted` 当作 current 判据；
+> * **不得**把 `accepted` 当作 `resolved` 的别名；
+> * **不得**在 C1 里顺手清理该枚举（技术清理会无谓扩大 diff，留待将来单独的 cleanup）。
+>
+> **Evolution-based cognition resolution**（用新 Claim 显式演化来推进冲突维度的认知）见 **§6.7**；
+> 它与 `resolveConflict()`（只关闭冲突**事件**）**不可互相替代**。
 
 ### 6.6 `Claim.temporalRelation` 与 `Belief.state` 是**两条轨**（不得机械映射）
 
@@ -586,6 +603,36 @@ resolveConflict()  只能：  open → resolved（或 accepted）
 
 > 两者**不能互相替代**，也**不得**做机械映射（例如"`Claim=old` ⇒ `Belief=superseded`"是**错的**）。
 > `Claim A(temporalRelation=old)` 与 `Belief A(state=revised)` 可以同时合法存在。
+
+### 6.7 target 为 `conflicting` 的演化：只改变认知关系（**C-FIX-13**）
+
+> **闭合 C-FIX-7 × C-FIX-8 的生命周期矛盾**：维度级 CONFLICT 会把该维度**全部** `confirmed` 变成 `conflicting`（§6.1）；
+> 如果 `REVISE` / `SUPERSEDE` 的 target 只能是 `confirmed`，那么"C-FIX-7 允许显式演化解决冲突"这条规则**算法上永远不可达**。
+> 因此合法 target 扩为 `confirmed | conflicting`（§5.2），并把"target 为 `conflicting`"的后果钉死如下。
+
+```text
+A conflicting
+B conflicting                （KnowledgeConflict(A,B) 仍 open）
+
+C SUPERSEDE A
+        ↓
+A → superseded
+C → confirmed
+B → conflicting              （B 不受影响）
+KnowledgeConflict(A,B) → 仍 open
+Pool（该 dimension）   → 仍 conflicting
+```
+
+规则：
+
+1. **只改变 target 与新 belief 的生命周期关系**：`SUPERSEDE` ⇒ `target → superseded`；`REVISE` ⇒ `target → revised`；新 belief ⇒ `confirmed`；
+2. **不自动恢复 / 确认 / 解决**该维度中其他 `conflicting` beliefs；
+3. **不自动关闭任何 `KnowledgeConflict`** —— 特别是 `A` 被 `C` supersede **不等于**系统证明 `B` 正确；
+4. 因此**只要该维度仍有 open conflict，Pool 仍为 `conflicting`**（§9 ⑤），Gap 仍是 `conflict`；
+5. 要继续推进，只能再来一次**显式**演化（例如 `D SUPERSEDE B`）或走 **Human Gate**（§7）；
+6. **禁止**以"解决冲突"为名，在一次演化里同时处置多个 conflicting beliefs。
+
+> 与 C-FIX-10 的分工：`resolveConflict()` 只关闭**事件**（§6.5）；§6.7 只推进**认知关系**。两者可以独立发生、也可以组合，但都不能替另一方完成工作。
 
 ---
 
@@ -750,7 +797,9 @@ last write wins
 ```text
 open conflict 存在
    ├── 无 relation / SUPPORT / NEW  → candidate（可构造候选时）或 SKIPPED（构造不出时）
-   └── 显式 REVISE / SUPERSEDE      → 允许（目标必须合法，§5.2）
+   └── 显式 REVISE / SUPERSEDE      → 允许，target ∈ { confirmed, conflicting }（§5.2）
+                                       target 为 conflicting 时只改变认知关系（§6.7）：
+                                       **不自动关闭** conflict、**不选** winner
 ```
 
 > 该维度**只要仍有 open conflict**，Pool slot 就保持 `conflicting`（即使同时存在 `confirmed` 认知）。
@@ -794,7 +843,7 @@ Pool 必须能够表达：
 > ① item 记录该维度**全部** beliefs（历史保留，不整体删除）；
 > ② `sufficient` 判定**只用 `confirmed`**，并使用该 slot 的 `Requirement.sufficiencyPolicyRef` 指向的 policy；
 > ③ policy ref 缺失/未知 ⇒ **抛错**；④ 无 requirement 的 slot 永不到 `sufficient`；
-> ⑤ 该维度存在 open conflict ⇒ slot = `conflicting`（**即使同时存在 `confirmed`**，C-FIX-7）—— 不能因为"又有本条 confirmed 了"就绕过未解决的冲突。
+> ⑤ 该维度存在 open conflict ⇒ slot = `conflicting`（**即使同时存在 `confirmed`**，C-FIX-7）—— 不能因为"又有本条 confirmed 了"就绕过未解决的冲突（包括经 §6.7 显式演化新产生的 `confirmed`）。
 
 ---
 
@@ -1511,8 +1560,9 @@ Report 更新
 | SUPPORT → 多条 `confirmed` 并存 | 既有（加严） |
 | REVISE → 旧 `revised` / 新 `confirmed` | 既有（加严） |
 | SUPERSEDE → **精确 target**（非"最新 anchor"） | **新增** |
-| invalid SUPERSEDE target（不存在 / 跨维度 / 非 confirmed） | **新增** |
-| invalid REVISE target | **新增** |
+| invalid SUPERSEDE target（不存在 / 跨 knowledge / 跨 dimension / `candidate` / `rejected` / `revised` / `superseded`） | **新增** |
+| invalid REVISE target（同上） | **新增** |
+| **open conflict 下的显式演化（C-FIX-13）**：`A confirmed; B CONFLICT A; C SUPERSEDE A` ⇒ `A superseded` / `C confirmed` / `B conflicting`；`KnowledgeConflict(A,B)` **仍 open**；Pool **仍 `conflicting`** | **新增（关键）** |
 | 维度级 CONFLICT（多条 confirmed 一起退场） | **新增** |
 | conflict 只记录**直接冲突对**（不虚构 edge） | **新增** |
 | `current == confirmed only`（Repository predicate） | **新增** |
@@ -1557,6 +1607,23 @@ B conflicting（conflict 仍 open）
 
 > 这是当前设计**最容易漏掉**的逻辑漏洞；C1 必须用测试把它钉死。
 
+### 26.4 "冲突解决路径必须真实可达"（**C-FIX-13 的回归护栏**）
+
+必须有一条测试证明：**进入维度级 open conflict 之后，仍然存在一条可执行的演化路径** —— 否则 §6.4 / Rule F 里写的"允许"就是一句空头支票：
+
+```text
+A confirmed
+B CONFLICT A            → A conflicting / B conflicting / conflict open / confirmed = 0
+C REVISE A              → 必须【成功】（不是 INVALID_EVOLUTION_TARGET）
+                        → A revised / C confirmed / B conflicting / conflict 仍 open
+D SUPERSEDE B           → 必须【成功】
+                        → B superseded / D confirmed / A revised（不变）
+                        → 既有 conflict(A,B) 记录与状态【不被自动关闭】
+```
+
+> 这条测试同时防止**两个方向的回归**：① 契约再次退回"target 必须是 `confirmed`"（路径被堵死）；
+> ② 实现把"显式演化"当成"顺手关闭冲突 / 替另一方选赢家"（越权）。
+
 ---
 
 ## 27. C1 授权门槛
@@ -1578,7 +1645,9 @@ B conflicting（conflict 仍 open）
 - [ ] `candidate` 状态、CLI 确认路径、**"确认是独立 Human Gate 迁移且必须显式指定最终 relation"** 冻结（P3 + C-FIX-3 / C-FIX-4），且 Agent 只读；
 - [ ] **不增加 `CANDIDATE` historical relation**（C-FIX-6）；
 - [ ] **Open Conflict 不得被普通 `NEW` / `SUPPORT` 绕过**（C-FIX-7），且 `OPEN_CONFLICT_REQUIRES_REVIEW` 的判定条件冻结；
-- [ ] **`REVISE` / `SUPERSEDE` 的演化目标校验冻结**（存在 / 同 knowledge / 同 dimension / `confirmed`；否则零 mutation）（C-FIX-8）；
+- [ ] **`REVISE` / `SUPERSEDE` 的演化目标校验冻结**（存在 / 同 knowledge / 同 dimension / `state ∈ { confirmed, conflicting }`；否则零 mutation）（C-FIX-8 + **C-FIX-13**）；
+- [ ] **"target 为 `conflicting` 时只改变认知关系"冻结**（不自动关 conflict、不选 winner、Pool 仍 `conflicting`）（**C-FIX-13**），并有 §26.4 的"解决路径必须真实可达"回归测试；
+- [ ] **`accepted` 约束冻结**（不新增产生路径 / 不当 current 判据 / 不当 `resolved` 别名 / 不顺手清理）；
 - [ ] **`rejected` 状态与拒绝路径冻结**（C-FIX-9），且 `rejected ≠ current ≠ historical factual cognition`；
 - [ ] **`resolveConflict` 语义边界冻结**（只 `open → resolved`，**不得**恢复 current）（C-FIX-10）；
 - [ ] **已投影一律 `ALREADY_PROJECTED` exact no-op**（覆盖全部 state）（C-FIX-11）；
@@ -1676,4 +1745,13 @@ B conflicting（conflict 仍 open）
 | （附带） | `refreshState()` 的 version churn | §19 | 属**既有遗留**，**C1 不得顺手重构 State**；测试需分开断言"projection 幂等"与"state version 递增" |
 | （附带） | 测试不足以证明新契约 | **§26.1 / §26.2 / §26.3**（新增） | ≥ 20 条测试清单 + 完整 E2E + "绝对不能通过"的反例 |
 | （附带） | Evidence 仍是 placeholder | §1 / §19（既有） | 保持"不引入 Evidence / Fragment 链"；C1 不得因看到 `evidenceRef?` 就自建 Evidence Domain |
+
+### 28.7 第三轮 Final Lock Review 修订（**C-FIX-13**，本版 = **rev 4**）
+
+> 输入是"**rev 3 × 真实代码**"的第三轮比对。本轮只修 **1 个 P0 语义矛盾**（外加 `accepted` 的一条硬约束），不扩 scope。
+
+| # | 审查者指出的问题 | 落实位置 | 本版写定 |
+|---|---|---|---|
+| **C-FIX-13** | **C-FIX-7 × C-FIX-8 生命周期矛盾（P0）**：维度级 CONFLICT 会把该维度**全部** `confirmed` 变成 `conflicting`，而 C-FIX-8 又要求 `REVISE`/`SUPERSEDE` 的 target 必须 `confirmed` ⇒ "显式演化是解决冲突的合法路径"**算法上不可达** | §5 算法 ②③、**§5.2**、§6.4、**§6.7**（新增）、§8 Rule F、§9 ⑤、§26 测试清单 + **§26.4**（新增）、§27 | 合法 target 扩为 **`state ∈ { confirmed, conflicting }`**；**target 为 `conflicting` 时只改变 target 与新 belief 的认知关系**（`SUPERSEDE`⇒superseded、`REVISE`⇒revised、新 belief⇒confirmed），**不自动恢复其他 conflicting beliefs、不自动关闭 `KnowledgeConflict`、不选 winner**；只要仍有 open conflict，Pool 仍 `conflicting`。配 §26.4 的"解决路径必须真实可达"回归测试 |
+| （附带） | `accepted` 死枚举的处理需要写死 | §6.5 | **不得**新增产生路径 / 不得当 current 判据 / 不得当 `resolved` 别名 / **不得**在 C1 顺手清理 |
 
