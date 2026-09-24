@@ -435,7 +435,7 @@ LLM / 外部数据源 / Company Discovery / Evidence 全链 / Priority·Evaluati
 | **B1** | Domain + Template Registry（`ChainTemplate` / `ResearchPosition` / `ResearchNeed` 派生 / ID / version / invariant） | ✅ `eb30a1f` |
 | **B2** | `ResearchTarget`（人录入 / stable ID / fallback / provenance / CLI；**不开放 Agent 写**） | ✅ `253decb` |
 | **B3** | `QuestionTargetFit`（规则判定；weak + important ⇒ fallback + caveat） | ✅ `e64ddd4` |
-| **B4** | `DiligencePreparation`（`common` / `target_specific` / `fit_derived` + 可追溯） | ⏳ |
+| **B4** | `DiligencePreparation`（`common` / `target_specific` / `fit_derived` + 可追溯） | ✅ `1592b9f` |
 | **B5** | CLI / Agent 展示（含 `research chain / need / target / diligence`） | ⏳ |
 
 > **B1 的实现修正**：`positionRef` 现**包含模板版本**
