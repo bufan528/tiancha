@@ -264,6 +264,22 @@ export class ResearchDb {
       );
       CREATE INDEX IF NOT EXISTS idx_pool_item_slot ON information_pool_item(slot_id);
       CREATE INDEX IF NOT EXISTS idx_pool_item_claim ON information_pool_item(claim_ref);
+
+      -- S4: Investment Evaluation (four-face model)
+      CREATE TABLE IF NOT EXISTS investment_evaluation (
+        evaluation_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        methodology_version_id TEXT NOT NULL,
+        dimension_evaluations_json TEXT NOT NULL,
+        aggregation_json TEXT NOT NULL,
+        coverage_json TEXT NOT NULL,
+        sufficiency_summary_json TEXT NOT NULL,
+        critical_flags_json TEXT NOT NULL,
+        decision_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_subject ON investment_evaluation(subject_kind, subject_id);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();

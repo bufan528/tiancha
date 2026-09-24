@@ -20,6 +20,7 @@ import type {
   MethodologyVersion,
   MethodologyCandidate,
   HumanGate,
+  InvestmentEvaluation,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -697,6 +698,47 @@ export class ResearchRepository {
     ) as any[];
     return rows.map(rowToHumanGate);
   }
+
+  // ---- InvestmentEvaluation (S4) ----
+  upsertEvaluation(e: InvestmentEvaluation): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO investment_evaluation
+         (evaluation_id, subject_kind, subject_id, methodology_version_id,
+          dimension_evaluations_json, aggregation_json, coverage_json,
+          sufficiency_summary_json, critical_flags_json, decision_json, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        e.evaluationId,
+        e.subjectKind,
+        e.subjectId,
+        e.methodologyVersionId,
+        JSON.stringify(e.dimensionEvaluations),
+        JSON.stringify(e.aggregation),
+        JSON.stringify(e.coverage),
+        JSON.stringify(e.sufficiencySummary),
+        JSON.stringify(e.criticalFlags),
+        JSON.stringify(e.decision),
+        e.createdAt,
+      );
+  }
+
+  getEvaluation(evaluationId: string): InvestmentEvaluation | undefined {
+    const r = this.db
+      .prepare("SELECT * FROM investment_evaluation WHERE evaluation_id = ?")
+      .get(evaluationId) as any;
+    return r ? rowToEvaluation(r) : undefined;
+  }
+
+  getLatestEvaluation(subjectKind: string, subjectId: string): InvestmentEvaluation | undefined {
+    const r = this.db
+      .prepare(
+        "SELECT * FROM investment_evaluation WHERE subject_kind = ? AND subject_id = ? ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(subjectKind, subjectId) as any;
+    return r ? rowToEvaluation(r) : undefined;
+  }
 }
 
 function rowToIndustry(row: any): Industry {
@@ -803,6 +845,22 @@ function rowToPoolItem(row: any): InformationPoolItem {
     claimRef: row.claim_ref,
     sourceRef: row.source_ref ?? undefined,
     relation: row.relation,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToEvaluation(row: any): InvestmentEvaluation {
+  return {
+    evaluationId: row.evaluation_id,
+    subjectKind: row.subject_kind,
+    subjectId: row.subject_id,
+    methodologyVersionId: row.methodology_version_id,
+    dimensionEvaluations: JSON.parse(row.dimension_evaluations_json),
+    aggregation: JSON.parse(row.aggregation_json),
+    coverage: JSON.parse(row.coverage_json),
+    sufficiencySummary: JSON.parse(row.sufficiency_summary_json),
+    criticalFlags: JSON.parse(row.critical_flags_json),
+    decision: JSON.parse(row.decision_json),
     createdAt: row.created_at,
   };
 }

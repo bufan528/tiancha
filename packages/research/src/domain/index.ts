@@ -26,3 +26,5 @@ export * from "./methodology.js";
 export * from "./knowledge-belief.js";
 export * from "./knowledge-conflict.js";
 export * from "./industry-knowledge.js";
+export * from "./evaluation.js";
+export * from "./evaluation-policy.js";
