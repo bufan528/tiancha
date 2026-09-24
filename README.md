@@ -5,8 +5,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase%20B%20v1%20B1%20chain%2Fposition%2Fneed%20-%20done-green.svg)](#开发路线)
-[![Tests](https://img.shields.io/badge/tests-160%20passing-brightgreen.svg)](#开发)
+[![Status](https://img.shields.io/badge/Phase%20B%20v1%20B2%20research%20target%20-%20done-green.svg)](#开发路线)
+[![Tests](https://img.shields.io/badge/tests-173%20passing-brightgreen.svg)](#开发)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -74,6 +74,8 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 | `tiancha research priority <行业>` | 查看研究优先级（只读） |
 | `tiancha research report <行业>` | 生成只读投影 + 物化 Markdown 到 `~/.tiancha/reports/` |
 | `tiancha research material add <行业> <文件>` | **把真实研究材料加入行业**：规则解析 `[CLAIM]` 块 → Claim → 既有 `ingestClaims`，并打印 before/after 变化 |
+| `tiancha research target add <行业> --kind <k> --name <主体> --position <posRef> --purpose <…> --reason <…>` | 人确认一个具体研究对象（**唯一的 target 写入路径**） |
+| `tiancha research target list <行业>` | 列出已确认的研究对象 |
 | `tiancha session readonly <path>` | 只读恢复历史会话 |
 
 > 上述 4 条 `research` 命令均支持 `--json`（输出格式切换，与文本渲染同一结果）。
@@ -174,9 +176,9 @@ node --import tsx src/cli/tiancha.ts research smoke
 | S7 | Capability Exposure：CLI 4 命令（`--json`）+ Agent 4 只读工具 + report 物化 Markdown | ✅ |
 | DATA-R1 | legacy `mw-v1` 数据修复迁移（补齐冻结基线自身的 weight/criticality） | ✅ |
 | C-MVP | 最小材料入口（Material + 规则解析 + 复用 ingestClaims + 幂等） | ✅ |
-| Phase B v1 | 调研准备链 `ResearchNeed → Position → Target → Fit → Diligence`（契约：`docs/phaseB/implementation-contract.md`；**Step B1 已完成**） | 🚧 |
+| Phase B v1 | 调研准备链 `ResearchNeed → Position → Target → Fit → Diligence`（契约：`docs/phaseB/implementation-contract.md`；**Step B1–B2 已完成**） | 🚧 |
 
-> **Phase B v1 分步**：B1 `ChainTemplate/Position/Need` ✅ → B2 `ResearchTarget` → B3 `QuestionTargetFit` → B4 `DiligencePreparation` → B5 CLI/Agent。
+> **Phase B v1 分步**：B1 `ChainTemplate/Position/Need` ✅ → B2 `ResearchTarget` ✅ → B3 `QuestionTargetFit` → B4 `DiligencePreparation` → B5 CLI/Agent。
 
 **后续 Phase**（按业务闭环排）
 
