@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-24 重写 · DATA-R1 后更新** · HEAD `4c6cdb8` · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **144 tests 全过** · `research smoke` PASS。
+> **2026-09-24 重写 · C-MVP 后更新** · HEAD `79a470a` · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **154 tests 全过** · `research smoke` PASS。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。
 
 ---
@@ -149,6 +149,7 @@
 | **S6-R1** 投影**只读取**已持久化的 Priority（`PriorityService.currentPriorities()`，不调 `rank()`）；`rank()` 生产调用点仅剩 S5 写入路径 | `application/report-service.ts`、`application/priority-service.ts` | `s6-report.test.ts`（S6-R1 3 个） |
 | **S7** **能力暴露**：CLI 4 命令（evaluate 可写 / pool·priority·report 只读；`--json`）+ Agent 4 只读工具（9→13）+ report 物化 Markdown | `src/cli/research-*.ts`、`src/cli/report-markdown.ts`、`src/agent/research-tools.ts` | `s7-exposure.test.ts`、`research-format.test.ts`、`s7-cli.test.ts` |
 | **DATA-R1** **legacy `mw-v1` 数据修复迁移**（S1 之前 bootstrap 的冻结基线缺 `weight`/`criticality`；一次性补齐，不改身份/不新建版本） | `storage/research-db.ts`（`repairLegacyMethodologyV1`） | `data-r1-legacy-methodology.test.ts` |
+| **C-MVP** **最小材料入口**：`Material`（**自带 subject provenance**）+ 规则解析（`[CLAIM]` 块，**无 LLM**）+ 复用既有 `ingestClaims` + content-hash 幂等 | `domain/material*.ts`、`application/material-ingest-service.ts`、`src/cli/research-commands.ts` | `c-mvp-material.test.ts`、`material-cli.test.ts` |
 
 ### 2.2 只有 Domain Contract（有类型、无实现/无闭环）
 
@@ -160,16 +161,16 @@
 
 ### 2.4 未实现（属路线图，不是缺陷）
 
-**调研准备（链条/对象/适配/提纲）**、**Field Research（Material/Fragment/Evidence/Claim）**、**自动发现行业 + Wind**、**Research Experience** —— 见 §9。
+**调研准备（链条/对象/适配/提纲）**、**完整 Field Research（Fragment / Evidence 全链）**、**自动发现行业 + Wind**、**Research Experience** —— 见 §9。
 
-> **（S7 后·全链路验收发现）** 目前**没有任何 CLI / Agent 工具入口**能让用户喂入真实 Claim——`OpportunityDiscoveryService.ingestClaims` 只被测试调用。因此真实 CLI 链路只能走到「全部证据不足」；链路本身（`Knowledge → Pool → Gap → Priority → Report`）已验证**联通且分级真实**（见 §9.4），缺的是**入口**（Phase C）与**真实数据源**（Phase E）。
+> **（C-MVP 已补上"入口"）** 现在有了最小材料入口：`tiancha research material add <行业> <文件>` 与 Agent 工具 `research_material_add`——真实材料经**规则解析**（`[CLAIM]` 块，**无 LLM**）产生 Claim，再走**既有** `ingestClaims`。仍未具备的是**真实数据源**（Phase E）与**完整** Material → Fragment → Evidence 链。
 
 ### 2.5 验证基线
 
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 144 tests / 144 pass / 0 fail
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 154 tests / 154 pass / 0 fail
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
@@ -233,13 +234,13 @@ src/
 web/  data/  tools/wind_query.py   （旧 Web + JSON 仓储 + Wind 桥，legacy）
 
 packages/research/src/
-  domain/          38 个领域文件（含 identity.ts / evaluation*.ts / sufficiency.ts / policy-registry.ts / priority*.ts / report.ts / information-pool.ts）
+  domain/          40 个领域文件（含 identity.ts / evaluation*.ts / sufficiency.ts / policy-registry.ts / priority*.ts / report.ts / material*.ts）
   ports/           Port 抽象（AgentSessionFactory/EventBus/Session/DataProvider/ModelResolver…）
   storage/         research-db.ts（20 表 + PRAGMA 迁移）、research-repository.ts、knowledge-repository.ts、
                    report-repository.ts（S6 只读投影）、artifact-store.ts、research-event-store.ts
   application/     report-service.ts(S6) · priority-service.ts(S5) · evaluation-service.ts(S4) ·
-                   knowledge-projection-service.ts(2C) · methodology-service.ts(P1) ·
-                   opportunity-discovery-service.ts(2A + 回填)
+                   material-ingest-service.ts(C-MVP) · knowledge-projection-service.ts(2C) ·
+                   methodology-service.ts(P1) · opportunity-discovery-service.ts(2A + 回填)
   providers/       echo-data-provider.ts（占位）
   runtime/         tiancha-runtime / task-engine / orchestrator / child-session / human-gate / model-router / event-adapter
   migration/       pi-to-tiancha、readonly-session-manager
@@ -289,21 +290,23 @@ node --import tsx src/cli/tiancha.ts research smoke
 | `tiancha research pool <行业>` | **（S7）**查看信息池槽位与条目（只读） |
 | `tiancha research priority <行业>` | **（S7）**查看研究优先级（读取已持久化结果，只读） |
 | `tiancha research report <行业>` | **（S7）**生成只读投影：append 快照 + 物化 Markdown 到 `~/.tiancha/reports/` |
+| `tiancha research material add <行业> <文件>` | **（C-MVP）**把真实研究材料加入行业：规则解析 `[CLAIM]` 块 → Claim → 既有 `ingestClaims`；打印 before/after 变化 |
 | `tiancha session readonly <path>` | 只读恢复会话 |
 
 > 以上 4 条 research 命令均支持 `--json`（**输出格式切换**：与文本渲染消费同一个 service 结果）。
 
-### 研究工具（13 个，主模型语义选择）
+### 研究工具（14 个，主模型语义选择）
 `research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list`（2A/2B）
 `+ research_methodology_show / research_methodology_list / research_methodology_propose`（P1）
-`+ research_pool_show / research_evaluate / research_priority / research_report`（**S7，全部只读**）
+`+ research_pool_show / research_evaluate / research_priority / research_report`（**S7，只读**）
+`+ research_material_add`（**C-MVP，写一份 Material**——Agent 唯一可写的东西）
 
 > **没有** `research_methodology_decide` —— 模型只能**提案**，激活必须人通过 CLI（Invariant 6）。`host.test.ts` 有硬断言。
-> **（S7）Agent 不改变研究状态**：`research_evaluate` 读**已落库**的评估、**绝不**触发计算（无评估时明确提示由研究者跑 CLI）；`research_report` 只 append 投影。
+> **（S7/C-MVP）Agent 权限边界**：`research_evaluate` 读**已落库**的评估、**绝不**触发计算；`research_report` 只 append 投影；`research_material_add` 只写用户提供的材料（**不评估、不改 Priority**）。
 
 ---
 
-## 7. 数据模型（20 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
+## 7. 数据模型（21 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
 
 **2A（11）**：industry · company · research_question · information_requirement · research_gap · information_pool_entry(legacy) · research_state · research_source · research_document · next_action · methodology
 
@@ -316,6 +319,8 @@ node --import tsx src/cli/tiancha.ts research smoke
 **S4（1）**：investment_evaluation
 
 **S6（1，只读投影）**：report_snapshot（append-only；`report_kind` 区分 report/dossier）
+
+**C-MVP（1）**：material（**自带 `subject_kind`/`subject_id`**；`content_hash` 为幂等键；`claim_refs_json` 双向可追溯）
 
 **加列（PRAGMA 预检查）**：`industry.current_knowledge_id`、`methodology.dimensions_json`、`information_requirement.{confirmed,uncertain,unknown}_condition` + `preferred_position_kinds_json` + `sufficiency_policy_ref`（S4.5）、`research_gap.gap_type`（S4.5）、`investment_evaluation.{evaluation,aggregation}_policy_version_id`（S4.5）
 
@@ -389,6 +394,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **S6-R1** | 投影**读取**已持久化 Priority（不重算）；`rank()` 仅剩 S5 写入路径调用 | ✅ |
 | **S7** | **Capability Exposure**：CLI 4 命令 + Agent 4 只读工具 + report 物化 Markdown（`~/.tiancha/reports/`） | ✅ |
 | **DATA-R1** | **legacy `mw-v1` 修复迁移**（补齐冻结基线自身的 `weight`/`criticality`；真实库已复验） | ✅ |
+| **C-MVP** | **最小材料入口**（`research material add` / `research_material_add`；规则解析 + 复用 `ingestClaims` + 幂等） | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -409,7 +415,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **`caliber_differs` / `complements` 未启用**：Belief 不带 caliber（Phase C/E）。
 - **Migration 假设 legacy `evidence_refs` = Claim refs**（**S3-NOTE**）。
 - **`poolItemId` 编码可能非 injective**（不同 claimRef 归一成同一 id，**S3-FOLLOWUP**）。
-- **（全链路验收）缺少「真实材料 → Claim」入口**：`ingestClaims` 无 CLI / 工具入口，用户无法让行业从「全部证据不足」走向「证据足够」；同时真实数据源仍是 Echo 占位。二者分别属 **Phase C** 与 **Phase E**。
+- ~~（全链路验收）缺少「真实材料 → Claim」入口~~ **已由 C-MVP 解决**：`tiancha research material add` / `research_material_add` 让真实材料进入**既有** `ingestClaims`。**仍未解决**：真实数据源仍是 Echo 占位（**Phase E**）；完整的 `Material → Fragment → Evidence → Claim` 链未建（**Phase C 完整版**）。
 - **S2-NOTE：stable identity ≠ immutable content** —— 方法论版本变化后，已存在的 Requirement 哪些字段应重投影，需在后续生命周期设计中明确。
 - **S4-FOLLOWUP（independentSources 口径）**：`sufficiencyFacts` 目前用 `sourceRef ?? claimRef` 计独立来源。Evidence 层（Phase C）落地后必须改为经 `Claim → Evidence → Source` 解析，否则"一份研报抽出 10 个 Claim"会被误算成 10 个独立来源。
 - **S4.5-NOTE（Policy 仍是代码常量）**：`eval-v1` / `agg-v1` / `suf-v1` 已版本化且不可变，但**仍定义在代码中**（未落 DB）；"改评分口径 = 改方法论版本"要等 Policy 可配置化。
@@ -440,6 +446,10 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **（S7）`--json` 是输出格式切换**：一个 service 结果 → human / json 两个 renderer，**不是两套业务逻辑**。
 - **（S7）Report 物化**：`report_snapshot` 是正式快照，Markdown 只是其**表现层**；文件名 `<sanitized industry>__<dossierId>.md`，**id 取自快照本身**（1:1 可追溯），目录固定 `~/.tiancha/reports/`，不做 `--out`。
 - **（DATA-R1）"方法论数据修复" ≠ "方法论变更"**：把历史库中**残缺的 v1 恢复成已批准的 v1**（补入值逐项来自冻结的 `METHODOLOGY_V1`），`versionId`/`versionTag`/`activatedAt` 不变、不新建版本/candidate/gate，因此**不走 Human Gate**；且只对"明显是旧版形态"的行生效（12 个 key 一致、`weight`/`criticality` 全缺），绝不静默覆盖手工修改过的行。
+- **（C-MVP）材料是「规则解析」，不是「模型抽取」**：只有显式 `[CLAIM]` 块产生 Claim；散文不产生任何 Claim；格式错误的块**报告但不臆测**。
+- **（C-MVP）材料从第一天自带 subject provenance**：`materialId` + `subjectKind` + `subjectId` + 来源元数据 + `contentHash` + `claim_refs`（双向可追溯），避免把现有 `research_source` 的 provenance 债务复制一遍。
+- **（C-MVP）幂等靠 content hash**：同一 subject 下同一内容只入库一次；重复添加是 no-op（不重复产生 Claim/Belief/PoolItem），**不调用** `ingestClaims`。
+- **（C-MVP）不碰既有语义**：材料入口**只**调用既有 `ingestClaims`，不复制写入逻辑；**不改** Priority / Evaluation 语义，不引入 Fragment/Evidence/Target/Chain/Strategy/Experience/Wind/LLM。
 - **（S4.5）Policy provenance 不可伪造**：一次 Evaluation 记录 methodology + evaluation + aggregation 三个 version ref；`PolicyRegistry` 拒绝用不同内容重注册同一 versionId。
 - **（S4.5）S5 之前不写 Priority**：S4.5 只恢复到 Evaluation 为止；PriorityService / ResearchPriority / 优先级排序算法属 S5。
 
@@ -479,7 +489,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 144 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 154 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
