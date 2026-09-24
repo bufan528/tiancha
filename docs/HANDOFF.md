@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-24 重写 · S5 后更新** · HEAD `7ae7dc5` · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **114 tests 全过** · `research smoke` PASS。
+> **2026-09-24 重写 · S6 后更新** · HEAD `8d850cd` · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **120 tests 全过** · `research smoke` PASS。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。
 
 ---
@@ -145,6 +145,7 @@
 | **S4.5** Research Signal Integrity（Gap 生命周期 + Pool `sufficient`/conflict 恢复 + `gap_type` + 共享 Sufficiency Policy + Evaluation 可达 + policy provenance） | `domain/sufficiency.ts`、`domain/policy-registry.ts`、`knowledge-projection-service.ts`、`evaluation-service.ts` | `s45-signal-integrity.test.ts` 等 11 个 |
 | **S4.5-R1** Pool 的 sufficiency policy **改由 `InformationRequirement.sufficiencyPolicyRef` 经 PolicyRegistry 解析**（不再在 Pool 内硬编码版本；缺失/未知 ref **明确抛错**；migration 为老数据钉 `suf-v1`；无 requirement 的槽位永不到 `sufficient`） | `knowledge-projection-service.ts`、`storage/research-db.ts` | `s45-signal-integrity.test.ts`（R1）+ `knowledge-pool-reconcile.test.ts` |
 | **S5** **PriorityService + ResearchPriority + NextAction**（六因子加权；`acquisitionValue`=缺口解决价值、`acquisitionCost`=获取难度先验，均由**现有信号**推导；NextAction 由 Priority/Gap 驱动） | `application/priority-service.ts`、`domain/priority*.ts` | `s5-priority.test.ts`（10 条红线） |
+| **S6** **Report / IndustryDossier 只读投影**（`report_snapshot` 表 + append-only；sections 覆盖认知/事实/判断/冲突/缺口/变化/证据/评价/优先级/下一步） | `application/report-service.ts`、`domain/report.ts`、`storage/report-repository.ts` | `s6-report.test.ts`（T-A10） |
 
 ### 2.2 只有 Domain Contract（有类型、无实现/无闭环）
 
@@ -163,7 +164,7 @@
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts → 114 tests / 114 pass / 0 fail
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts → 120 tests / 120 pass / 0 fail
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
@@ -224,18 +225,19 @@ src/
 web/  data/  tools/wind_query.py   （旧 Web + JSON 仓储 + Wind 桥，legacy）
 
 packages/research/src/
-  domain/          37 个领域文件（含 identity.ts / evaluation*.ts / sufficiency.ts / policy-registry.ts / priority*.ts / information-pool.ts）
+  domain/          38 个领域文件（含 identity.ts / evaluation*.ts / sufficiency.ts / policy-registry.ts / priority*.ts / report.ts / information-pool.ts）
   ports/           Port 抽象（AgentSessionFactory/EventBus/Session/DataProvider/ModelResolver…）
-  storage/         research-db.ts（19 表 + PRAGMA 迁移）、research-repository.ts、knowledge-repository.ts、
-                   artifact-store.ts、research-event-store.ts
-  application/     priority-service.ts(S5) · evaluation-service.ts(S4) · knowledge-projection-service.ts(2C) ·
-                   methodology-service.ts(P1) · opportunity-discovery-service.ts(2A + 回填)
+  storage/         research-db.ts（20 表 + PRAGMA 迁移）、research-repository.ts、knowledge-repository.ts、
+                   report-repository.ts（S6 只读投影）、artifact-store.ts、research-event-store.ts
+  application/     report-service.ts(S6) · priority-service.ts(S5) · evaluation-service.ts(S4) ·
+                   knowledge-projection-service.ts(2C) · methodology-service.ts(P1) ·
+                   opportunity-discovery-service.ts(2A + 回填)
   providers/       echo-data-provider.ts（占位）
   runtime/         tiancha-runtime / task-engine / orchestrator / child-session / human-gate / model-router / event-adapter
   migration/       pi-to-tiancha、readonly-session-manager
   methodology/     methodology-v1.ts（12 维 baseline）
   agents/ planning/ scheduler/ evidence/ dossier/ scoring/   ← 空壳（Phase B+）
-  *.test.ts        18 个测试文件（114 用例）
+  *.test.ts        19 个测试文件（120 用例）
 
 config/methodology-v1.json     12 维 Human-approved baseline（mirror；含 weight/criticality）
 config/scoring.json            旧评分模型配置（legacy，**不接线**）
@@ -285,7 +287,7 @@ node --import tsx src/cli/tiancha.ts research smoke
 
 ---
 
-## 7. 数据模型（19 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
+## 7. 数据模型（20 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
 
 **2A（11）**：industry · company · research_question · information_requirement · research_gap · information_pool_entry(legacy) · research_state · research_source · research_document · next_action · methodology
 
@@ -296,6 +298,8 @@ node --import tsx src/cli/tiancha.ts research smoke
 **S3（2，Pool 新模型）**：information_pool_slot · information_pool_item
 
 **S4（1）**：investment_evaluation
+
+**S6（1，只读投影）**：report_snapshot（append-only；`report_kind` 区分 report/dossier）
 
 **加列（PRAGMA 预检查）**：`industry.current_knowledge_id`、`methodology.dimensions_json`、`information_requirement.{confirmed,uncertain,unknown}_condition` + `preferred_position_kinds_json` + `sufficiency_policy_ref`（S4.5）、`research_gap.gap_type`（S4.5）、`investment_evaluation.{evaluation,aggregation}_policy_version_id`（S4.5）
 
@@ -365,7 +369,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **S4.5** | **Research Signal Integrity**：Gap 生命周期（open/resolved/reopened + `gap_type`）、Pool `sufficient` 可达与 conflict 恢复、共享 Sufficiency Policy、Evaluation 业务可达、Policy provenance（三 version ref + 不可变） | ✅ |
 | **S4.5-R1** | Pool 的 sufficiency policy 由 `Requirement.sufficiencyPolicyRef` 解析（消除 Pool/Evaluation 漂移）；无静默回退 | ✅ |
 | **S5** | **PriorityService + ResearchPriority + NextAction**（六因子加权、`acquisition` 由现有信号推导、NextAction 由 Priority/Gap 驱动） | ✅ |
-| **S6** | Report/Dossier 投影（最小形态） | ⏳ |
+| **S6** | **Report / IndustryDossier 只读投影**（append-only 快照；不改任何 SoT；含优先级只读呈现） | ✅ |
 | **S7** | CLI + Agent 工具（pool/evaluate/priority/report） | ⏳ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
@@ -411,6 +415,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **（S5）`acquisitionValue` = 缺口解决价值；`acquisitionCost` = 信息获取难度先验**：二者**只能**由已存在的 Requirement/Gap/Pool/Methodology 信号推导；**不伪造** Target/Chain/公司/时间/货币成本（属 Phase B）。
 - **（S5）NextAction：Priority 决定"先做谁"，Gap 状态决定"做什么"**：`kind` 由 `gapType` 决定（unknown→retrieve_data、insufficient/conflict→request_manual_input）；**不按成本档位绑定 kind**。
 - **（S5）`NextAction.priority` = 0..100 优先分（越大越先做）**，`listNextActions` 改为 `priority DESC, action_id ASC`（确定性）。
+- **（S6）Report / Dossier 只是投影**：只读现有 Knowledge/Pool/Gap/State/Evaluation/Priority 并**冻结快照**；**不写任何 SoT**（I14，测试用"全状态指纹前后一致"证明）；条目只**引用**（claimRef/beliefId/gapId）不复制；`ResearchPriority` 只呈现、**不重算**；**不**引入 Evidence/Target/Chain/Strategy/LLM 抽取。
 - **（S4.5）Policy provenance 不可伪造**：一次 Evaluation 记录 methodology + evaluation + aggregation 三个 version ref；`PolicyRegistry` 拒绝用不同内容重注册同一 versionId。
 - **（S4.5）S5 之前不写 Priority**：S4.5 只恢复到 Evaluation 为止；PriorityService / ResearchPriority / 优先级排序算法属 S5。
 
@@ -431,6 +436,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | 默认 scoring rule 是"证据强度分"，**不是投资锚点评分** | 真实评分需替换 rule | 方法论演进 |
 | **Policy（eval / agg / suf / prio）仍定义在代码中**（已版本化 + 不可变，但未落 DB） | "改口径 = 改方法论版本"尚未完全成立 | 后续 |
 | **S5：`acquisitionCost` 是获取难度先验**（按 gapType + 是否需要一手），非真实外部成本 | 真实成本需 Target/Chain（Phase B）接入后重估 | Phase B |
+| **S6：`MethodologyService.getActive()` 有 lazy-bootstrap 写副作用**（ReportService 读方法论时会触发首启写） | 未 bootstrap 的库上生成投影会写 methodology；已 bootstrap 后无影响 | 顺手清 |
 | `nextVersionTag()` 用计数、`getActive()` lazy-bootstrap 有写副作用、`isHumanApprovedBaseline` 命名漂移 | 低危 | 顺手清 |
 | `evidence/`、`dossier/`、`scoring/`、`planning/`、`agents/`、`scheduler/` 空壳 | 相关能力未实现 | Phase B+ |
 | 无模型 key 时语义路由未端到端验收 | 契约级测试 | 有模型环境后补 |
@@ -446,7 +452,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts   # 预期 114 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts   # 预期 120 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
