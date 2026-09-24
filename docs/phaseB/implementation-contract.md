@@ -183,14 +183,23 @@ QuestionTargetFit {
 **`answerability` 规则（唯一算法）**：
 
 ```
-base = match(position.suggestedTargetKinds, target.targetKind)      // 该位置是否本就建议此类对象
-        && match(position.dimensionKeys, question.dimension)        // 该位置是否服务于该维度
+base = match(position.suggestedTargetKinds, target.targetKind)                  // 该位置是否本就建议此类对象
+        && position.satisfiesRequirementRefs.includes(question.requirementId)  // 该位置是否服务该问题
      ⇒ strong  若两者皆中
      ⇒ partial 若仅其一
-     ⇒ weak    若皆不中但 position 与该维度有关联（suitableEvidenceKinds 有交集）
+     ⇒ weak    若皆不中，但该位置仍能提供证据（suitableEvidenceKinds 非空）
      ⇒ none    否则
-降级：若 target.limitations 或 position.limitations 命中该维度 ⇒ 至少降一级，并记 limitations
+降级：**只依据明确信号** —— `target.isFallback === true` ⇒ 至少降一级，并把 fallback caveat 写进 fitReason。
+      `target.limitations` / `position.limitations` 一律**原样记入 `fit.limitations`**（作为下游 caveat），
+      **不做文本匹配降级** —— 在无 LLM 的前提下，"limitations 命中某维度" 无法可靠判定。
 ```
+
+> **B3 契约修正（两处）**：
+> ① 规则原先写 `match(position.dimensionKeys, question.dimension)`，但 **`ResearchPosition` 实例没有 `dimensionKeys`**
+>    （那是 `ChainTemplatePosition` 的字段）；实例存的是 `satisfiesRequirementRefs`（维度→Requirement 的映射结果），
+>    语义等价且更精确，已改用后者。
+> ② 降级原先写"limitations 命中该维度 ⇒ 降级"，但 limitations 是自由文本、**无 LLM 无法可靠匹配**；
+>    已改为"只依据明确信号（`isFallback`）降级，limitations 全量作为 caveat 传递"。
 
 **不变量（F3 ②）**：`answerability ∈ {weak,none}` **且** 该问题 priority 高 ⇒ 该问题在 Outline 中**必须**走 fallback（`isFallbackSource=true` + `caveat` 非空）。若无可用 fallback target ⇒ **仍标记 caveat**（"无合适对象，需降低置信度并交叉验证"），**不得静默降级**。
 
@@ -316,6 +325,7 @@ CREATE INDEX IF NOT EXISTS idx_dp_target ON diligence_preparation(target_ref);
 |---|---|
 | ResearchNeed | `= gapId`（派生） |
 | ResearchPosition | `pos-<industryId>-<templateId>-<chainVersion>-<positionKey>`（**版本参与身份**，I-B7） |
+| QuestionTargetFit | `fit-<targetRef>-<questionRef>`（**派生，不落表**） |
 | ResearchTarget | `tgt-<industryId>-<slug(subjectKey)>` |
 | QuestionTargetFit | `fit-<targetRef>-<questionRef>`（派生） |
 | DiligencePreparation | `dp-<targetRef>` |
@@ -424,7 +434,7 @@ LLM / 外部数据源 / Company Discovery / Evidence 全链 / Priority·Evaluati
 |---|---|---|
 | **B1** | Domain + Template Registry（`ChainTemplate` / `ResearchPosition` / `ResearchNeed` 派生 / ID / version / invariant） | ✅ `eb30a1f` |
 | **B2** | `ResearchTarget`（人录入 / stable ID / fallback / provenance / CLI；**不开放 Agent 写**） | ✅ `253decb` |
-| **B3** | `QuestionTargetFit`（规则判定；weak + important ⇒ fallback + caveat） | ⏳ |
+| **B3** | `QuestionTargetFit`（规则判定；weak + important ⇒ fallback + caveat） | ✅ `e64ddd4` |
 | **B4** | `DiligencePreparation`（`common` / `target_specific` / `fit_derived` + 可追溯） | ⏳ |
 | **B5** | CLI / Agent 展示（含 `research chain / need / target / diligence`） | ⏳ |
 

@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-24 重写 · Phase B v1 Step B2 后更新** · HEAD `253decb` · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **173 tests 全过** · `research smoke` PASS。
+> **2026-09-24 重写 · Phase B v1 Step B3 后更新** · HEAD `e64ddd4` · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **181 tests 全过** · `research smoke` PASS。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。
 
 ---
@@ -152,6 +152,7 @@
 | **C-MVP** **最小材料入口**：`Material`（**自带 subject provenance**）+ 规则解析（`[CLAIM]` 块，**无 LLM**）+ 复用既有 `ingestClaims` + content-hash 幂等 | `domain/material*.ts`、`application/material-ingest-service.ts`、`src/cli/research-commands.ts` | `c-mvp-material.test.ts`、`material-cli.test.ts` |
 | **B1**（Phase B v1 第一步）**ChainTemplate + ResearchPosition + ResearchNeed**（模板实例带 `chainVersion`；I-B1 无空节点；Need 只读派生） | `domain/chain-template.ts`、`domain/research-position.ts`、`domain/research-need.ts`、`application/chain-projection-service.ts`、`application/research-need-service.ts` | `phase-b-step-b1.test.ts`（T-B1–T-B5） |
 | **B2**（Phase B v1 第二步）**ResearchTarget = Human-confirmed subject**（`createdBy` 硬编码 `user`；**无 Position→Target 路径**；fallback 必须带 ref + limitations；`targetCaveats()` 供下游） | `domain/research-target.ts`、`application/target-service.ts`、`src/cli/research-commands.ts` | `phase-b-step-b2.test.ts`（T-B6–T-B10/T-B12）、`target-cli.test.ts`（T-B11） |
+| **B3**（Phase B v1 第三步）**QuestionTargetFit = 规则判定**（纯函数 `evaluateFit()`：`targetKind × 服务问题 → strong/partial/weak/none`；weak/none + 重要问题 ⇒ `requiresFallback`；**只提出需求、不选对象**；不落表） | `domain/question-target-fit.ts`、`application/question-target-fit-service.ts` | `phase-b-step-b3.test.ts`（T-B13–T-B17） |
 
 ### 2.2 只有 Domain Contract（有类型、无实现/无闭环）
 
@@ -172,7 +173,7 @@
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 173 tests / 173 pass / 0 fail
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 181 tests / 181 pass / 0 fail
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
@@ -236,14 +237,14 @@ src/
 web/  data/  tools/wind_query.py   （旧 Web + JSON 仓储 + Wind 桥，legacy）
 
 packages/research/src/
-  domain/          44 个领域文件（… / material*.ts / chain-template.ts / research-position.ts / research-need.ts / research-target.ts）
+  domain/          45 个领域文件（… / chain-template.ts / research-position.ts / research-need.ts / research-target.ts / question-target-fit.ts）
   ports/           Port 抽象（AgentSessionFactory/EventBus/Session/DataProvider/ModelResolver…）
   storage/         research-db.ts（20 表 + PRAGMA 迁移）、research-repository.ts、knowledge-repository.ts、
                    report-repository.ts（S6 只读投影）、artifact-store.ts、research-event-store.ts
   application/     report-service.ts(S6) · priority-service.ts(S5) · evaluation-service.ts(S4) ·
                    material-ingest-service.ts(C-MVP) · chain-projection-service.ts(B1) ·
                    research-need-service.ts(B1) · target-service.ts(B2) ·
-                   knowledge-projection-service.ts(2C) ·
+                   question-target-fit-service.ts(B3) · knowledge-projection-service.ts(2C) ·
                    methodology-service.ts(P1) · opportunity-discovery-service.ts(2A + 回填)
   providers/       echo-data-provider.ts（占位）
   runtime/         tiancha-runtime / task-engine / orchestrator / child-session / human-gate / model-router / event-adapter
@@ -407,6 +408,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **C-MVP** | **最小材料入口**（`research material add` / `research_material_add`；规则解析 + 复用 `ingestClaims` + 幂等） | ✅ |
 | **B1** | Phase B v1 第一步：`ChainTemplate` + `ResearchPosition`（模板实例）+ `ResearchNeed`（只读派生） | ✅ |
 | **B2** | Phase B v1 第二步：`ResearchTarget` = Human-confirmed subject（`--name` 由人给；无 Position→Target 路径） | ✅ |
+| **B3** | Phase B v1 第三步：`QuestionTargetFit` = 规则判定（weak/none + 重要问题 ⇒ 提出备选需求，不选对象） | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -501,7 +503,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 173 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 181 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
