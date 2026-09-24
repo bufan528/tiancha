@@ -21,3 +21,4 @@ export * from "./application/methodology-service.js";
 export * from "./application/evaluation-service.js";
 export * from "./application/priority-service.js";
 export * from "./application/report-service.js";
+export * from "./application/material-ingest-service.js";

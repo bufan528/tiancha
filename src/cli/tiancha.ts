@@ -45,10 +45,11 @@ import {
   EvaluationService,
   PriorityService,
   ReportService,
+  MaterialIngestService,
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
-import { RESEARCH_SUBCOMMANDS, runResearchCommand, type ResearchCliDeps } from "./research-commands.js";
+import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runResearchCommand, type ResearchCliDeps } from "./research-commands.js";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -445,12 +446,16 @@ async function run(): Promise<void> {
     return;
   }
 
-  // --- S7: capability exposure — evaluate / pool / priority / report ----------
+  // --- S7 / C-MVP: capability exposure + the material input pipe --------------
   // The handlers are a thin composition seam (see src/cli/research-commands.ts);
-  // only `evaluate` may write, and only to its own InvestmentEvaluation.
-  if (tianchaBrand && args[0] === "research" && (RESEARCH_SUBCOMMANDS as readonly string[]).includes(args[1] ?? "")) {
-    const { dbPath } = foundationPaths();
+  // only `evaluate` and `material add` may write, and each only to its own artifact.
+  const isResearchSub =
+    args[0] === "research" && (RESEARCH_SUBCOMMANDS as readonly string[]).includes(args[1] ?? "");
+  const isMaterialAdd = args[0] === "research" && args[1] === "material" && args[2] === "add";
+  if (tianchaBrand && (isResearchSub || isMaterialAdd)) {
+    const { dbPath, artifactDbPath } = foundationPaths();
     const db = new ResearchDb({ path: dbPath });
+    const artifacts = new SqliteArtifactStore({ path: artifactDbPath });
     try {
       const repo = new ResearchRepository(db.db);
       const deps: ResearchCliDeps = {
@@ -458,12 +463,16 @@ async function run(): Promise<void> {
         evaluation: new EvaluationService(db.db),
         priority: new PriorityService(db.db),
         reports: new ReportService(db.db),
+        materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),
         err: (line) => console.error(line),
       };
-      process.exitCode = await runResearchCommand(args[1] as string, args.slice(2), deps);
+      process.exitCode = isMaterialAdd
+        ? await runMaterialAdd(args[3], args[4], { json: args.includes("--json") }, deps)
+        : await runResearchCommand(args[1] as string, args.slice(2), deps);
     } finally {
+      await artifacts.close();
       db.close();
     }
     return;

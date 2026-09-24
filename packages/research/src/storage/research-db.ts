@@ -299,6 +299,24 @@ export class ResearchDb {
         sections_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_report_subject ON report_snapshot(subject_kind, subject_id);
+
+      -- Phase C-MVP: user-supplied materials. Carries subject provenance from day one.
+      CREATE TABLE IF NOT EXISTS material (
+        material_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        filename TEXT,
+        content_hash TEXT NOT NULL,
+        raw_text TEXT NOT NULL,
+        locator TEXT,
+        claim_refs_json TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_material_subject ON material(subject_kind, subject_id);
+      CREATE INDEX IF NOT EXISTS idx_material_hash ON material(subject_kind, subject_id, content_hash);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();

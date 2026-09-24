@@ -22,6 +22,7 @@ import type {
   HumanGate,
   InvestmentEvaluation,
   GapType,
+  Material,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -543,6 +544,57 @@ export class ResearchRepository {
       .run(d.documentId, d.sourceId, d.title, d.rawTextLocator ?? null, d.createdAt);
   }
 
+  // ---- Material (Phase C-MVP) ----
+  /**
+   * Materials carry their OWN subject provenance (subject_kind + subject_id), so they can
+   * always be attributed, listed and cleaned safely — unlike pre-existing Source rows.
+   */
+  upsertMaterial(m: Material): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO material
+         (material_id, subject_kind, subject_id, kind, title, filename, content_hash,
+          raw_text, locator, claim_refs_json, received_at, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        m.materialId,
+        m.subjectKind,
+        m.subjectId,
+        m.kind,
+        m.title,
+        m.filename ?? null,
+        m.contentHash,
+        m.rawText,
+        m.locator ?? null,
+        JSON.stringify(m.claimRefs),
+        m.receivedAt,
+        m.createdAt,
+      );
+  }
+
+  getMaterial(materialId: string): Material | undefined {
+    const r = this.db.prepare("SELECT * FROM material WHERE material_id = ?").get(materialId) as any;
+    return r ? rowToMaterial(r) : undefined;
+  }
+
+  /** Idempotency lookup: the same subject + the same content fingerprint. */
+  findMaterialByHash(subjectKind: string, subjectId: string, contentHash: string): Material | undefined {
+    const r = this.db
+      .prepare(
+        "SELECT * FROM material WHERE subject_kind = ? AND subject_id = ? AND content_hash = ? ORDER BY created_at ASC LIMIT 1",
+      )
+      .get(subjectKind, subjectId, contentHash) as any;
+    return r ? rowToMaterial(r) : undefined;
+  }
+
+  listMaterials(subjectId: string): Material[] {
+    const rows = this.db
+      .prepare("SELECT * FROM material WHERE subject_id = ? ORDER BY received_at ASC, material_id ASC")
+      .all(subjectId) as any[];
+    return rows.map(rowToMaterial);
+  }
+
   // ---- NextAction ----
   upsertNextAction(a: NextAction): void {
     this.db
@@ -831,6 +883,23 @@ function rowToHumanGate(row: any): HumanGate {
     resumeTokenScope: row.resume_token_scope_json ? JSON.parse(row.resume_token_scope_json) : undefined,
     resumeTokenExpiresAt: row.resume_token_expires_at ?? undefined,
     resumeTokenConsumed: row.resume_token_consumed === 1,
+  };
+}
+
+function rowToMaterial(row: any): Material {
+  return {
+    materialId: row.material_id,
+    subjectKind: row.subject_kind,
+    subjectId: row.subject_id,
+    kind: row.kind,
+    title: row.title,
+    filename: row.filename ?? undefined,
+    contentHash: row.content_hash,
+    rawText: row.raw_text,
+    locator: row.locator ?? undefined,
+    claimRefs: JSON.parse(row.claim_refs_json),
+    receivedAt: row.received_at,
+    createdAt: row.created_at,
   };
 }
 

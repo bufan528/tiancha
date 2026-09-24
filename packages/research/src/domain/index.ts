@@ -33,3 +33,5 @@ export * from "./evaluation-policy.js";
 export * from "./priority.js";
 export * from "./priority-policy.js";
 export * from "./report.js";
+export * from "./material.js";
+export * from "./material-parser.js";

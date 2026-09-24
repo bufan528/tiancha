@@ -32,6 +32,7 @@ import {
   MethodologyService,
   PriorityService,
   ReportService,
+  MaterialIngestService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 
@@ -82,6 +83,7 @@ export class TianchaAgentHost {
       methodology,
       priority: new PriorityService(db.db),
       reports: new ReportService(db.db),
+      materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
     });
 
     const services = await createAgentSessionServices({

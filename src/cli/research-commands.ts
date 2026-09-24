@@ -14,10 +14,11 @@
  *              (appends a projection ONLY — Knowledge/Pool/Gap/Evaluation/State untouched)
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import type {
   EvaluationService,
+  MaterialIngestService,
   PriorityService,
   ReportService,
   ResearchRepository,
@@ -25,6 +26,7 @@ import type {
 import { MethodologyService } from "@tiancha/research";
 import {
   formatEvaluationHuman,
+  formatMaterialAddHuman,
   formatPoolHuman,
   formatPriorityHuman,
   formatReportHuman,
@@ -38,6 +40,8 @@ export interface ResearchCliDeps {
   evaluation: EvaluationService;
   priority: PriorityService;
   reports: ReportService;
+  /** C-MVP: the material input pipe (writes a Material, then the existing claim pipeline). */
+  materials: MaterialIngestService;
   /** Materialised-Markdown directory (production: `~/.tiancha/reports`). */
   reportDir: string;
   out: (line: string) => void;
@@ -115,6 +119,69 @@ export async function runReport(name: string | undefined, options: ResearchCliOp
   const mdPath = join(deps.reportDir, reportFileName(ind.canonicalName, dossier.dossierId));
   writeFileSync(mdPath, markdown, "utf8");
   deps.out(options.json ? toJson({ ...dossier, markdownPath: mdPath }) : formatReportHuman(dossier, mdPath));
+  return 0;
+}
+
+// ---- C-MVP: material entry --------------------------------------------------
+
+/** `tiancha research material add <行业> <文件>` — the first real input pipe. */
+export async function runMaterialAdd(
+  industryName: string | undefined,
+  file: string | undefined,
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (!industryName || !file) {
+    deps.err("usage: tiancha research material add <行业> <文件> [--json]");
+    return 1;
+  }
+  const ind = deps.repo.findIndustryByName(industryName);
+  if (!ind) {
+    deps.err(`未找到行业「${industryName}」。请先用 tiancha industry ingest 建立该行业。`);
+    return 1;
+  }
+
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (err) {
+    deps.err(`无法读取材料文件：${(err as Error).message}`);
+    return 1;
+  }
+
+  const snapshot = () => ({
+    openGaps: deps.repo
+      .listGaps(ind.industryId)
+      .filter((g) => g.status === "open" || g.status === "mitigating").length,
+    priorities: deps.priority.currentPriorities(ind.industryId).length,
+    slotStatuses: Object.fromEntries(
+      deps.repo.listPoolSlots(ind.industryId).map((s) => [s.dimension, s.status]),
+    ),
+  });
+
+  const before = snapshot();
+  const title = basename(file);
+  const result = await deps.materials.ingest({
+    subjectKind: "industry",
+    subjectId: ind.industryId,
+    title,
+    text,
+    filename: title,
+    locator: file,
+  });
+  const after = snapshot();
+
+  const view = {
+    industry: ind.canonicalName,
+    title,
+    materialId: result.material.materialId,
+    created: result.created,
+    parsedClaims: result.parsedClaims,
+    parseErrors: result.parseErrors,
+    before,
+    after,
+  };
+  deps.out(options.json ? toJson(view) : formatMaterialAddHuman(view));
   return 0;
 }
 

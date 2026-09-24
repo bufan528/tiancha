@@ -123,3 +123,34 @@ export function formatReportHuman(d: IndustryDossier, markdownPath: string): str
     `  Markdown：${markdownPath}`,
   ].join("\n");
 }
+
+/** C-MVP: the before/after view of one material ingestion (so a user SEES the effect). */
+export interface MaterialAddView {
+  industry: string;
+  title: string;
+  materialId: string;
+  created: boolean;
+  parsedClaims: number;
+  parseErrors: string[];
+  before: { openGaps: number; priorities: number; slotStatuses: Record<string, string> };
+  after: { openGaps: number; priorities: number; slotStatuses: Record<string, string> };
+}
+
+export function formatMaterialAddHuman(v: MaterialAddView): string {
+  const changed = Object.keys(v.after.slotStatuses).filter(
+    (k) => v.before.slotStatuses[k] !== v.after.slotStatuses[k],
+  );
+  const lines: string[] = [
+    `材料入库${v.created ? "" : "（相同材料已存在，本次跳过）"}：${v.title}`,
+    `  行业：${v.industry} · material ${v.materialId} · 解析出 ${v.parsedClaims} 条 claim`,
+  ];
+  if (v.parseErrors.length > 0) lines.push(`  解析提示：${v.parseErrors.join("；")}`);
+  lines.push(`  开放缺口：${v.before.openGaps} → ${v.after.openGaps}`);
+  lines.push(`  优先级条目：${v.before.priorities} → ${v.after.priorities}`);
+  lines.push(
+    changed.length > 0
+      ? `  槽位变化：${changed.map((k) => `${k} ${v.before.slotStatuses[k]}→${v.after.slotStatuses[k]}`).join("，")}`
+      : "  槽位变化：（无）",
+  );
+  return lines.join("\n");
+}

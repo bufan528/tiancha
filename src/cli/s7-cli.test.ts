@@ -20,6 +20,7 @@ import {
   EvaluationService,
   PriorityService,
   ReportService,
+  MaterialIngestService,
 } from "@tiancha/research";
 import { parseResearchArgs, runResearchCommand, type ResearchCliDeps } from "./research-commands.js";
 
@@ -42,6 +43,7 @@ async function setupCli() {
     evaluation: new EvaluationService(db.db),
     priority: new PriorityService(db.db),
     reports: new ReportService(db.db),
+    materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
     reportDir,
     out: (l) => lines.push(l),
     err: (l) => lines.push(`ERR:${l}`),

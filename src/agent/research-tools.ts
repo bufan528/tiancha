@@ -18,6 +18,7 @@ import type { OpportunityDiscoveryService } from "@tiancha/research";
 import type { MethodologyService } from "@tiancha/research";
 import type { PriorityService } from "@tiancha/research";
 import type { ReportService } from "@tiancha/research";
+import type { MaterialIngestService } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
@@ -27,6 +28,8 @@ export interface ResearchToolDeps {
   priority: PriorityService;
   /** S7: generates a read-only projection (appends a snapshot; touches no SoT). */
   reports: ReportService;
+  /** C-MVP: the material input pipe (writes a Material, then the existing claim pipeline). */
+  materials: MaterialIngestService;
 }
 
 function json(text: string) {
@@ -58,7 +61,7 @@ const ProposeMethodologyParams = Type.Object({
 });
 
 export function buildResearchTools(deps: ResearchToolDeps) {
-  const { repo, service, methodology, priority, reports } = deps;
+  const { repo, service, methodology, priority, reports, materials } = deps;
 
   const research_industry_show = defineTool({
     name: "research_industry_show",
@@ -367,6 +370,58 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     },
   });
 
+  // ---- C-MVP: the material input pipe ---------------------------------------
+  // The Agent may now WRITE exactly one kind of thing: a user-supplied Material.
+  // It cannot write an Evaluation (that stays CLI-only) and it never recomputes
+  // priorities. The claims are read from explicit [CLAIM] blocks — no model involved.
+  const research_material_add = defineTool({
+    name: "research_material_add",
+    label: "把研究材料加入行业",
+    description:
+      "把一份真实研究材料（调研纪要 / 访谈整理 / 报告摘录）加入某个行业的研究系统。材料中请用 [CLAIM]…[/CLAIM] 块写明可从材料中确认的断言（dimension / content），只有块内内容会成为可追溯的事实，其余仅作为材料留存。加入后系统会重新计算信息池、缺口、优先级与报告。当用户说“把这份材料/纪要加入某行业的研究”时使用。",
+    promptSnippet: "把研究材料加入行业",
+    parameters: Type.Object({
+      name: Type.String({ description: "行业标准名（canonical name），如：人形机器人" }),
+      title: Type.String({ description: "材料标题，如：某公司专家访谈纪要 2026-03" }),
+      content: Type.String({ description: "材料正文（Markdown/纯文本）；可用 [CLAIM] 块声明结论" }),
+    }),
+    async execute(_id, params: { name: string; title: string; content: string }) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。请先用 research_industry_ingest 建立该行业。`);
+
+      const openGaps = () =>
+        repo.listGaps(ind.industryId).filter((g) => g.status === "open" || g.status === "mitigating").length;
+      const before = { openGaps: openGaps(), priorities: priority.currentPriorities(ind.industryId).length };
+
+      const result = await materials.ingest({
+        subjectKind: "industry",
+        subjectId: ind.industryId,
+        title: params.title,
+        text: params.content,
+      });
+
+      const after = { openGaps: openGaps(), priorities: priority.currentPriorities(ind.industryId).length };
+      return json(
+        JSON.stringify(
+          {
+            industry: ind.canonicalName,
+            materialId: result.material.materialId,
+            created: result.created,
+            parsedClaims: result.parsedClaims,
+            parseErrors: result.parseErrors,
+            before,
+            after,
+            note: result.created
+              ? "材料已入库，并已驱动研究状态更新。"
+              : "相同材料已存在，本次未重复写入。",
+          },
+          null,
+          2,
+        ),
+      );
+    },
+  });
+
   return [
     research_industry_ingest,
     research_industry_show,
@@ -378,6 +433,7 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     research_evaluate,
     research_priority,
     research_report,
+    research_material_add,
     research_methodology_show,
     research_methodology_list,
     research_methodology_propose,

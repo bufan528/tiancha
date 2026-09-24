@@ -26,6 +26,7 @@ import {
   PriorityService,
   ReportService,
   EvaluationService,
+  MaterialIngestService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 import { EVIDENCE_INSUFFICIENT, dimensionStatusLabel, formatEvaluationHuman } from "../cli/research-format.js";
@@ -51,6 +52,7 @@ async function setup() {
     methodology: new MethodologyService(repo),
     priority: new PriorityService(db.db),
     reports: new ReportService(db.db),
+    materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
   }) as any[];
   const byName = new Map(tools.map((t) => [t.name, t]));
   return { db, repo, sid, tools, byName };
@@ -72,10 +74,10 @@ const countEvals = (db: ResearchDb) =>
   (db.db.prepare("SELECT COUNT(*) AS n FROM investment_evaluation").get() as any).n;
 
 describe("S7 capability exposure", () => {
-  test("T-A12-1 / T-A12-2: exactly 13 uniquely-named tools; the 4 new ones registered", async () => {
+  test("T-A12-1 / T-A12-2: exactly 14 uniquely-named tools; the 4 S7 tools registered", async () => {
     const { tools, byName, db } = await setup();
-    assert.equal(tools.length, 13, "exactly 13 tools");
-    assert.equal(new Set(tools.map((t) => t.name)).size, 13, "no duplicate registration");
+    assert.equal(tools.length, 14, "exactly 14 tools (13 from S7 + C-MVP material_add)");
+    assert.equal(new Set(tools.map((t) => t.name)).size, 14, "no duplicate registration");
     for (const n of S7_TOOLS) assert.ok(byName.has(n), `missing tool ${n}`);
     db.close();
   });
