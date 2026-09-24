@@ -14,7 +14,7 @@
 |---|---|
 | 当前阶段 | **Phase B v1 · B1–B5 全部完成，FINAL PASS（2026-09-25 独立验收）；Phase C 待授权** |
 | 验收状态 | **Phase B v1 FINAL PASS**（B5 代码 `6eb9ea2` / 文档 `8ec8f6f`，2026-09-25 独立验收通过） |
-| HEAD / 远端 | `6eb9ea2`（代码）· 文档同步提交紧随其后；`origin/main` 已同步 |
+| HEAD / 远端 | B5 链：`6eb9ea2`（B5 代码）→ `8ec8f6f`（B5 文档同步）→ `27b9a37`（B5 acceptance closure，**当前 HEAD**）；其后仅剩本次文档 cleanup 提交。远端 `origin/main` 停在 `8ec8f6f`（B5 closure 与本次 cleanup 均**未 push**，按验收要求） |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **196 tests 全过** · `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`；`mw-v1` 已被 DATA-R1 修复（weight/criticality 齐全，`risk`/`key_validation` 恢复 critical）；**当前只有 `人形机器人` 一条行业**（B5 真实库验证产生的 position / target / preparation 残留已清理） |
 | 下一步 | **Phase C**：调研回填闭环（Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新），待授权 |
