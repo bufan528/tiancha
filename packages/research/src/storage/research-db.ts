@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SUFFICIENCY_POLICY_V1 } from "../domain/sufficiency.js";
+import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 
 export interface ResearchDbOptions {
   path: string;
@@ -305,6 +306,41 @@ export class ResearchDb {
     this.ensureS45Columns();
     this.backfillRequirementSufficiencyRef();
     this.migratePoolEntriesToSlots();
+    this.repairLegacyMethodologyV1();
+  }
+
+  /**
+   * DATA-R1 — legacy `mw-v1` repair. This is a DATA-COMPATIBILITY repair, NOT a
+   * methodology change: databases bootstrapped before S1 persisted the frozen baseline
+   * WITHOUT its weight/criticality fields, and the repository would happily read that
+   * incomplete row as the current v1.
+   *
+   * We restore the frozen baseline's OWN values, under its own versionId/versionTag/
+   * activatedAt. It NEVER creates a version/candidate/gate, never re-activates, and only
+   * touches rows that are CLEARLY the legacy shape (see `isLegacyV1Dimensions`), so a
+   * hand-edited or already-complete row is left untouched.
+   */
+  private repairLegacyMethodologyV1(): void {
+    const rows = this.db
+      .prepare(
+        `SELECT methodology_id, dimensions_json FROM methodology
+         WHERE methodology_id = ? AND version_tag = ? AND activated_at IS NOT NULL
+           AND dimensions_json IS NOT NULL`,
+      )
+      .all("mw-v1", "v1") as { methodology_id: string; dimensions_json: string }[];
+
+    for (const row of rows) {
+      let stored: unknown;
+      try {
+        stored = JSON.parse(row.dimensions_json);
+      } catch {
+        continue; // unparsable -> leave it alone
+      }
+      if (!Array.isArray(stored) || !isLegacyV1Dimensions(stored)) continue;
+      this.db
+        .prepare("UPDATE methodology SET dimensions_json = ? WHERE methodology_id = ?")
+        .run(JSON.stringify(METHODOLOGY_V1.dimensions), row.methodology_id);
+    }
   }
 
   /**
@@ -466,4 +502,23 @@ export class ResearchDb {
   close(): void {
     this.db.close();
   }
+}
+
+/**
+ * DATA-R1 guard: true ONLY for the pre-S1 v1 shape — the same 12 dimension keys as the
+ * frozen baseline, with weight/criticality absent on EVERY dimension. Anything else
+ * (key drift, wrong count, an already-complete row, a partially hand-edited row) is NOT
+ * repaired, so this migration can never silently overwrite real methodology data.
+ */
+function isLegacyV1Dimensions(dims: unknown[]): boolean {
+  if (dims.length !== METHODOLOGY_V1.dimensions.length) return false;
+  const expected = new Set(METHODOLOGY_V1.dimensions.map((d) => d.key));
+  for (const d of dims) {
+    const key = (d as { key?: unknown } | null)?.key;
+    if (typeof key !== "string" || !expected.has(key)) return false;
+  }
+  return dims.every((d) => {
+    const dim = d as { weight?: unknown; criticality?: unknown } | null;
+    return dim?.weight === undefined && dim?.criticality === undefined;
+  });
 }
