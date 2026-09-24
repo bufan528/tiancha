@@ -42,9 +42,13 @@ import {
   EchoDataProvider,
   OpportunityDiscoveryService,
   MethodologyService,
+  EvaluationService,
+  PriorityService,
+  ReportService,
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
+import { RESEARCH_SUBCOMMANDS, runResearchCommand, type ResearchCliDeps } from "./research-commands.js";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -438,6 +442,30 @@ async function run(): Promise<void> {
 
   if (tianchaBrand && args[0] === "research" && args[1] === "smoke") {
     await cmdResearchSmoke();
+    return;
+  }
+
+  // --- S7: capability exposure — evaluate / pool / priority / report ----------
+  // The handlers are a thin composition seam (see src/cli/research-commands.ts);
+  // only `evaluate` may write, and only to its own InvestmentEvaluation.
+  if (tianchaBrand && args[0] === "research" && (RESEARCH_SUBCOMMANDS as readonly string[]).includes(args[1] ?? "")) {
+    const { dbPath } = foundationPaths();
+    const db = new ResearchDb({ path: dbPath });
+    try {
+      const repo = new ResearchRepository(db.db);
+      const deps: ResearchCliDeps = {
+        repo,
+        evaluation: new EvaluationService(db.db),
+        priority: new PriorityService(db.db),
+        reports: new ReportService(db.db),
+        reportDir: join(homedir(), ".tiancha", "reports"),
+        out: (line) => console.log(line),
+        err: (line) => console.error(line),
+      };
+      process.exitCode = await runResearchCommand(args[1] as string, args.slice(2), deps);
+    } finally {
+      db.close();
+    }
     return;
   }
 

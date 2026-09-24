@@ -15,6 +15,8 @@ import {
   EchoDataProvider,
   OpportunityDiscoveryService,
   MethodologyService,
+  PriorityService,
+  ReportService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 
@@ -26,7 +28,13 @@ describe("T6 research tools delegate to repository (no keyword classifier)", () 
     const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
     await svc.ingestMaterial({ materialText: "测试材料", industryName: "固态电池" });
 
-    const tools = buildResearchTools({ repo, service: svc, methodology: new MethodologyService(repo) });
+    const tools = buildResearchTools({
+      repo,
+      service: svc,
+      methodology: new MethodologyService(repo),
+      priority: new PriorityService(db.db),
+      reports: new ReportService(db.db),
+    });
     const names = tools.map((t: any) => t.name);
     for (const n of [
       "research_industry_ingest",

@@ -3,3 +3,4 @@ export * from "./artifact-store.js";
 export * from "./research-db.js";
 export * from "./research-repository.js";
 export * from "./knowledge-repository.js";
+export * from "./report-repository.js";

@@ -19,3 +19,5 @@ export * from "./application/opportunity-discovery-service.js";
 export * from "./application/knowledge-projection-service.js";
 export * from "./application/methodology-service.js";
 export * from "./application/evaluation-service.js";
+export * from "./application/priority-service.js";
+export * from "./application/report-service.js";

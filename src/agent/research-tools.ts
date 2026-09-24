@@ -16,11 +16,17 @@ import { Type, type Static } from "typebox";
 import type { ResearchRepository } from "@tiancha/research";
 import type { OpportunityDiscoveryService } from "@tiancha/research";
 import type { MethodologyService } from "@tiancha/research";
+import type { PriorityService } from "@tiancha/research";
+import type { ReportService } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
   service: OpportunityDiscoveryService;
   methodology: MethodologyService;
+  /** S7: READ-ONLY face for priorities (S6-R1) — the tool never recomputes. */
+  priority: PriorityService;
+  /** S7: generates a read-only projection (appends a snapshot; touches no SoT). */
+  reports: ReportService;
 }
 
 function json(text: string) {
@@ -52,7 +58,7 @@ const ProposeMethodologyParams = Type.Object({
 });
 
 export function buildResearchTools(deps: ResearchToolDeps) {
-  const { repo, service, methodology } = deps;
+  const { repo, service, methodology, priority, reports } = deps;
 
   const research_industry_show = defineTool({
     name: "research_industry_show",
@@ -251,6 +257,116 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     },
   });
 
+  // ---- S7: capability exposure (read-only) ----------------------------------
+  // The Agent must NEVER change research state:
+  //   - evaluate / priority / pool READ what already exists (no recomputation);
+  //   - report appends a PROJECTION only (report_snapshot), never Knowledge/Pool/Gap.
+
+  const research_pool_show = defineTool({
+    name: "research_pool_show",
+    label: "查看信息池槽位",
+    description:
+      "查看某行业的信息池：每个维度的槽位状态（unknown/partial/sufficient/conflicting）与已整理的条目（含口径差异）。当用户问“现在知道什么/覆盖到什么程度/资料整理得怎么样”时使用。",
+    promptSnippet: "查看信息池槽位",
+    parameters: NameParam,
+    async execute(_id, params: Static<typeof NameParam>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const view = repo.listPoolSlots(ind.industryId).map((s) => ({
+        dimension: s.dimension,
+        status: s.status,
+        judgement: s.coverageJudgement,
+        items: repo.listPoolItems(s.slotId).map((i) => ({ claimRef: i.claimRef, relation: i.relation })),
+      }));
+      return json(JSON.stringify(view, null, 2));
+    },
+  });
+
+  const research_evaluate = defineTool({
+    name: "research_evaluate",
+    label: "查看投资评估",
+    description:
+      "查看某行业最近一次已落库的投资评估（覆盖度、各维度评价状态与分值、决策状态）。本工具只读取已产生的评估，不会重新计算；若尚无评估，会提示先由研究者执行评估命令。维度状态里的“证据不足”仅表示该维度证据不足，不构成任何结论。",
+    promptSnippet: "查看投资评估",
+    parameters: NameParam,
+    async execute(_id, params: Static<typeof NameParam>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const ev = repo.getLatestEvaluation("industry", ind.industryId);
+      if (!ev) {
+        return json("当前暂无已落库的投资评估，请先由研究者执行 `tiancha research evaluate <行业>`。");
+      }
+      return json(JSON.stringify(ev, null, 2));
+    },
+  });
+
+  const research_priority = defineTool({
+    name: "research_priority",
+    label: "查看研究优先级",
+    description:
+      "查看某行业当前的研究优先级（哪个缺口应当优先补，含分数与依据）。读取的是系统已产生的优先级结果；若尚无，会提示暂无。",
+    promptSnippet: "查看研究优先级",
+    parameters: NameParam,
+    async execute(_id, params: Static<typeof NameParam>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const ps = priority.currentPriorities(ind.industryId);
+      if (ps.length === 0) {
+        return json("当前暂无已产生的研究优先级（尚无已落库的缺口优先级）。");
+      }
+      return json(
+        JSON.stringify(
+          ps.map((p) => ({
+            gapId: p.gapId,
+            score: p.score,
+            rationale: p.rationale,
+            policyVersionId: p.policyVersionId,
+          })),
+          null,
+          2,
+        ),
+      );
+    },
+  });
+
+  const research_report = defineTool({
+    name: "research_report",
+    label: "生成研究报告投影",
+    description:
+      "为某行业生成一份只读的研究报告投影（当前认知/关键事实/主要判断/主要冲突/缺口/最近变化/最近证据/当前评价/优先级/下一步）。报告只是当前研究状态的快照，不改变任何研究数据；上游尚未产生的内容在该节显示为空。",
+    promptSnippet: "生成研究报告投影",
+    parameters: NameParam,
+    async execute(_id, params: Static<typeof NameParam>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const dossier = reports.generateDossier(ind.industryId);
+      const s = dossier.sections;
+      return json(
+        JSON.stringify(
+          {
+            dossierId: dossier.dossierId,
+            knowledgeVersion: dossier.knowledgeVersion,
+            sections: {
+              currentKnowledge: s.currentKnowledge.length,
+              keyFacts: s.keyFacts.length,
+              mainJudgments: s.mainJudgments.length,
+              conflicts: s.conflicts.length,
+              gaps: s.gaps.length,
+              recentChanges: s.recentChanges.length,
+              recentEvidence: s.recentEvidence.length,
+              evaluation: s.evaluation ? s.evaluation.decisionStatus : null,
+              priority: s.priority.length,
+              nextActions: s.nextActions.length,
+            },
+            note: "报告为只读投影，已追加一份快照；未改变任何研究数据。",
+          },
+          null,
+          2,
+        ),
+      );
+    },
+  });
+
   return [
     research_industry_ingest,
     research_industry_show,
@@ -258,6 +374,10 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     research_gap_list,
     research_next_action_list,
     research_state_show,
+    research_pool_show,
+    research_evaluate,
+    research_priority,
+    research_report,
     research_methodology_show,
     research_methodology_list,
     research_methodology_propose,

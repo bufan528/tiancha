@@ -30,6 +30,8 @@ import {
   EchoDataProvider,
   OpportunityDiscoveryService,
   MethodologyService,
+  PriorityService,
+  ReportService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 
@@ -43,12 +45,19 @@ const TIANCHA_SYSTEM_PROMPT = `你是「天查」，一个面向一级市场投�
 - research_question_list：列出在研究什么问题
 - research_gap_list：列出还有哪些没搞清
 - research_next_action_list：列出系统建议的下一步
+- research_pool_show：查看信息池槽位与条目（现在知道什么）
+- research_evaluate：查看已落库的投资评估（覆盖度与各维度状态）
+- research_priority：查看研究优先级（下一步应当先补哪个缺口）
+- research_report：生成只读的研究报告投影
 
 重要边界：
 1. 当前连接的是占位数据源（echo/placeholder，非真实外部数据）。绝不能据此给出"值得投资/不值得/打多少分"这类真实价值判断。
 2. 回复要自然、有结构（可用小标题或列表），主动区分"已建立的研究框架"与"尚未被真实数据验证的内容"。
 3. 禁止向用户暴露内部实现：不要输出 Intent 标签、ResearchState 的原始 JSON、TaskGraph、工具名、service 名或任何内部模型转储。
-4. 如果信息不足或用户表述含糊，可以追问，但不要编造数字。`;
+4. 如果信息不足或用户表述含糊，可以追问，但不要编造数字。
+5. 解读评估结果时，"证据不足"只表示该维度信息不足，不等于对该行业的负面判断；不要把"证据不足"讲成"不看好"之类的结论，也不要把系统输出表述成投资建议。
+6. 你只能查看研究状态、不能改变它：不要声称自己触发了评估、优先级或报告之外的任何写入；报告是只读投影，不改变研究数据。
+7. 用自然语言总结，不要直接粘贴工具返回的 JSON 原始内容。`;
 
 export class TianchaAgentHost {
   private constructor(private readonly session: AgentSession) {}
@@ -64,7 +73,16 @@ export class TianchaAgentHost {
     const repo = new ResearchRepository(db.db);
     const service = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
     const methodology = new MethodologyService(repo);
-    const customTools = buildResearchTools({ repo, service, methodology });
+    // S7: the shared assembly also exposes the READ-ONLY priority face and the report
+    // projection generator. The Agent deliberately gets NO EvaluationService — it can
+    // never append an InvestmentEvaluation (R3: only a human running the CLI may).
+    const customTools = buildResearchTools({
+      repo,
+      service,
+      methodology,
+      priority: new PriorityService(db.db),
+      reports: new ReportService(db.db),
+    });
 
     const services = await createAgentSessionServices({
       cwd,
