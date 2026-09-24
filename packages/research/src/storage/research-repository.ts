@@ -25,6 +25,7 @@ import type {
   Material,
   ResearchPosition,
   ResearchTarget,
+  DiligencePreparation,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -692,6 +693,54 @@ export class ResearchRepository {
     return rows.map(rowToTarget);
   }
 
+  // ---- DiligencePreparation (Phase B v1) ----
+  /**
+   * The preparation is the ONE thing B4 writes. Idempotent by `dp-<targetRef>`, so
+   * regenerating updates in place and `createdAt` / `status` survive.
+   */
+  upsertPreparation(p: DiligencePreparation): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO diligence_preparation
+         (preparation_ref, target_ref, industry_ref, purpose, target_brief, current_understanding_json,
+          why_this_target, requested_data_json, requested_materials_json, cautions_json, risks_json,
+          limitations_json, methodology_version_ref, questions_json, status, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        p.preparationRef,
+        p.targetRef,
+        p.industryRef,
+        p.purpose,
+        p.targetBrief,
+        JSON.stringify(p.currentUnderstanding),
+        p.whyThisTarget,
+        JSON.stringify(p.requestedData),
+        JSON.stringify(p.requestedMaterials),
+        JSON.stringify(p.cautions),
+        JSON.stringify(p.risks),
+        JSON.stringify(p.limitations),
+        p.methodologyVersionRef,
+        JSON.stringify(p.questions),
+        p.status,
+        p.createdAt,
+      );
+  }
+
+  getPreparation(preparationRef: string): DiligencePreparation | undefined {
+    const r = this.db
+      .prepare("SELECT * FROM diligence_preparation WHERE preparation_ref = ?")
+      .get(preparationRef) as any;
+    return r ? rowToPreparation(r) : undefined;
+  }
+
+  listPreparations(industryId: string): DiligencePreparation[] {
+    const rows = this.db
+      .prepare("SELECT * FROM diligence_preparation WHERE industry_ref = ? ORDER BY preparation_ref ASC")
+      .all(industryId) as any[];
+    return rows.map(rowToPreparation);
+  }
+
   // ---- NextAction ----
   upsertNextAction(a: NextAction): void {
     this.db
@@ -980,6 +1029,27 @@ function rowToHumanGate(row: any): HumanGate {
     resumeTokenScope: row.resume_token_scope_json ? JSON.parse(row.resume_token_scope_json) : undefined,
     resumeTokenExpiresAt: row.resume_token_expires_at ?? undefined,
     resumeTokenConsumed: row.resume_token_consumed === 1,
+  };
+}
+
+function rowToPreparation(row: any): DiligencePreparation {
+  return {
+    preparationRef: row.preparation_ref,
+    targetRef: row.target_ref,
+    industryRef: row.industry_ref,
+    purpose: row.purpose,
+    targetBrief: row.target_brief,
+    currentUnderstanding: JSON.parse(row.current_understanding_json),
+    whyThisTarget: row.why_this_target,
+    requestedData: JSON.parse(row.requested_data_json),
+    requestedMaterials: JSON.parse(row.requested_materials_json),
+    cautions: JSON.parse(row.cautions_json),
+    risks: JSON.parse(row.risks_json),
+    limitations: JSON.parse(row.limitations_json),
+    methodologyVersionRef: row.methodology_version_ref,
+    questions: JSON.parse(row.questions_json),
+    status: row.status,
+    createdAt: row.created_at,
   };
 }
 

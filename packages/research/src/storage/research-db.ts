@@ -360,6 +360,27 @@ export class ResearchDb {
         updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_target_industry ON research_target(industry_id);
+
+      -- Phase B v1: DiligencePreparation — the "what to ask" material for one target.
+      CREATE TABLE IF NOT EXISTS diligence_preparation (
+        preparation_ref TEXT PRIMARY KEY,
+        target_ref TEXT NOT NULL,
+        industry_ref TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        target_brief TEXT NOT NULL,
+        current_understanding_json TEXT NOT NULL,
+        why_this_target TEXT NOT NULL,
+        requested_data_json TEXT NOT NULL,
+        requested_materials_json TEXT NOT NULL,
+        cautions_json TEXT NOT NULL,
+        risks_json TEXT NOT NULL,
+        limitations_json TEXT NOT NULL,
+        methodology_version_ref TEXT NOT NULL,
+        questions_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_dp_target ON diligence_preparation(target_ref);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();

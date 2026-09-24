@@ -26,3 +26,4 @@ export * from "./application/chain-projection-service.js";
 export * from "./application/research-need-service.js";
 export * from "./application/target-service.js";
 export * from "./application/question-target-fit-service.js";
+export * from "./application/diligence-preparation-service.js";
