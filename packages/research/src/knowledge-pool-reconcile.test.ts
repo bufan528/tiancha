@@ -133,9 +133,12 @@ describe("Knowledge -> InformationPool reconcile", () => {
     });
     svc.reconcilePool(subj, "industry");
     assert.equal(poolOf(repo, subj, "demand").status, "conflicting");
-    // both beliefs still present
+    // C1: a dimension-level conflict leaves NO current belief — but both rows are retained.
     const k = svc.repository().findKnowledgeBySubject("industry", subj)!;
-    assert.equal(k.beliefs.length, 2);
+    assert.deepEqual(k.beliefs, [], "current ≡ confirmed only ⇒ empty after the conflict");
+    const hist = svc.repository().listBeliefs(k.knowledgeId);
+    assert.equal(hist.length, 2);
+    assert.equal(hist.filter((b) => b.state === "conflicting").length, 2);
   });
 
   test("S4.5: superseded history alone never satisfies sufficiency", () => {

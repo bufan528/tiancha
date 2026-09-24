@@ -66,28 +66,52 @@ describe("KnowledgeProjectionService", () => {
     assert.equal(k.version, 2);
   });
 
-  test("REVISE: old row content preserved as revised, new confirmed", () => {
+  test("REVISE: the NAMED target leaves current as `revised`, new belief is confirmed (C1)", () => {
+    const { svc, repo } = setup();
+    const subj = "ind-" + randomUUID();
+    const v1 = mkClaim(subj);
+    svc.projectFromClaim({ claim: v1, dimension: "market_growth" });
+    const r = svc.projectFromClaim({
+      claim: mkClaim(subj),
+      dimension: "market_growth",
+      relationHint: { kind: "REVISE", revisesClaimRef: v1.claimId },
+    });
+    assert.equal(r.evolution, "REVISE");
+    assert.equal(r.affectedBeliefRefs.length, 1, "the named target was flipped");
+
+    const k = repo.findKnowledgeBySubject("industry", subj)!;
+    // CURRENT ≡ confirmed only (C-FIX-12)
+    assert.deepEqual(k.beliefs.map((b) => b.state), ["confirmed"]);
+    // history keeps the revised row (never deleted)
+    const hist = repo.listBeliefs(k.knowledgeId);
+    assert.equal(hist.length, 2);
+    assert.equal(hist.filter((b) => b.state === "revised").length, 1);
+    assert.equal(hist.find((b) => b.claimRef === `artifact:claim/${v1.claimId}`)!.state, "revised");
+  });
+
+  test("REVISE without a target is SKIPPED and mutates NOTHING (C-FIX-8)", () => {
     const { svc, repo } = setup();
     const subj = "ind-" + randomUUID();
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "market_growth" });
+    const knowledgeId = repo.findKnowledgeBySubject("industry", subj)!.knowledgeId;
+    const before = JSON.stringify(repo.listBeliefs(knowledgeId));
+
     const r = svc.projectFromClaim({
       claim: mkClaim(subj),
       dimension: "market_growth",
       relationHint: { kind: "REVISE" },
     });
-    assert.equal(r.evolution, "REVISE");
-    const k = repo.findKnowledgeBySubject("industry", subj)!;
-    const revised = k.beliefs.find((b) => b.state === "revised");
-    const confirmed = k.beliefs.find((b) => b.state === "confirmed");
-    assert.ok(revised, "old belief kept as revised");
-    assert.ok(confirmed, "new belief confirmed");
-    // history: current projection drops nothing unless superseded; both visible
-    assert.equal(k.beliefs.length, 2);
+    assert.equal(r.evolution, "SKIPPED");
+    assert.equal(r.reason, "INVALID_EVOLUTION_TARGET");
+    assert.equal(r.beliefId, "", "nothing was written");
+    assert.equal(JSON.stringify(repo.listBeliefs(knowledgeId)), before, "zero mutation");
   });
 
-  test("CONFLICT (explicit): both sides conflicting + open conflict, nothing deleted", () => {
+  test("CONFLICT (explicit): DIMENSION-LEVEL conflicting + one direct pair, nothing deleted (C1)", () => {
     const { svc, repo } = setup();
     const subj = "ind-" + randomUUID();
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand" });
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand" });
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand" });
     const r = svc.projectFromClaim({
       claim: mkClaim(subj),
@@ -95,30 +119,36 @@ describe("KnowledgeProjectionService", () => {
       relationHint: { kind: "CONFLICT" },
     });
     assert.equal(r.evolution, "CONFLICT");
+    assert.ok(r.conflictRef, "the DIRECT conflict pair was recorded");
+
     const k = repo.findKnowledgeBySubject("industry", subj)!;
-    assert.equal(k.beliefs.every((b) => b.state === "conflicting"), true);
+    // Every confirmed belief of the dimension left current (C-FIX-1) ⇒ current is now empty.
+    assert.deepEqual(k.beliefs, []);
+    const hist = repo.listBeliefs(k.knowledgeId);
+    assert.equal(hist.length, 4, "nothing deleted");
+    assert.equal(hist.filter((b) => b.state === "conflicting").length, 4);
+    // Only the DIRECT pair is recorded — no fake B↔D / C↔D edges (C-FIX-1).
     assert.equal(repo.listOpenConflicts().length, 1);
-    // both beliefs still present (no overwrite/delete)
-    assert.equal(k.beliefs.length, 2);
   });
 
-  test("SUPERSEDE (explicit): old superseded, new confirmed, history kept", () => {
+  test("SUPERSEDE (explicit): the NAMED target leaves current, new belief is confirmed (C1)", () => {
     const { svc, repo } = setup();
     const subj = "ind-" + randomUUID();
-    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "technology" });
+    const old = mkClaim(subj);
+    svc.projectFromClaim({ claim: old, dimension: "technology" });
     const r = svc.projectFromClaim({
       claim: mkClaim(subj),
       dimension: "technology",
-      relationHint: { kind: "SUPERSEDE", supersedesClaimRef: "old" },
+      relationHint: { kind: "SUPERSEDE", supersedesClaimRef: `artifact:claim/${old.claimId}` },
     });
     assert.equal(r.evolution, "SUPERSEDE");
+
     const k = repo.findKnowledgeBySubject("industry", subj)!;
-    // current projection excludes superseded
-    assert.equal(k.beliefs.length, 1);
-    // history retained
+    // current projection = the new confirmed belief only
+    assert.deepEqual(k.beliefs.map((b) => b.state), ["confirmed"]);
     const hist = repo.listBeliefs(k.knowledgeId);
-    assert.equal(hist.length, 2);
-    assert.equal(hist.find((b) => b.state === "superseded")?.state, "superseded");
+    assert.equal(hist.length, 2, "history retained");
+    assert.equal(hist.find((b) => b.claimRef === `artifact:claim/${old.claimId}`)!.state, "superseded");
   });
 
   test("cross-dimension is never auto-judged (independent beliefs)", () => {

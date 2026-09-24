@@ -1,26 +1,39 @@
 /**
- * KnowledgeProjectionService (Phase 2C Step 2-A).
+ * KnowledgeProjectionService — Phase 2C Step 2-A, aligned to the **Phase C Final Lock**
+ * semantics by C1 (*Knowledge Projection Semantic Alignment*).
  *
- * Not a SELECT-claims→INSERT-knowledge aggregator. It really:
- *   find current IndustryKnowledge for subject → match SAME subject + SAME dimension
- *   current beliefs → apply conservative Evolution decision → persist (insert new
- *   belief, flip old belief state, optionally write Conflict) → bump current
- *   projection version.
+ * What C1 changed here (see docs/phaseC/implementation-contract.md):
+ *  - **one current predicate**: current ≡ `state === "confirmed"` (C-FIX-12 / P5);
+ *  - **deterministic identity** + **exact no-op** for an already-projected claim (P6 / C-FIX-11);
+ *  - **explicit, validated evolution target** for REVISE / SUPERSEDE (C-FIX-8),
+ *    and a target may be `confirmed` **or** `conflicting` (C-FIX-13);
+ *  - **dimension-level CONFLICT** with only the DIRECT pair recorded (C-FIX-1);
+ *  - **open conflict is never bypassed** by an ordinary NEW / SUPPORT (C-FIX-7);
+ *  - `candidate` / `rejected` lifecycle + human confirmation (P3 / C-FIX-3 / C-FIX-9).
  *
- * Conservatism (v1, per pre-coding clarification):
- *  - cross-dimension is NEVER auto-judged.
- *  - CONFLICT only on explicit contradiction hint; SUPERSEDE only on explicit
- *    supersedes hint; REVISE only on explicit revise hint. No numeric-range /
- *    caliber / time-window auto-conflict (no Metric Ontology yet).
- *  - without a hint and with a matching current belief → SUPPORT (safe default).
- *  - Claim has NO dimension field: dimension is an explicit required input.
+ * Decision order (contract §5) — every failing step must be ZERO mutation:
+ *   ⓪ placeholder data never enters Knowledge (Invariant 13)
+ *   ① already projected  → SKIPPED / ALREADY_PROJECTED (exact no-op)
+ *   ② evolution target   → SKIPPED / INVALID_EVOLUTION_TARGET
+ *   ③ open conflict      → candidate, or SKIPPED / OPEN_CONFLICT_REQUIRES_REVIEW
+ *   ④ ordinary rule      → NEW / SUPPORT (deterministic default)
+ *   ⑤ write              → insert belief (+ conflict), bump the current projection
  *
- * Step 2-A deliberately does NOT touch Pool/State; reconcile stubs below throw.
+ * Deliberately unchanged (C1 red line): `reconcilePool` / `refreshGaps` /
+ * `refreshNextActions` / `refreshState` business rules — C1 only changes the knowledge
+ * decision that FEEDS that chain, and proves the chain still behaves.
  */
 
 import type { DatabaseSync } from "node:sqlite";
 import { KnowledgeRepository } from "../storage/knowledge-repository.js";
 import { ResearchRepository } from "../storage/research-repository.js";
+import {
+  beliefIdFor,
+  canonicalClaimPair,
+  conflictIdFor,
+  isCurrentBelief,
+  isEvolvableBeliefState,
+} from "../domain/index.js";
 import { isSufficient, sufficiencyFacts, sufficiencyPolicies, type SufficiencyPolicy } from "../domain/sufficiency.js";
 import { PriorityService } from "./priority-service.js";
 import type {
@@ -29,6 +42,7 @@ import type {
   IndustryKnowledge,
   InformationRequirement,
   KnowledgeBelief,
+  KnowledgeBeliefState,
   KnowledgeConflict,
   KnowledgeSubjectKind,
   NextAction,
@@ -38,11 +52,32 @@ import type {
   StateItemRef,
 } from "../domain/index.js";
 
+/**
+ * The typed outcome of one projection (contract §4): four real Evolution relations plus two
+ * structural ones — `NEW` (first belief of a dimension) and `SKIPPED` (nothing was written).
+ * C1 deliberately adds NO new outcome value (C-FIX-11).
+ */
 export type KnowledgeEvolution = "SUPPORT" | "REVISE" | "CONFLICT" | "SUPERSEDE" | "NEW" | "SKIPPED";
+
+/** `ProjectionOutcome` is the same closed set (contract §4); kept as an alias for clarity. */
+export type ProjectionOutcome = KnowledgeEvolution;
+
+/** Closed set of machine-readable reasons (contract §20). Never free-form prose. */
+export type SkippedReason =
+  | "ALREADY_PROJECTED"
+  | "INVALID_EVOLUTION_TARGET"
+  | "OPEN_CONFLICT_REQUIRES_REVIEW"
+  | "CANDIDATE_REQUIRES_CONFIRMATION"
+  | "PLACEHOLDER_DATA"
+  | "INVALID_RELATION";
 
 export type RelationHint =
   | { kind: "SUPPORT" }
-  | { kind: "REVISE" }
+  /**
+   * C1: a REVISE must name the belief it revises. Without `revisesClaimRef` the projection is
+   * SKIPPED (INVALID_EVOLUTION_TARGET) — never "guess the latest anchor" (C-FIX-8).
+   */
+  | { kind: "REVISE"; revisesClaimRef?: string }
   | { kind: "CONFLICT"; note?: string }
   | { kind: "SUPERSEDE"; supersedesClaimRef: string };
 
@@ -54,15 +89,47 @@ export interface ProjectFromClaimInput {
   sourceRef?: string;
   evidenceRef?: string;
   confidence?: number;
-  /** Explicit evolution signal; absence + matching belief ⇒ SUPPORT. */
+  /** Explicit evolution signal; absence + matching belief ⇒ SUPPORT (deterministic rule). */
   relationHint?: RelationHint;
+  /**
+   * Caller-side Human Gate request (contract §7.2: "the system may PROPOSE a candidate").
+   * The projection then writes a `candidate` instead of `confirmed` — it never confirms itself.
+   */
+  requiresHumanGate?: boolean;
 }
 
 export interface ProjectResult {
   knowledgeId: string;
+  /** Backward-compatible alias of `outcome`. */
   evolution: KnowledgeEvolution;
+  outcome: ProjectionOutcome;
+  /** Empty when nothing was written (`SKIPPED`). */
   beliefId: string;
+  claimRef: string;
+  /** Old beliefs whose state was flipped by this projection (anchor / propagated / target). */
+  affectedBeliefRefs: string[];
+  /** Set when a `KnowledgeConflict` row was created. */
+  conflictRef?: string;
+  /** True when the written belief is a `candidate` awaiting human confirmation. */
+  requiresHumanGate: boolean;
+  reason?: SkippedReason;
 }
+
+/**
+ * Result of an explicit **HUMAN Gate** action (confirm / reject a candidate).
+ * Deliberately NOT a `ProjectionOutcome`: confirming a candidate is not a projection
+ * and must never be reachable by re-projecting the same claim (C-FIX-3).
+ */
+export interface CandidateDecisionResult {
+  knowledgeId: string;
+  beliefId: string;
+  state: KnowledgeBeliefState;
+  /** Beliefs whose lifecycle this decision changed (e.g. the REVISE / SUPERSEDE target). */
+  affectedBeliefRefs: string[];
+}
+
+/** The relations a human may choose when confirming a candidate (contract §7.4). */
+export type ConfirmRelation = "NEW" | "SUPPORT" | "REVISE" | "SUPERSEDE";
 
 export class KnowledgeProjectionService {
   private readonly knowledge: KnowledgeRepository;
@@ -78,45 +145,114 @@ export class KnowledgeProjectionService {
     return this.knowledge;
   }
 
+  /**
+   * Project ONE claim into this subject's knowledge (contract §5 decision order).
+   *
+   *  ⓪ placeholder data never enters Knowledge (Invariant 13);
+   *  ① an already-projected `(knowledgeId, claimRef)` is an EXACT no-op, in every state;
+   *  ② REVISE / SUPERSEDE must name a legal target (`confirmed` or `conflicting`);
+   *  ③ an open conflict on the dimension is never bypassed by an ordinary NEW / SUPPORT;
+   *  ④ otherwise the deterministic rule applies (no relation + anchor ⇒ SUPPORT);
+   *  ⑤ only now do we write — every path above is zero-mutation.
+   */
   projectFromClaim(input: ProjectFromClaimInput): ProjectResult {
     const { claim, dimension } = input;
     const now = new Date().toISOString();
     const subjectKind = claim.subjectKind as KnowledgeSubjectKind;
+    const claimRef = normalizeClaimRef(claim.claimId);
 
-    // Placeholder data (Echo) never enters Knowledge: it must not become a
-    // confirmed belief that later reconciles as real coverage (Invariant 5).
-    if (!claim.isRealExternalData) {
-      return { knowledgeId: "", evolution: "SKIPPED", beliefId: "" };
+    const skip = (knowledgeId: string, reason: SkippedReason): ProjectResult => ({
+      knowledgeId,
+      evolution: "SKIPPED",
+      outcome: "SKIPPED",
+      beliefId: "",
+      claimRef,
+      affectedBeliefRefs: [],
+      requiresHumanGate: false,
+      reason,
+    });
+
+    // ⓪ Placeholder data (Echo) never enters Knowledge (Invariant 13).
+    if (!claim.isRealExternalData) return skip("", "PLACEHOLDER_DATA");
+
+    // Read-only lookup: the header is written ONLY in step ⑤, so every skip stays zero-mutation.
+    const existingKnowledge = this.knowledge.findKnowledgeBySubject(subjectKind, claim.subjectId);
+    const knowledgeId = existingKnowledge?.knowledgeId ?? "";
+
+    // ① Already projected ⇒ exact no-op in EVERY state (C-FIX-11).
+    if (existingKnowledge && this.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, claimRef)) {
+      return skip(knowledgeId, "ALREADY_PROJECTED");
     }
 
-    // 1. current knowledge for this subject (create v1 if absent)
-    let knowledge = this.knowledge.findKnowledgeBySubject(subjectKind, claim.subjectId);
-    if (!knowledge) {
-      knowledge = {
-        knowledgeId: "kn-" + claim.subjectId + "-" + now.replace(/[:.]/g, ""),
-        subjectKind,
-        subjectId: claim.subjectId,
-        beliefs: [],
-        version: 1,
-        createdAt: now,
-        updatedAt: now,
-      };
-      this.knowledge.upsertKnowledge(knowledge);
+    const dimensionBeliefs = existingKnowledge
+      ? this.knowledge.listBeliefsByDimension(knowledgeId, dimension)
+      : [];
+    const confirmedOnDimension = dimensionBeliefs.filter((b) => isCurrentBelief(b.state));
+    const latestConfirmed = confirmedOnDimension[confirmedOnDimension.length - 1];
+
+    // ② Evolution target validation (C-FIX-8 + C-FIX-13). A dimension-level CONFLICT moves
+    //    every confirmed belief to `conflicting`, so `conflicting` MUST be a legal target —
+    //    otherwise "explicit evolution is the legal way out of a conflict" is unreachable.
+    const hint = input.relationHint;
+    let target: KnowledgeBelief | undefined;
+    if (hint?.kind === "REVISE" || hint?.kind === "SUPERSEDE") {
+      const targetRef = hint.kind === "SUPERSEDE" ? hint.supersedesClaimRef : hint.revisesClaimRef;
+      target = targetRef
+        ? this.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, normalizeClaimRef(targetRef))
+        : undefined;
+      if (!target || target.dimension !== dimension || !isEvolvableBeliefState(target.state)) {
+        return skip(knowledgeId, "INVALID_EVOLUTION_TARGET");
+      }
     }
 
-    // 2. same subject + same dimension, non-superseded current beliefs
-    const existing = this.knowledge
-      .listCurrentBeliefs(knowledge.knowledgeId)
-      .filter((b) => b.dimension === dimension);
+    // ③ An open conflict on this dimension must not be bypassed (C-FIX-7): an ordinary
+    //    NEW / SUPPORT becomes a CANDIDATE (or is skipped), never an auto-confirmed belief.
+    const explicitEvolution = hint?.kind === "REVISE" || hint?.kind === "SUPERSEDE";
+    const openConflicts = this.openConflictsForDimension(existingKnowledge, dimension);
+    const canBuildCandidate = claim.statement.trim().length > 0 && dimension.trim().length > 0;
+    const blockedByOpenConflict = openConflicts.length > 0 && !explicitEvolution;
+    if (blockedByOpenConflict && !canBuildCandidate) {
+      return skip(knowledgeId, "OPEN_CONFLICT_REQUIRES_REVIEW");
+    }
 
-    // pick the latest matching belief as the relationship anchor
-    const anchor = existing[existing.length - 1];
+    // ④ Ordinary rule (deterministic). CONFLICT needs a current cognition to be in conflict
+    //    with; without one there is nothing to record, so the projection is skipped.
+    let outcome: KnowledgeEvolution;
+    let anchor: KnowledgeBelief | undefined;
+    switch (hint?.kind) {
+      case "SUPERSEDE":
+      case "REVISE":
+        outcome = hint.kind;
+        anchor = target;
+        break;
+      case "CONFLICT":
+        if (!latestConfirmed) return skip(knowledgeId, "INVALID_EVOLUTION_TARGET");
+        outcome = "CONFLICT";
+        anchor = latestConfirmed;
+        break;
+      case "SUPPORT":
+      default:
+        outcome = latestConfirmed ? "SUPPORT" : "NEW";
+        anchor = latestConfirmed;
+        break;
+    }
 
-    const evolution = this.decideEvolution(input, anchor);
+    // ⑤ Write.
+    const knowledge: IndustryKnowledge = existingKnowledge ?? {
+      // Deterministic header identity: one knowledge row per subject, never a timestamped twin.
+      knowledgeId: "kn-" + claim.subjectId,
+      subjectKind,
+      subjectId: claim.subjectId,
+      beliefs: [],
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+
     const newBelief: KnowledgeBelief = {
-      beliefId: "bel-" + claim.claimId + "-" + now.replace(/[:.]/g, ""),
+      beliefId: beliefIdFor(knowledge.knowledgeId, claimRef),
       knowledgeId: knowledge.knowledgeId,
-      claimRef: "artifact:claim/" + claim.claimId,
+      claimRef,
       sourceRef: input.sourceRef,
       evidenceRef: input.evidenceRef,
       dimension,
@@ -128,79 +264,170 @@ export class KnowledgeProjectionService {
       updatedAt: now,
     };
 
-    switch (evolution) {
-      case "SUPERSEDE": {
-        if (anchor) {
-          this.knowledge.updateBeliefState(anchor.beliefId, "superseded", now);
-          newBelief.historicalRelations = [
-            { relation: "SUPERSEDE", otherBeliefId: anchor.beliefId, at: now },
-          ];
-        }
-        break;
-      }
+    const affectedBeliefRefs: string[] = [];
+    let conflictRef: string | undefined;
+
+    switch (outcome) {
+      case "SUPERSEDE":
       case "REVISE": {
+        const targetState: KnowledgeBeliefState = outcome === "SUPERSEDE" ? "superseded" : "revised";
         if (anchor) {
-          this.knowledge.updateBeliefState(anchor.beliefId, "revised", now);
-          newBelief.historicalRelations = [
-            { relation: "REVISE", otherBeliefId: anchor.beliefId, at: now },
-          ];
+          this.knowledge.updateBeliefState(anchor.beliefId, targetState, now);
+          newBelief.historicalRelations = [{ relation: outcome, otherBeliefId: anchor.beliefId, at: now }];
+          affectedBeliefRefs.push(anchor.beliefId);
         }
         break;
       }
       case "CONFLICT": {
+        // Dimension-level (C-FIX-1): EVERY current confirmed belief of this dimension leaves
+        // current; only the DIRECT pair gets a KnowledgeConflict row (no fake B↔D edges):
+        // state propagation ≠ relation graph.
         newBelief.state = "conflicting";
         if (anchor) {
-          this.knowledge.updateBeliefState(anchor.beliefId, "conflicting", now);
-          newBelief.historicalRelations = [
-            { relation: "CONFLICT", otherBeliefId: anchor.beliefId, at: now },
-          ];
-          const conflict: KnowledgeConflict = {
-            conflictId: "kcf-" + claim.claimId + "-" + now.replace(/[:.]/g, ""),
-            claimARef: anchor.claimRef,
-            claimBRef: newBelief.claimRef,
+          newBelief.historicalRelations = [{ relation: "CONFLICT", otherBeliefId: anchor.beliefId, at: now }];
+        }
+        for (const belief of confirmedOnDimension) {
+          this.knowledge.updateBeliefState(belief.beliefId, "conflicting", now);
+          affectedBeliefRefs.push(belief.beliefId);
+        }
+        if (anchor) {
+          const [claimARef, claimBRef] = canonicalClaimPair(anchor.claimRef, claimRef);
+          const conflictId = conflictIdFor(dimension, anchor.claimRef, claimRef);
+          const created = this.knowledge.insertConflictIfAbsent({
+            conflictId,
+            claimARef,
+            claimBRef,
             dimension,
             status: "open",
             createdAt: now,
-          };
-          this.knowledge.insertConflict(conflict);
+          });
+          if (created) conflictRef = conflictId;
         }
         break;
       }
-      case "SUPPORT": {
+      case "SUPPORT":
         if (anchor) {
-          newBelief.historicalRelations = [
-            { relation: "SUPPORT", otherBeliefId: anchor.beliefId, at: now },
-          ];
+          newBelief.historicalRelations = [{ relation: "SUPPORT", otherBeliefId: anchor.beliefId, at: now }];
         }
         break;
-      }
       case "NEW":
       default:
         break;
     }
 
+    // Human Gate (contract §7): the projection may PROPOSE a candidate — it never confirms one.
+    let requiresHumanGate = false;
+    let reason: SkippedReason | undefined;
+    if (blockedByOpenConflict) {
+      newBelief.state = "candidate";
+      requiresHumanGate = true;
+      reason = "OPEN_CONFLICT_REQUIRES_REVIEW";
+    } else if (input.requiresHumanGate === true) {
+      newBelief.state = "candidate";
+      requiresHumanGate = true;
+      reason = "CANDIDATE_REQUIRES_CONFIRMATION";
+    }
+    // A candidate is NOT yet part of current cognition, so it carries no evolution edge:
+    // the edge is written when a human confirms it with an explicit relation (§7.3–§7.4).
+    if (requiresHumanGate) newBelief.historicalRelations = [];
+
     this.knowledge.insertBelief(newBelief);
 
-    // 5. bump current projection header (version+1, current projection)
-    const updated: IndustryKnowledge = {
+    // Bump the CURRENT projection header (history lives in the belief rows).
+    this.knowledge.upsertKnowledge({
       ...knowledge,
-      version: knowledge.version + (evolution === "NEW" ? 0 : 1),
+      version: knowledge.version + (outcome === "NEW" ? 0 : 1),
       beliefs: this.knowledge.listCurrentBeliefs(knowledge.knowledgeId),
       updatedAt: now,
-    };
-    this.knowledge.upsertKnowledge(updated);
+    });
 
-    return { knowledgeId: knowledge.knowledgeId, evolution, beliefId: newBelief.beliefId };
+    return {
+      knowledgeId: knowledge.knowledgeId,
+      evolution: outcome,
+      outcome,
+      beliefId: newBelief.beliefId,
+      claimRef,
+      affectedBeliefRefs,
+      conflictRef,
+      requiresHumanGate,
+      reason,
+    };
   }
 
-  private decideEvolution(input: ProjectFromClaimInput, anchor?: KnowledgeBelief): KnowledgeEvolution {
-    const hint = input.relationHint?.kind;
-    if (!anchor) return "NEW";
-    if (hint === "SUPERSEDE") return "SUPERSEDE";
-    if (hint === "CONFLICT") return "CONFLICT";
-    if (hint === "REVISE") return "REVISE";
-    // same subject+dimension, no explicit contradiction/supersede → safe SUPPORT
-    return "SUPPORT";
+  /**
+   * Confirm a candidate (C-FIX-3 / C-FIX-4 / §7.3–§7.4) — an **independent human transition**.
+   * It is never reachable by re-projecting the same claim (that stays an exact no-op).
+   * The final relation is chosen EXPLICITLY by the human; `CONFLICT` is not a valid choice.
+   */
+  confirmCandidate(
+    beliefId: string,
+    relation: ConfirmRelation,
+    targetClaimRef?: string,
+  ): CandidateDecisionResult {
+    const now = new Date().toISOString();
+    const belief = this.knowledge.getBelief(beliefId);
+    if (!belief) throw new Error(`unknown belief '${beliefId}'`);
+    if (belief.state !== "candidate") {
+      throw new Error(`belief '${beliefId}' is not a candidate (state=${belief.state})`);
+    }
+
+    const affectedBeliefRefs: string[] = [];
+    if (relation === "REVISE" || relation === "SUPERSEDE") {
+      const target = targetClaimRef
+        ? this.knowledge.findBeliefByKnowledgeAndClaim(belief.knowledgeId, normalizeClaimRef(targetClaimRef))
+        : undefined;
+      if (!target || target.dimension !== belief.dimension || !isEvolvableBeliefState(target.state)) {
+        throw new Error(`confirmCandidate: invalid ${relation} target '${targetClaimRef ?? ""}'`);
+      }
+      const targetState: KnowledgeBeliefState = relation === "SUPERSEDE" ? "superseded" : "revised";
+      this.knowledge.updateBeliefState(target.beliefId, targetState, now);
+      this.knowledge.appendBeliefRelation(beliefId, { relation, otherBeliefId: target.beliefId, at: now });
+      affectedBeliefRefs.push(target.beliefId);
+    }
+
+    this.knowledge.updateBeliefState(beliefId, "confirmed", now);
+    return { knowledgeId: belief.knowledgeId, beliefId, state: "confirmed", affectedBeliefRefs };
+  }
+
+  /**
+   * Reject a candidate (C-FIX-9) — a terminal human decision that is **neither current nor
+   * historical fact**: a rejected candidate never becomes current cognition.
+   */
+  rejectCandidate(beliefId: string): CandidateDecisionResult {
+    const now = new Date().toISOString();
+    const belief = this.knowledge.getBelief(beliefId);
+    if (!belief) throw new Error(`unknown belief '${beliefId}'`);
+    if (belief.state !== "candidate") {
+      throw new Error(`belief '${beliefId}' is not a candidate (state=${belief.state})`);
+    }
+    this.knowledge.updateBeliefState(beliefId, "rejected", now);
+    return { knowledgeId: belief.knowledgeId, beliefId, state: "rejected", affectedBeliefRefs: [] };
+  }
+
+  /**
+   * Close a conflict EVENT (C-FIX-10): `open → resolved` only.
+   * It never touches belief state — "we have dealt with this disagreement" is NOT
+   * "the system now knows which side is true".
+   */
+  resolveConflictEvent(conflictId: string): KnowledgeConflict {
+    const now = new Date().toISOString();
+    const conflict = this.knowledge.getConflict(conflictId);
+    if (!conflict) throw new Error(`unknown conflict '${conflictId}'`);
+    if (conflict.status !== "open") throw new Error(`conflict '${conflictId}' is not open`);
+    this.knowledge.resolveConflict(conflictId, "resolved", now);
+    return { ...conflict, status: "resolved", resolvedAt: now };
+  }
+
+  /** Open conflicts of this dimension belonging to THIS subject's knowledge (unchanged scoping). */
+  private openConflictsForDimension(
+    knowledge: IndustryKnowledge | undefined,
+    dimension: string,
+  ): KnowledgeConflict[] {
+    if (!knowledge) return [];
+    const claimRefs = new Set(this.knowledge.listBeliefs(knowledge.knowledgeId).map((b) => b.claimRef));
+    return this.knowledge
+      .listOpenConflictsByDimension(dimension)
+      .filter((c) => claimRefs.has(c.claimARef) || claimRefs.has(c.claimBRef));
   }
 
   // ---- Step 2-B-1: Knowledge -> InformationPool (one-way) ----
@@ -531,6 +758,18 @@ export class KnowledgeProjectionService {
 /** S3-R1: deterministic item id per (slot, claim) — stable across reconciles, no timestamps. */
 function poolItemId(slotId: string, claimRef: string): string {
   return `item-${slotId}-${claimRef.replace(/[^A-Za-z0-9]+/g, "_")}`;
+}
+
+/** The one artifact claim ref shape used across Knowledge/Pool. */
+export const CLAIM_REF_PREFIX = "artifact:claim/";
+
+/**
+ * Accept EITHER a bare claimId or a full `artifact:claim/<id>` ref.
+ * Material authors write both forms; normalising here keeps "the evolution target must
+ * actually exist" strict without being pedantic about spelling.
+ */
+export function normalizeClaimRef(ref: string): string {
+  return ref.startsWith(CLAIM_REF_PREFIX) ? ref : CLAIM_REF_PREFIX + ref;
 }
 
 /**

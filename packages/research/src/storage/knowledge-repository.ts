@@ -9,11 +9,13 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { isCurrentBelief } from "../domain/index.js";
 import type {
   IndustryKnowledge,
   KnowledgeBelief,
   KnowledgeBeliefState,
   KnowledgeConflict,
+  KnowledgeRelation,
 } from "../domain/index.js";
 
 export class KnowledgeRepository {
@@ -89,9 +91,41 @@ export class KnowledgeRepository {
     return rows.map(rowToBelief);
   }
 
-  /** Current projection: beliefs not superseded (history retained elsewhere). */
+  /**
+   * ★ THE ONE current predicate (C-FIX-12): `state === "confirmed"`.
+   *
+   * Before C1 this filtered `state !== "superseded"`, which made `revised` / `conflicting`
+   * beliefs count as "current" — that is exactly the semantic drift Phase C removes.
+   * History is NOT lost: every row is still available through `listBeliefs()`.
+   */
   listCurrentBeliefs(knowledgeId: string): KnowledgeBelief[] {
-    return this.listBeliefs(knowledgeId).filter((b) => b.state !== "superseded");
+    return this.listBeliefs(knowledgeId).filter((b) => isCurrentBelief(b.state));
+  }
+
+  /**
+   * Deterministic lookup backing the projection's exact-no-op check (C-FIX-11):
+   * `(knowledgeId, claimRef)` is the belief identity, so its presence means "already projected".
+   */
+  findBeliefByKnowledgeAndClaim(knowledgeId: string, claimRef: string): KnowledgeBelief | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM knowledge_belief WHERE knowledge_id = ? AND claim_ref = ?")
+      .get(knowledgeId, claimRef) as any;
+    return row ? rowToBelief(row) : undefined;
+  }
+
+  /** All beliefs of one dimension, history included (conflict/pool need the full picture). */
+  listBeliefsByDimension(knowledgeId: string, dimension: string): KnowledgeBelief[] {
+    return this.listBeliefs(knowledgeId).filter((b) => b.dimension === dimension);
+  }
+
+  /** The dimension's CURRENT cognition (confirmed only) — the sole feed for Pool support. */
+  listConfirmedBeliefsByDimension(knowledgeId: string, dimension: string): KnowledgeBelief[] {
+    return this.listBeliefsByDimension(knowledgeId, dimension).filter((b) => isCurrentBelief(b.state));
+  }
+
+  /** Beliefs of one dimension that take part in an unresolved conflict. */
+  listConflictingBeliefsByDimension(knowledgeId: string, dimension: string): KnowledgeBelief[] {
+    return this.listBeliefsByDimension(knowledgeId, dimension).filter((b) => b.state === "conflicting");
   }
 
   /**
@@ -102,6 +136,22 @@ export class KnowledgeRepository {
     this.db
       .prepare("UPDATE knowledge_belief SET state = ?, updated_at = ? WHERE belief_id = ?")
       .run(state, updatedAt, beliefId);
+  }
+
+  /**
+   * Append ONE evolution relation edge (e.g. `REVISE → targetBeliefId`).
+   * State flips and relation edges are stored separately: a dimension-level CONFLICT
+   * propagates `conflicting` to the whole dimension without inventing fake edges (C-FIX-1).
+   */
+  appendBeliefRelation(beliefId: string, relation: KnowledgeRelation): void {
+    const belief = this.getBelief(beliefId);
+    if (!belief) throw new Error(`unknown belief '${beliefId}'`);
+    const next = [...belief.historicalRelations, relation];
+    this.db
+      .prepare(
+        "UPDATE knowledge_belief SET historical_relations_json = ?, updated_at = ? WHERE belief_id = ?",
+      )
+      .run(JSON.stringify(next), relation.at, beliefId);
   }
 
   // ---- KnowledgeConflict ----
@@ -138,11 +188,26 @@ export class KnowledgeRepository {
       .run(status, resolvedAt, id);
   }
 
+  /**
+   * Deterministic conflict insert (C-FIX-5): `conflictId` is direction-free, so a repeated
+   * projection of the same pair cannot create a second record. Returns true when inserted.
+   */
+  insertConflictIfAbsent(c: KnowledgeConflict): boolean {
+    if (this.getConflict(c.conflictId)) return false;
+    this.insertConflict(c);
+    return true;
+  }
+
   listOpenConflicts(): KnowledgeConflict[] {
     const rows = this.db
       .prepare("SELECT * FROM knowledge_conflict WHERE status = 'open' ORDER BY created_at ASC")
       .all() as any[];
     return rows.map(rowToConflict);
+  }
+
+  /** Open conflicts of one dimension (dimension-level conflict semantics, C-FIX-7). */
+  listOpenConflictsByDimension(dimension: string): KnowledgeConflict[] {
+    return this.listOpenConflicts().filter((c) => c.dimension === dimension);
   }
 }
 
