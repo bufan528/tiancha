@@ -35,3 +35,6 @@ export * from "./priority-policy.js";
 export * from "./report.js";
 export * from "./material.js";
 export * from "./material-parser.js";
+export * from "./chain-template.js";
+export * from "./research-position.js";
+export * from "./research-need.js";

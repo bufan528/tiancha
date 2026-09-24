@@ -23,6 +23,7 @@ import type {
   InvestmentEvaluation,
   GapType,
   Material,
+  ResearchPosition,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -595,6 +596,51 @@ export class ResearchRepository {
     return rows.map(rowToMaterial);
   }
 
+  // ---- ResearchPosition (Phase B v1) ----
+  /**
+   * A position is a TEMPLATE INSTANCE: `positionRef` includes templateId + positionKey,
+   * and `chain_version` is stored, so a template upgrade produces new refs and never
+   * rewrites the historical ones (I-B7).
+   */
+  upsertPosition(p: ResearchPosition): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO research_position
+         (position_ref, industry_id, chain_template_id, chain_version, kind, label, why_important,
+          answers_question_refs_json, satisfies_requirement_refs_json, suggested_target_kinds_json,
+          suitable_evidence_kinds_json, limitations_json, importance, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        p.positionRef,
+        p.industryId,
+        p.chainTemplateId,
+        p.chainVersion,
+        p.kind,
+        p.label,
+        p.whyImportant,
+        JSON.stringify(p.answersQuestionRefs),
+        JSON.stringify(p.satisfiesRequirementRefs),
+        JSON.stringify(p.suggestedTargetKinds),
+        JSON.stringify(p.suitableEvidenceKinds),
+        JSON.stringify(p.limitations),
+        p.importance,
+        p.createdAt,
+      );
+  }
+
+  getPosition(positionRef: string): ResearchPosition | undefined {
+    const r = this.db.prepare("SELECT * FROM research_position WHERE position_ref = ?").get(positionRef) as any;
+    return r ? rowToPosition(r) : undefined;
+  }
+
+  listPositions(industryId: string): ResearchPosition[] {
+    const rows = this.db
+      .prepare("SELECT * FROM research_position WHERE industry_id = ? ORDER BY position_ref ASC")
+      .all(industryId) as any[];
+    return rows.map(rowToPosition);
+  }
+
   // ---- NextAction ----
   upsertNextAction(a: NextAction): void {
     this.db
@@ -883,6 +929,25 @@ function rowToHumanGate(row: any): HumanGate {
     resumeTokenScope: row.resume_token_scope_json ? JSON.parse(row.resume_token_scope_json) : undefined,
     resumeTokenExpiresAt: row.resume_token_expires_at ?? undefined,
     resumeTokenConsumed: row.resume_token_consumed === 1,
+  };
+}
+
+function rowToPosition(row: any): ResearchPosition {
+  return {
+    positionRef: row.position_ref,
+    industryId: row.industry_id,
+    chainTemplateId: row.chain_template_id,
+    chainVersion: row.chain_version,
+    kind: row.kind,
+    label: row.label,
+    whyImportant: row.why_important,
+    answersQuestionRefs: JSON.parse(row.answers_question_refs_json),
+    satisfiesRequirementRefs: JSON.parse(row.satisfies_requirement_refs_json),
+    suggestedTargetKinds: JSON.parse(row.suggested_target_kinds_json),
+    suitableEvidenceKinds: JSON.parse(row.suitable_evidence_kinds_json),
+    limitations: JSON.parse(row.limitations_json),
+    importance: row.importance,
+    createdAt: row.created_at,
   };
 }
 

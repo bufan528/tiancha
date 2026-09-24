@@ -317,6 +317,25 @@ export class ResearchDb {
       );
       CREATE INDEX IF NOT EXISTS idx_material_subject ON material(subject_kind, subject_id);
       CREATE INDEX IF NOT EXISTS idx_material_hash ON material(subject_kind, subject_id, content_hash);
+
+      -- Phase B v1: ResearchPosition — a TEMPLATE INSTANCE (not chain truth).
+      CREATE TABLE IF NOT EXISTS research_position (
+        position_ref TEXT PRIMARY KEY,
+        industry_id TEXT NOT NULL,
+        chain_template_id TEXT NOT NULL,
+        chain_version TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        why_important TEXT NOT NULL,
+        answers_question_refs_json TEXT NOT NULL,
+        satisfies_requirement_refs_json TEXT NOT NULL,
+        suggested_target_kinds_json TEXT NOT NULL,
+        suitable_evidence_kinds_json TEXT NOT NULL,
+        limitations_json TEXT NOT NULL,
+        importance REAL NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_position_industry ON research_position(industry_id);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();
