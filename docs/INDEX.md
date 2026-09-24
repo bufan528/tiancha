@@ -13,6 +13,7 @@
 | [`architecture-review/06-business-intelligence-architecture-v3.1-final.md`](./architecture-review/06-business-intelligence-architecture-v3.1-final.md) | **业务与知识模型（最终锁定）**：四类知识、两个 Loop、Pool=组织层、Priority 内环、Evaluation 四面、Report=Projection、入口能力 |
 | [`architecture-review/07-domain-model-design.md`](./architecture-review/07-domain-model-design.md) | **领域模型**：10 限界上下文、聚合与不变量（I1–I16）、identity、生命周期、**§3.8a 评分口径（12→7 两层映射）** |
 | [`architecture-review/08-code-design.md`](./architecture-review/08-code-design.md) | **代码设计**：Phase A 详细设计 + S1–S7 小步拆分、表 / 接口 / 工具 |
+| [`phaseB/implementation-contract.md`](./phaseB/implementation-contract.md) | **Phase B v1 实现契约（未实现）**：`ResearchNeed / ChainTemplate / ResearchPosition / ResearchTarget / QuestionTargetFit / DiligencePreparation` 的字段 · identity · 不变量 · 写入边界 · T-B1–T-B12 |
 
 ## 🕘 历史（设计演进记录；部分内容已被 06/07/08 取代）
 

@@ -401,7 +401,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | Phase | 内容 | 说明 |
 |---|---|---|
 | **A** | 单行业研究闭环 | S1–S7（进行中） |
-| **B** | 研究策略闭环 | ResearchChain / ResearchPosition / ResearchTarget / QuestionTargetFit / DiligencePreparation |
+| **B** | Research Planning / 调研准备链 | `ResearchNeed → ResearchPosition → ResearchTarget → QuestionTargetFit → DiligencePreparation`；**v1 实现契约已出**（`docs/phaseB/implementation-contract.md`，待冻结） |
 | **C** | 调研回填闭环 | Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新 |
 | **D** | 双体系协同闭环（外环） | Research Experience → Pattern → Methodology Candidate → Human Gate |
 | **E** | 自动化与规模化 | 自动搜集 + 赛道识别 + Wind 接入（**入口能力**） |
@@ -514,6 +514,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/architecture-review/06-business-intelligence-architecture-v3.1-final.md` | **业务与知识模型（最终锁定）**：四类知识 / 两个 Loop / 四面 Evaluation / Report=Projection |
 | `docs/architecture-review/07-domain-model-design.md` | **领域模型**：10 上下文 / 聚合 / 14 不变量 / identity / 生命周期 / §3.8a 评分口径 |
 | `docs/architecture-review/08-code-design.md` | **代码设计**：Phase A 详细 + S1–S7 拆分 + 表/接口/工具 |
+| `docs/phaseB/implementation-contract.md` | **Phase B v1 实现契约（未实现）**：Need → Position → Target → Fit → Diligence 的字段/identity/不变量/写入边界/T-B 验收 |
 | `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
 | `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
 | `docs/architecture-review/01/02/03-*` | 早期 Gap Report / Blueprint v2 / v2.1-final-lock / rebaseline v3.1（**历史，部分过时**） |
