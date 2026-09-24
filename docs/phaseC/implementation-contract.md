@@ -1,6 +1,6 @@
 # Tiancha Phase C — Implementation Contract
 
-> **Phase C Full Contract v1 · Final Lock Candidate**
+> **Phase C Full Contract v1 · Final Lock Candidate · rev 2**（已按 Final Lock Review 的 C-FIX-1…6 修订，见 §28.5）
 >
 > **状态：Final Lock Candidate —— 等待用户审批后冻结。`C1 未授权实现`。**
 > 基线：**Phase B v1 FINAL PASS**（B5 代码 `6eb9ea2` / B5 文档 `8ec8f6f` / acceptance closure `27b9a37` / final cleanup `7faa8e5` = 当前 HEAD）。
@@ -299,18 +299,24 @@ ProjectionOutcome
 
 > 新 Claim 与已有 Knowledge 在当前证据条件下无法同时被视为同一认知的无冲突表达。
 
-结果（**按 P2 裁决写定**）：
+结果（**按 P2 裁决 + C-FIX-1 写定**）：
 
 ```text
-anchor belief  → state = "conflicting"
-new belief     → state = "conflicting"
+该维度【全部】当前 confirmed beliefs → state = "conflicting"
+      （含 anchor＝直接冲突中的旧认知、含新 Claim 形成的 belief、
+        也含该维度其他原本 confirmed 的 beliefs）
+
 KnowledgeConflict { claimARef: anchor.claimRef, claimBRef: new.claimRef, dimension, status: "open" }
+      ← 只记录【直接冲突的那一对】；不为其他 beliefs 虚构 conflict edge
+
 该维度 confirmed belief = 0
 ```
 
 * **禁止自动选择赢家**；
-* **两侧都必须保留**（不删除、不改写内容）；
-* 因为该维度已无可用的 `confirmed` belief，**Pool 该 slot 变为 `conflicting`**，**Gap 变为 `conflict`**（§10）。
+* **所有相关 belief 都必须保留**（不删除、不改写内容）；
+* **CONFLICT 是「维度级」研究状态**：一旦该维度发生冲突，该维度的**当前认知整体作废**（全部退出 `confirmed`），而不是只作废其中一条；
+* 因为该维度已无可用的 `confirmed` belief，**Pool 该 slot 变为 `conflicting`**，**Gap 变为 `conflict`**（§10）；
+* **状态传播 ≠ 关系图**：`conflicting` 可以传播到该维度的所有 current beliefs，但 `KnowledgeConflict` 关系**只记录直接冲突对**（不制造 B↔D、C↔D 这类虚构边）。
 
 Conflict 本身就是研究状态。
 
@@ -367,14 +373,31 @@ relation=SUPERSEDE 但缺 supersedes → 记录 error，且【不投影】（SKI
 
 > ★ **P1 裁决**：`无 relation + 有同维度 anchor ⇒ SUPPORT` 是**确切的规则默认**，**不是"无法判断"**。不得把它改写成"进入 Human Gate"，否则会改变既有材料的语义、并直接影响 Pool `sufficient` / Gap 关闭 / Priority。
 
-**"无法判断"只适用于既有规则确实无法确定 Evolution 的情况**（例如：需要跨维度/跨口径的比较，而第一版没有 Metric Ontology）。此时：
+**"无法判断"的定义（C-FIX-2：只说"无法形成可审查候选"）**：
+
+> "无法判断" = **既有规则无法构造出任何可审查、可展示的候选认知**（例如：需要跨维度 / 跨口径的比较，而第一版没有 Metric Ontology；缺少必要字段；无法建立合法 Evolution relation）。
+>
+> 此时：
 
 ```text
 → 不强行投影
 → 保留 Claim
 → 标记为 SKIPPED + reason（可复核、可重放）
+→ 不创建 candidate
 → 不改变任何 current 认知
 ```
+
+### 5.1 SKIPPED 与 CANDIDATE 的二分（**C-FIX-2，硬规则**）
+
+```text
+若规则无法形成任何可审查的候选认知                    → SKIPPED（绝不创建 candidate）
+若规则能形成明确、可解释、可展示、可被确认的候选，
+   但【不允许】自动成为 current                      → candidate + Human Gate（§7）
+```
+
+> * **不得把 `SKIPPED` 自动转成 `candidate`**；
+> * **也不得把候选降级成 `SKIPPED` 来"绕过"Human Gate**；
+> * 两者是**两种不同的处理结果**，判据只有一条：**规则能不能构造出一个可展示、可确认的候选认知**。
 
 因此：
 
@@ -386,15 +409,20 @@ relation=SUPERSEDE 但缺 supersedes → 记录 error，且【不投影】（SKI
 
 Conflict 是一等公民。
 
-### 6.1 Conflict **不选边**：两侧都失去 current 状态
+### 6.1 Conflict **不选边**：该维度的 current 认知**整体**失去 current 状态
 
 ```text
-A（anchor）  → conflicting
-B（新 Claim） → conflicting
+该维度全部 current confirmed beliefs → conflicting
+      （anchor A、新 Claim B、以及该维度其他原本 confirmed 的 beliefs）
 
-KnowledgeConflict A ↔ B（status = open）
+KnowledgeConflict { claimARef: A, claimBRef: B }（status = open）   ← 仅【直接冲突对】
 current confirmed belief on this dimension = none
 ```
+
+> ★ **C-FIX-1（维度级一致性）**：CONFLICT 的对象是**该维度的当前认知**，不是"两个 belief 之间的局部事件"。
+> 若只把 anchor 与新 Claim 置为 `conflicting`，该维度可能仍有其他 `confirmed` belief 存活 —— 那样
+> "该维度 confirmed = 0 / Pool = conflicting / Gap = conflict"这几条规则**无法同时成立**。
+> 因此：**状态传播到整个维度，关系边只记直接冲突对。**
 
 **不能**出现"保留 A 为 current、B 为 conflict"的形态。理由：
 
@@ -446,8 +474,8 @@ Phase C 必须保留 Human Gate。
 ### 7.1 状态与流转
 
 ```text
-candidate  ──（人确认）──→  confirmed
-candidate  ──（人拒绝 / 被取代 / 丢弃）──→  不进入 current
+candidate  ──（人确认：confirmCandidate + 显式 relation）──→  confirmed
+candidate  ──（人拒绝 / 丢弃）──→  不进入 current（历史保留）
 ```
 
 `KnowledgeBeliefState` 最终为：
@@ -458,15 +486,15 @@ candidate | confirmed | revised | superseded | conflicting
 
 > `candidate` **不是 current**（§3.3）：它不参与 Pool 的 `sufficient` 判定，也不进入 Report 的"当前认知"。
 
-### 7.2 什么必须走 Human Gate
+### 7.2 什么必须走 Human Gate（**B 类：可形成候选，但不得自动成为 current**）
 
 以下情况**不得自动成为 current**：
 
-* 既有规则确实无法确定演化操作（§5 的"无法判断"）；
 * 关键维度（`criticality = critical`）发生重大修正；
 * 高重要性 Conflict；
 * 多个同等级候选无法区分；
-* 需要用户确认的事实。
+* 需要用户确认的事实；
+* 其他"规则能构造出明确候选、但第一版不允许自动确认"的情况。
 
 系统可以：
 
@@ -474,13 +502,58 @@ candidate | confirmed | revised | superseded | conflicting
 
 但**不能假装用户已经确认**。
 
-### 7.3 确认入口与权限
+> ★ **C-FIX-2 边界**：本节每一项都必须是"**规则能构造出一个可审查的候选**"。
+> 如果规则连候选都构造不出来（§5 的"无法判断"），结果是 **`SKIPPED`，而不是 `candidate`**。
+
+### 7.3 候选的确认是**独立的 Human Gate 状态迁移**（**C-FIX-3**）
+
+```text
+projectFromClaim(claim)                 ← 投影（重复调用 ⇒ no-op，§16.2）
+confirmCandidate(beliefId, relation)    ← 人工确认（显式状态迁移）
+```
+
+> * 二者是**两个不同的动作**，不得混为一谈；
+> * **`candidate → confirmed` 只能由 `confirmCandidate` 完成**；
+> * **不得**通过"再次投影同一个 Claim"来确认候选（那只会 no-op，造成"用户以为确认了、系统其实没确认"）；
+> * 因此实现里**不存在**"投影时发现已有 candidate 就顺手确认"的路径。
+
+### 7.4 确认时必须**显式指定最终 Evolution relation**（**C-FIX-4**）
+
+确认一个候选**不是**简单地把 `state` 改成 `confirmed`，而是必须同时确定它"演化成了什么"：
+
+```text
+candidate
+   ↓ human confirms + relation = NEW | SUPPORT | REVISE | SUPERSEDE
+   ↓
+按该 relation 的既有规则落地（§4 / §8 Rule A–C）：新增 / 支持 / 修正 / 取代
+```
+
+* **relation 由人显式给出**，**不得由实现自由推断**；
+* `CONFLICT` **不是**候选确认时的合法终态选择（冲突由 §4.3 的规则判定，不由人工"确认"产生）；
+* 人选择 `REVISE` / `SUPERSEDE` 时，按 §4.2 / §4.4 的规则翻转旧 belief 状态并建立关系边；
+* 人选择 `NEW` / `SUPPORT` 时，新 belief 直接成为 `confirmed`（`NEW` 仅在该维度确实无既有认知时成立）。
+
+### 7.5 候选必须"可展示、有依据"（**语义冻结；字段实现留 C1**）
+
+> 契约冻结的是**语义要求**，不是字段名：
+
+```text
+candidate 必须可以被展示为：
+  - candidate belief（其维度 / 来源可查）
+  - 来源 Claim（artifact:claim/<claimId>）
+  - candidate reason（为什么需要人确认：封闭短语或结构化理由）
+  - requiresHumanGate = true
+```
+
+字段层面（复用现有 `confidence` / `topic`，还是新增 `candidateReason`）**留待 C1 决定**。
+
+### 7.6 确认入口与权限
 
 * 第一版确认入口：**CLI / researcher human action**（`tiancha research knowledge ...`，具体命令名在 C1 实现时定）。
 * **Agent 只读**：可以展示候选、解释候选、展示来源、提示"需要确认"；**Agent 不得自动确认 candidate**（延续 Phase B Q1）。
 * Agent 不新增写工具。
 
-### 7.4 与 methodology Human Gate 的关系
+### 7.7 与 methodology Human Gate 的关系
 
 ```text
 methodology human_gate  ≠  knowledge confirmation
@@ -506,16 +579,20 @@ Current Knowledge 不是"最后写入的就是 current"。第一版必须遵循�
 
 新 belief 成为 `confirmed`；**旧 belief → `superseded`（退出 current 视图）**。
 
-### Rule D：CONFLICT（**P2**）
+### Rule D：CONFLICT（**P2 + C-FIX-1**）
 
-> **不得选择 current。** 参与冲突的 competing beliefs **全部**失去 `confirmed` 状态（置 `conflicting`），Conflict 记录为 `open`。
+> **不得选择 current。** CONFLICT 的对象是**该维度的当前认知整体**：该维度**所有**当前 `confirmed` belief（anchor、新 Claim 形成的 belief、以及该维度其他原本 `confirmed` 的 belief）**全部**失去 `confirmed` 状态（置 `conflicting`），Conflict 记录为 `open`。
 
 ```text
+该维度全部 confirmed beliefs → conflicting     （维度级传播）
+KnowledgeConflict             → 新增（open）  （只记直接冲突对）
 current confirmed belief（该维度）= 无
-conflict = 新增（open）
 Pool slot = conflicting
 Gap = conflict
 ```
+
+> 只把 anchor 与新 Claim 置为 `conflicting` 是**错的**：该维度若仍有 `confirmed` belief 存活，
+> 就会与本节"该维度 confirmed = 0 / Pool = conflicting / Gap = conflict"自相矛盾。
 
 而不是：
 
@@ -647,7 +724,7 @@ sufficient → reopened
 
 ### 情况 B：CONFLICT
 
-出现重大冲突（两侧均 `conflicting` ⇒ 该维度无 confirmed）：
+出现重大冲突（该维度**全部** current 认知置 `conflicting` ⇒ 该维度无 confirmed）：
 
 ```text
 sufficient → reopened（gapType = conflict）
@@ -798,11 +875,15 @@ beliefId   = deterministic(knowledgeId, claimRef)
 * **不含时间戳、不含随机数、不含序号**；
 * 同一 `(knowledgeId, claimRef)` **永远**得到同一个 `beliefId`。
 
-同理，Conflict 的身份也必须确定性：
+同理，Conflict 的身份也必须确定性，且**对 claim pair 无方向性**（**C-FIX-5**）：
 
 ```text
-conflictId = deterministic(dimension, claimARef, claimBRef)
+canonicalClaimPair = sort([claimARef, claimBRef])              // 规范化顺序（字符串序）
+conflictId         = deterministic(dimension, canonicalPair[0], canonicalPair[1])
 ```
+
+> * `(A, B)` 与 `(B, A)` **必须**得到同一个 `conflictId`；
+> * 否则同一冲突会出现两条记录（`KCF-1: A↔B` 与 `KCF-2: B↔A`），直接破坏 §16.2 的幂等。
 
 ### 16.2 重复投影的行为（唯一）
 
@@ -843,6 +924,13 @@ REVISE / SUPERSEDE 产生**新的 belief**（`claimRef` 不同）⇒ 身份天�
 5. 不改变已有 belief 的语义。
 
 > **不能为了加 UNIQUE 而偷偷清洗历史数据。** 若检查发现历史重复，则**停止**加约束，改为在 C1 内单独提出"历史去重"的授权请求。
+
+### 16.6 `candidate` 的确认**不是**投影（**C-FIX-3**）
+
+* `projectFromClaim()` 与 `confirmCandidate()` 是**两个不同的动作**；
+* 对同一条已存在 `candidate` 的 Claim 重复调用 `projectFromClaim()`，仍然**遵守 §16.2 的 no-op**（不新增行、不翻转 state、不改变 current 视图）；
+* **`candidate → confirmed` 必须通过显式的人工确认动作完成**（§7.3 / §7.4），**不能、也不得**通过"重复投影同一个 Claim"来实现；
+* 因此实现里**不存在**"投影时发现已有 candidate 就顺手确认"的路径，也不存在"投影即确认"的隐式语义。
 
 ---
 
@@ -911,7 +999,7 @@ C1 对它们做的是：
 2. **`beliefId` / `conflictId` 确定性 + 重复投影 no-op**（§16）；
 3. **`candidate` 状态与确认路径**（§7）；
 4. **`ProjectionOutcome` 的显式分层与 `reason`**（§4 / §20）；
-5. **CONFLICT 语义固定为"两侧都 conflicting"**（§6 / §8 Rule D，与既有实现一致，写进契约并加测试守护）。
+5. **CONFLICT 语义固定为"该维度全部 current 认知都 `conflicting`、不选 current"**（**维度级**，§6 / §8 Rule D，与既有实现一致，写进契约并加测试守护）。
 
 **不得**重复建立已经存在的对象，**不得**改名重造。
 
@@ -987,6 +1075,12 @@ reason?          （封闭短语，便于审计与测试；不得是自由长文
 ```
 
 > 既有实现返回 `{ knowledgeId, evolution, beliefId }`；C1 需要**扩展**该结果对象（向后兼容地保留 `evolution` 字段或提供等价字段），并同步更新断言。
+
+**与 Human Gate 的关系（C-FIX-3 / C-FIX-4）**：
+
+* 投影产出 `candidate` 时：`requiresHumanGate = true`、`reason` 非空、`newBeliefRef` 指向那条 candidate belief；
+* `candidate → confirmed` **不是投影**，而是 §7.3 的**独立人工确认动作**（且必须显式指定最终 relation，§7.4）；
+* 因此 `ProjectionResult` **不包含**"确认"语义，也**不得**用它来表达确认。
 
 ProjectionService：
 
@@ -1186,7 +1280,7 @@ Report 更新
 
 1. 旧 Claim 未被删除；
 2. 旧 Knowledge 未被覆盖删除；
-3. Conflict 可以并存（且**两侧均非 current**）；
+3. Conflict 可以并存（且**该维度全部 current 认知均退出 current**，只记录直接冲突对）；
 4. Projection 幂等（同 claim 重复投影 ⇒ 领域状态完全一致）；
 5. Gap 可以 reopened；
 6. Priority 不被 Report 偷算；
@@ -1196,6 +1290,8 @@ Report 更新
 10. 重跑相同材料不会改变最终状态（material content-hash + projection 幂等）。
 11. **`candidate` 不进入 current**：未确认的候选不影响 Pool `sufficient` / Gap 关闭；
 12. **Report 不把 `revised` 当 current**：修正后的旧认知只出现在历史/修订节。
+13. **维度级 CONFLICT 一致性（C-FIX-1）**：该维度存在多条 `confirmed` 时，一次 CONFLICT ⇒ 该维度**全部** current beliefs 退出 current，且**只**记录一对直接冲突（不虚构其他 conflict edge）。
+14. **`SKIPPED` 与 `candidate` 不混用（C-FIX-2）**：无法构造候选 ⇒ `SKIPPED`；能构造候选但不能自动确认 ⇒ `candidate`；重复投影 candidate 仍 no-op，确认只走人工动作（C-FIX-3）。
 
 ---
 
@@ -1208,12 +1304,15 @@ Report 更新
 - [ ] 本 Contract（Final Lock Candidate）获得用户批准；
 - [ ] Knowledge 是 Projection，而不是 Claim 替代品；
 - [ ] 历史 Knowledge 永久保留（且不得为加约束而清洗）；
-- [ ] Conflict 可以并存，且 **CONFLICT ⇒ 两侧均非 current**（P2）；
+- [ ] Conflict 可以并存，且 **CONFLICT ⇒ 该维度全部 current confirmed 退出 current**、**只记录直接冲突对**（P2 + C-FIX-1）；
 - [ ] 四种 Evolution relation 语义冻结，且 `ProjectionOutcome` 保留 `NEW` / `SKIPPED`（CR-11）；
 - [ ] **`current` 唯一判据 = `state == "confirmed"`**（P5），`listCurrentBeliefs` 与 Report 同判据；
 - [ ] **无 relation + 有 anchor ⇒ SUPPORT 为规则默认**（P1），不是"无法判断"；
 - [ ] `beliefId` 确定性 + 重复投影 no-op（P6）；
-- [ ] `candidate` 状态与 CLI 确认路径冻结（P3），且 Agent 只读；
+- [ ] **`conflictId` 对 claim pair 无方向**（canonical pair，C-FIX-5）；
+- [ ] **`SKIPPED` 与 `candidate` 二分冻结**（C-FIX-2）；
+- [ ] `candidate` 状态、CLI 确认路径、**"确认是独立 Human Gate 迁移且必须显式指定最终 relation"** 冻结（P3 + C-FIX-3 / C-FIX-4），且 Agent 只读；
+- [ ] **不增加 `CANDIDATE` historical relation**（C-FIX-6）；
 - [ ] `industry.current_knowledge_id` 明确弃用（P4）；
 - [ ] Gap reopened 规则冻结；
 - [ ] Pool 不成为 Knowledge SoT；
@@ -1235,7 +1334,7 @@ Report 更新
 | 裁决 | 内容 | 落实位置 | 原文 → 本版 |
 |---|---|---|---|
 | **P1** | 无 relation + 有同维度 anchor ⇒ **规则默认 SUPPORT**（不是"无法判断"，不进 Human Gate） | §5、§27 | 原文 §5 只写"无法可靠判断 ⇒ unresolved/requires review"；本版补**封闭枚举算法**（合法 relation / 无 relation 无 anchor⇒NEW / 无 relation 有 anchor⇒SUPPORT / 非法 relation⇒SKIPPED 且不投影），并把"无法判断"收窄为"既有规则确实无法确定"的情况 |
-| **P2** | CONFLICT ⇒ **两侧都 `conflicting`，不选 current** | §4.3、§6.1、§8 Rule D、§12 情况 B | 原文 §8 Rule D 写"保留原 current，conflict = 新增"，§6.1 用"A = current candidate"暗示一方仍 current；本版统一改为"两侧均失去 confirmed/current，Pool=conflicting，Gap=conflict"，并写明理由（否则等于发现冲突后仍偷偷相信旧答案） |
+| **P2** | CONFLICT ⇒ **两侧都 `conflicting`，不选 current** | §4.3、§6.1、§8 Rule D、§12 情况 B | 原文 §8 Rule D 写"保留原 current，conflict = 新增"，§6.1 用"A = current candidate"暗示一方仍 current；本版统一改为"两侧均失去 confirmed/current，Pool=conflicting，Gap=conflict"，并写明理由（否则等于发现冲突后仍偷偷相信旧答案）。（**rev 2 再收紧为「维度级」**：见 §28.5 C-FIX-1） |
 | **P3** | 引入 **`belief.state = candidate`** 最小方案；**不复用** methodology `human_gate`；**CLI** 确认入口；**Agent 只读** | §7（全部重写）、§8 Rule E、§18、§24、§27 | 原文 §7 只写"必须保留 Human Gate"，未定义候选落在哪；本版写定 state 枚举扩展、流转（candidate→confirmed / 拒绝不进入 current）、确认入口、Agent 边界、与 methodology gate 的独立关系 |
 | **P4** | `industry.current_knowledge_id` **弃用**，C1 不读不写 | §2.4（新增）、§27 | 原文未提该列；本版新增"已裁决：弃用"小节，标记 DEPRECATED/UNUSED，以后单独 cleanup |
 | **P5** | `current` 唯一判据 = **`state == "confirmed"`**（派生视图，非独立 state） | §3.3（新增）、§8、§14、§27 | 原文 §3.2 只有"Current/Historical/Conflicting"三分，未给判据；本版给出 state 表格 + 要求 `listCurrentBeliefs` 与 Report 同判据（并写明这是 C1 的兼容性修改） |
@@ -1265,12 +1364,26 @@ Report 更新
 * §0 目标与闭环图；§1 禁止清单（仅追加 CR-9 的一条推论）；§2.1–§2.3；§3.1–§3.2；
 * §4.1、§4.2、§4.4 的语义定义（SUPPORT 处补了"确实会新增一条 confirmed belief"的实现对齐说明）；
 * §5 的"No LLM"原则；§6.2；§6.3；§9 主体；§10–§13 主体；§15–§17 主体；§19 主体；
-* §26 验收场景的 10 条验证（本版**追加** 2 条：candidate 不进 current、Report 不把 revised 当 current）。
+* §26 验收场景的 10 条验证（本版**追加** 2 条：candidate 不进 current、Report 不把 revised 当 current；**rev 2 再追加第 13 / 14 条**：维度级 CONFLICT 一致性、`SKIPPED`/`candidate` 不混用）。
 
 ### 28.4 已知的、**留待 C1 实现时确认**的细节（不影响本次冻结）
 
 1. CLI 确认命令的最终命名（`tiancha research knowledge ...`）；
-2. `candidate` 的 `confidence` / `reason` 的具体承载字段（现有 `confidence` 列 + `topic` 可承载，C1 时确认）；
+2. `candidate` 的 `confidence` / `reason` 的**具体承载字段**（现有 `confidence` 列 + `topic` 可承载，C1 时确认）——
+   ⚠ **注意**：字段可以留待 C1，**语义不留** —— 已在 §7.5 冻结（候选必须可展示来源与依据，且 `requiresHumanGate = true`）；
 3. 是否真的需要 `UNIQUE(knowledge_id, claim_ref)`（先做 §16.5 的历史数据检查）；
-4. `historicalRelations` 是否需要新增 `CANDIDATE` 关系值（若候选的确认走"新增 confirmed belief"路径则不需要）。
+4. ~~`historicalRelations` 是否需要新增 `CANDIDATE` 关系值~~ → **已裁决（C-FIX-6）：不增加**。
+   `candidate` 是 **belief state**，不是 evolution relation；确认之后再按最终 relation（`NEW` / `SUPPORT` / `REVISE` / `SUPERSEDE`）建立关系边。
+
+### 28.5 Final Lock Review 修订（**C-FIX-1 … C-FIX-6**，本版 = **rev 2**）
+
+| # | 审查者指出的问题 | 落实位置 | 本版写定 |
+|---|---|---|---|
+| **C-FIX-1** | CONFLICT 与 SUPPORT 的"多条 current"矛盾（**BLOCKER-1**） | §4.3、§6.1、§8 Rule D、§26 #13、§27 | CONFLICT 是**维度级**：该维度**全部** current `confirmed` 退出为 `conflicting`；**只**记录**直接冲突对**的 `KnowledgeConflict`，不为其他 beliefs 虚构边（**状态传播 ≠ 关系图**） |
+| **C-FIX-2** | `SKIPPED` 与 `candidate` 未闭环（**BLOCKER-2**） | §5（"无法判断"重定义）、§5.1（新增）、§7.2、§7.3、§26 #14、§27 | 二分硬规则：**无法形成可审查候选 ⇒ `SKIPPED`（绝不创建 candidate）**；**能形成候选但不允许自动成为 current ⇒ `candidate` + Human Gate**；两者不得互相转换 |
+| **C-FIX-3** | candidate confirmation ≠ projection no-op | §7.3（新增）、§16.6（新增）、§20、§26 #14、§27 | `projectFromClaim()` 与 `confirmCandidate()` 是两个动作；重复投影 candidate 仍 **no-op**；`candidate → confirmed` **只能**由显式人工确认完成 |
+| **C-FIX-4** | 确认时的最终 relation 未定义 | §7.4（新增）、§20、§27 | 确认必须**显式指定** `NEW` / `SUPPORT` / `REVISE` / `SUPERSEDE`（`CONFLICT` 不是可确认的终态），然后按该 relation 的既有规则落地 |
+| **C-FIX-5** | conflict identity 的方向性风险 | §16.1、§27 | `canonicalClaimPair = sort([A, B])` ⇒ `conflictId` 基于规范化 pair；`(A,B)` 与 `(B,A)` 必须得到同一 id |
+| **C-FIX-6** | §28.4 #4 不应继续开放 | §28.4 #4、§7 | **不增加 `CANDIDATE` historical relation**：candidate 是 state，不是 relation |
+| （附带） | §28.4 #2 应冻结**语义** | §7.5（新增）、§28.4 #2 | 候选必须"可展示来源与依据 + `requiresHumanGate = true`"；**字段留 C1，语义不留** |
 
