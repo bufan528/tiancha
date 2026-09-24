@@ -160,7 +160,9 @@
 
 ### 2.4 未实现（属路线图，不是缺陷）
 
-**调研准备（链条/对象/适配/提纲）**、**Field Research（Material/Fragment/Evidence/Claim）**、**报告**、**Priority**、**自动发现行业 + Wind**、**Research Experience** —— 见 §9。
+**调研准备（链条/对象/适配/提纲）**、**Field Research（Material/Fragment/Evidence/Claim）**、**自动发现行业 + Wind**、**Research Experience** —— 见 §9。
+
+> **（S7 后·全链路验收发现）** 目前**没有任何 CLI / Agent 工具入口**能让用户喂入真实 Claim——`OpportunityDiscoveryService.ingestClaims` 只被测试调用。因此真实 CLI 链路只能走到「全部证据不足」；链路本身（`Knowledge → Pool → Gap → Priority → Report`）已验证**联通且分级真实**（见 §9.4），缺的是**入口**（Phase C）与**真实数据源**（Phase E）。
 
 ### 2.5 验证基线
 
@@ -407,6 +409,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **`caliber_differs` / `complements` 未启用**：Belief 不带 caliber（Phase C/E）。
 - **Migration 假设 legacy `evidence_refs` = Claim refs**（**S3-NOTE**）。
 - **`poolItemId` 编码可能非 injective**（不同 claimRef 归一成同一 id，**S3-FOLLOWUP**）。
+- **（全链路验收）缺少「真实材料 → Claim」入口**：`ingestClaims` 无 CLI / 工具入口，用户无法让行业从「全部证据不足」走向「证据足够」；同时真实数据源仍是 Echo 占位。二者分别属 **Phase C** 与 **Phase E**。
 - **S2-NOTE：stable identity ≠ immutable content** —— 方法论版本变化后，已存在的 Requirement 哪些字段应重投影，需在后续生命周期设计中明确。
 - **S4-FOLLOWUP（independentSources 口径）**：`sufficiencyFacts` 目前用 `sourceRef ?? claimRef` 计独立来源。Evidence 层（Phase C）落地后必须改为经 `Claim → Evidence → Source` 解析，否则"一份研报抽出 10 个 Claim"会被误算成 10 个独立来源。
 - **S4.5-NOTE（Policy 仍是代码常量）**：`eval-v1` / `agg-v1` / `suf-v1` 已版本化且不可变，但**仍定义在代码中**（未落 DB）；"改评分口径 = 改方法论版本"要等 Policy 可配置化。
@@ -460,6 +463,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **S6：`MethodologyService.getActive()` 有 lazy-bootstrap 写副作用**（ReportService 读方法论时会触发首启写） | 未 bootstrap 的库上生成投影会写 methodology；已 bootstrap 后无影响 | 顺手清 |
 | ~~**S7：真实库里 S1 之前的 `methodology.dimensions_json` 没有 `weight`/`criticality`**~~ **已由 DATA-R1 修复**：`repairLegacyMethodologyV1()` 一次性迁移；真实库复验 `withWeight=12 withCriticality=12`，`risk`/`key_validation` 恢复 `critical` | 迁移只补齐冻结基线自身的值，不新建版本、不改 `activatedAt` | ✅ 已修 |
 | **DATA-R1 未覆盖**：旧库中 **已存在** 的 `information_requirement.importance`（S1 之前恒 5）不会被重算 | 只影响历史 requirement 的分级；新建的已按 weight 派生 | 见 §9.4 S2-NOTE |
+| **`research_source` / `artifacts.sqlite` 缺 subject provenance**（source 表无 subject 外键，artifact 按 run/task 归属） | 未来做「删除行业 / 清理测试数据 / subject archive」时，**无法可靠判定**某条 Claim/Source 属于哪个 Industry；Phase A 全链路验收已暴露此点 | Phase C（Evidence 层落地时必须解决） |
 | `nextVersionTag()` 用计数、`getActive()` lazy-bootstrap 有写副作用、`isHumanApprovedBaseline` 命名漂移 | 低危 | 顺手清 |
 | `evidence/`、`dossier/`、`scoring/`、`planning/`、`agents/`、`scheduler/` 空壳 | 相关能力未实现 | Phase B+ |
 | 无模型 key 时语义路由未端到端验收 | 契约级测试 | 有模型环境后补 |
