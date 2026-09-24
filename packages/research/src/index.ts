@@ -25,3 +25,4 @@ export * from "./application/material-ingest-service.js";
 export * from "./application/chain-projection-service.js";
 export * from "./application/research-need-service.js";
 export * from "./application/target-service.js";
+export * from "./application/question-target-fit-service.js";

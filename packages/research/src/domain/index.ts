@@ -39,3 +39,4 @@ export * from "./chain-template.js";
 export * from "./research-position.js";
 export * from "./research-need.js";
 export * from "./research-target.js";
+export * from "./question-target-fit.js";
