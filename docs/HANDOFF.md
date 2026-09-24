@@ -12,7 +12,8 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **Phase B v1 · B1–B5 全部实现完成（B5 已交付，等待独立验收）；Phase C 待授权** |
+| 当前阶段 | **Phase B v1 · B1–B5 全部完成，FINAL PASS（2026-09-25 独立验收）；Phase C 待授权** |
+| 验收状态 | **Phase B v1 FINAL PASS**（B5 代码 `6eb9ea2` / 文档 `8ec8f6f`，2026-09-25 独立验收通过） |
 | HEAD / 远端 | `6eb9ea2`（代码）· 文档同步提交紧随其后；`origin/main` 已同步 |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **196 tests 全过** · `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`；`mw-v1` 已被 DATA-R1 修复（weight/criticality 齐全，`risk`/`key_validation` 恢复 critical）；**当前只有 `人形机器人` 一条行业**（B5 真实库验证产生的 position / target / preparation 残留已清理） |
@@ -543,6 +544,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **（B5）Agent 只读「已生成」的规划产物**：4 个 B5 工具**不注入投影服务、无 target 写工具、不生成提纲**；未生成时**点名由研究者执行 CLI**（与 `research_evaluate` 同一治理）。理由：链条/对象/提纲是**规划产物**，生成时机由人掌握，模型只解释现状。
 - **（B5）适配概况是只读聚合，不是新判断**：`FitSummary` / `summarizeFits()` 只对 B3 已产出的 `QuestionTargetFit[]` 计数，CLI 与 Agent **共用**同一函数（避免两处各算一遍、口径漂移）。
 - **（B5）"没有已落库优先级"不渲染成 0 分**：`need`/`diligence` 输出里，优先分为 0 且无 policy 版本时显示"暂无已落库优先级"，避免把"没有数据"读成"最不重要"。
+- **（B5 验收裁决，2026-09-25）Agent 不获得「链条投影 / 对象录入」的受控写权限**：v1 维持只读（未注入投影服务、无 target 写工具）；UX 上 positions=0 时只提示 `tiancha research chain <行业>` —— **刻意接受**。Phase C 不得顺带放开；未来若需要须**单独授权 + 单独改契约**（契约 §11 Q1）。
 
 ---
 
@@ -552,6 +554,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 |---|---|---|
 | **飞轮第一环缺失**（无自动搜集/赛道识别） | 所有入口需人先给行业名 | Phase E |
 | ~~**调研准备链完全缺失**（链条/对象/适配/提纲）~~ **已由 Phase B v1 的 B1–B5 全部实现**：链条+位置+需求（B1）· 对象（B2）· 适配（B3）· 提纲（B4）· CLI/Agent 暴露（B5） | **无剩余 Step** | ✅ Phase B 收尾 |
+| **Agent 受控写权限**（`project chain` / `record target`）：**已裁决 —— v1 不给**；Agent 只读已生成的规划产物，未生成时提示由研究者执行 CLI | Agent 不能自行制造研究计划事实（Human Gate 保持） | **已裁决**（非债务） |
 | **B4：`requestedMaterials` / `risks` 恒为 `[]`** —— 无真实来源时**不臆造** | 提纲中"要哪些材料 / 风险提示"暂时为空 | Phase C（真实材料链落地后填） |
 | **Field Research 缺失**（Material/Fragment/Evidence） | 碎片无法进入研究系统 | Phase C |
 | `company` 表零调用（链条位置是**模板实例**，未与真实公司数据关联） | 无"这家公司属于哪个位置"的数据基础 | Phase C/E |

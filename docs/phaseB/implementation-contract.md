@@ -1,6 +1,6 @@
 # Tiancha Phase B v1 — Implementation Contract
 
-> **状态：待冻结（revision 1）。** 上游：`07-domain-model-design.md`（§3.2 B3 · §3.6 F1/F3/F4）+ `08-code-design.md`（分层/加列/identity 纪律）。
+> **状态：已冻结，B1–B5 全部实现并经独立验收（`6eb9ea2` / `8ec8f6f`；Phase B v1 FINAL PASS，2026-09-25）。** 上游：`07-domain-model-design.md`（§3.2 B3 · §3.6 F1/F3/F4）+ `08-code-design.md`（分层/加列/identity 纪律）。
 > 本文是**实现契约**，不是设计讨论：它把每个对象的**字段 / 来源 / 生命周期 / identity / 写入边界 / 规则 / 入口 / 验收测试**全部钉死，使实现者无法自行发明 Target/Chain/Strategy 体系。
 > **本文未修改仓库源码。** 冻结后才进入编码。
 
@@ -423,6 +423,7 @@ LLM / 外部数据源 / Company Discovery / Evidence 全链 / Priority·Evaluati
 | # | 问题 | 我的建议 |
 |---|---|---|
 | **Q1** | Agent 是否可获得**写 target** 的能力（把用户口述的对象录成 target）？ | v1 **不给**（保持"Human-confirmed"为硬边界）；等真实使用后再评估 |
+| **Q1 裁决（2026-09-25，B5 验收）** | **维持不给**：v1 不授予 Agent `project chain` / `record target` 的受控写权限；**Phase C 不得顺带放开**；如未来需要，必须**单独授权、单独变更契约**。 | 已定 |
 | **Q2** | `config/chain-templates/*.json` 的覆盖机制 v1 是否要做？ | 做**最小**：仅支持覆盖 `(templateId,version)` 且必须逐字段一致；否则报错要求新版本 |
 | **Q3** | `expectedInformationValue` 缺省来源 | v1：人可给；缺省时按 `position.importance` 派生（不拍脑袋） |
 
