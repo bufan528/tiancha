@@ -545,7 +545,16 @@ Gap = conflict（若原本 resolved 则【重新打开】）
     → 允许落地（这是"解决冲突"的正式路径）
     → 只改变 target 与该新 belief 的认知关系（§6.7）：**不自动关闭** conflict、**不选** winner
     → 但该维度只要仍有 open conflict，Pool 仍为 conflicting（§9 / §10）
+
+显式 CONFLICT（**C-FIX-15**）
+    → 【禁止】在已有 open conflict 时再执行一次冲突投影
+    → SKIPPED，reason = OPEN_CONFLICT_REQUIRES_REVIEW（**零 mutation**）
 ```
+
+> ★ **C-FIX-15（为什么连 `CONFLICT` 也要禁）**：契约没有定义"冲突之上的冲突"的生命周期。
+> 若先执行 dimension-level conflict 投影（该维度全部 `confirmed` 退出 current + 新增冲突对），
+> **再**把新 belief 降级为 candidate，就会在**任何人确认之前**改动该维度的冲突认知 —— 这与
+> "candidate 还不是 current 认知"自相矛盾。因此 C1 **宁可 SKIPPED，也不自创生命周期**。
 
 **为什么必须禁止**：否则会出现
 
@@ -688,6 +697,12 @@ confirmCandidate(beliefId, relation)    ← 人工确认（显式状态迁移）
 > * **`candidate → confirmed` 只能由 `confirmCandidate` 完成**；
 > * **不得**通过"再次投影同一个 Claim"来确认候选（那只会 no-op，造成"用户以为确认了、系统其实没确认"）；
 > * 因此实现里**不存在**"投影时发现已有 candidate 就顺手确认"的路径。
+>
+> ★ **C-FIX-14：确认同样受 §6.4 约束（人工路径不得绕过 open conflict）**
+> * 该维度**仍有 open conflict** 时，`NEW` / `SUPPORT` **不得**把候选确认为 current（必须**明确拒绝**，并提示改用显式 `REVISE` / `SUPERSEDE`）；
+> * 合法路径只有显式 `REVISE` / `SUPERSEDE`（§6.7），且**不得**自动关闭任何 `KnowledgeConflict`、**不得**选 winner；
+> * **确认改变 current 认知 ⇒ 必须推进当前投影版本**（`version` / `updatedAt`）；
+> * **拒绝（`rejected`）不改变 current 认知 ⇒ 不推进版本**。
 
 ### 7.4 确认时必须**显式指定最终 Evolution relation**（**C-FIX-4**）
 
@@ -1654,6 +1669,8 @@ D SUPERSEDE B           → 必须【成功】
 - [ ] **`KnowledgeRepository.listCurrentBeliefs()` 是唯一 current predicate**（C-FIX-12），且 C1 允许修改 `knowledge-repository.ts`；
 - [ ] **C1 白名单 / 黑名单冻结**（§18）：不得重写 `reconcilePool` / `refreshGaps` / `refreshNextActions` / `refreshState` 的业务规则；
 - [ ] **测试清单 ≥ 20 条 + E2E + 反例**（§26.1–§26.3）纳入 C1 交付；
+- [ ] **人工确认路径同样受 open conflict 约束**（C-FIX-14）：仍有 open conflict ⇒ `NEW`/`SUPPORT` 拒绝确认；确认推进版本、`rejected` 不推进；
+- [ ] **`open conflict + CONFLICT` ⇒ `SKIPPED`（零 mutation）**（C-FIX-15），不得先 mutation 再 candidate；
 - [ ] `industry.current_knowledge_id` 明确弃用（P4）；
 - [ ] Gap reopened 规则冻结；
 - [ ] Pool 不成为 Knowledge SoT；
@@ -1754,4 +1771,15 @@ D SUPERSEDE B           → 必须【成功】
 |---|---|---|---|
 | **C-FIX-13** | **C-FIX-7 × C-FIX-8 生命周期矛盾（P0）**：维度级 CONFLICT 会把该维度**全部** `confirmed` 变成 `conflicting`，而 C-FIX-8 又要求 `REVISE`/`SUPERSEDE` 的 target 必须 `confirmed` ⇒ "显式演化是解决冲突的合法路径"**算法上不可达** | §5 算法 ②③、**§5.2**、§6.4、**§6.7**（新增）、§8 Rule F、§9 ⑤、§26 测试清单 + **§26.4**（新增）、§27 | 合法 target 扩为 **`state ∈ { confirmed, conflicting }`**；**target 为 `conflicting` 时只改变 target 与新 belief 的认知关系**（`SUPERSEDE`⇒superseded、`REVISE`⇒revised、新 belief⇒confirmed），**不自动恢复其他 conflicting beliefs、不自动关闭 `KnowledgeConflict`、不选 winner**；只要仍有 open conflict，Pool 仍 `conflicting`。配 §26.4 的"解决路径必须真实可达"回归测试 |
 | （附带） | `accepted` 死枚举的处理需要写死 | §6.5 | **不得**新增产生路径 / 不得当 current 判据 / 不得当 `resolved` 别名 / **不得**在 C1 顺手清理 |
+
+### 28.8 C1 实施审计修订（**C-FIX-14 / C-FIX-15**，2026-09-25）
+
+> 输入是"**C1 的实际产品代码 diff**"（`2b48ac6`）逐段审计的结果：静态边界、current 判据、确定性
+> identity、exact no-op、显式 target、C-FIX-13、维度级冲突、直接冲突对、占位保护、历史保留全部 PASS；
+> 但发现 **2 个 Human Gate / Conflict 交互缺口**（已在 `740d44d` 修复）。
+
+| # | 审计发现 | 落实位置 | 写定 |
+|---|---|---|---|
+| **C-FIX-14** | `confirmCandidate()` 未检查 open conflict ⇒ **人工确认路径可绕过 C-FIX-7**（普通候选可直接被确认为 current，而冲突仍 open） | **§7.3** | 该维度仍有 open conflict 时，`NEW` / `SUPPORT` **拒绝确认**（明确报错并提示改用显式 `REVISE` / `SUPERSEDE`）；合法路径只有显式 `REVISE` / `SUPERSEDE`，且**不自动关闭** conflict、**不选** winner；**确认改变 current ⇒ 推进投影版本**，`rejected` 不推进 |
+| **C-FIX-15** | `open conflict + CONFLICT` 会**先执行 dimension-level mutation、再把新 belief 降级为 candidate**（在任何人确认前改动冲突认知） | **§6.4** | 已有 open conflict 时**禁止**再次执行冲突投影 ⇒ `SKIPPED` + `OPEN_CONFLICT_REQUIRES_REVIEW`（**零 mutation**）；**不自创"冲突叠加"生命周期** |
 
