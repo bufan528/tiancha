@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-24 重写 · S7 后更新** · HEAD `b78c42b` · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **140 tests 全过** · `research smoke` PASS。
+> **2026-09-24 重写 · DATA-R1 后更新** · HEAD `4c6cdb8` · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **144 tests 全过** · `research smoke` PASS。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。
 
 ---
@@ -148,6 +148,7 @@
 | **S6** **Report / IndustryDossier 只读投影**（`report_snapshot` 表 + append-only；sections 覆盖认知/事实/判断/冲突/缺口/变化/证据/评价/优先级/下一步） | `application/report-service.ts`、`domain/report.ts`、`storage/report-repository.ts` | `s6-report.test.ts`（T-A10） |
 | **S6-R1** 投影**只读取**已持久化的 Priority（`PriorityService.currentPriorities()`，不调 `rank()`）；`rank()` 生产调用点仅剩 S5 写入路径 | `application/report-service.ts`、`application/priority-service.ts` | `s6-report.test.ts`（S6-R1 3 个） |
 | **S7** **能力暴露**：CLI 4 命令（evaluate 可写 / pool·priority·report 只读；`--json`）+ Agent 4 只读工具（9→13）+ report 物化 Markdown | `src/cli/research-*.ts`、`src/cli/report-markdown.ts`、`src/agent/research-tools.ts` | `s7-exposure.test.ts`、`research-format.test.ts`、`s7-cli.test.ts` |
+| **DATA-R1** **legacy `mw-v1` 数据修复迁移**（S1 之前 bootstrap 的冻结基线缺 `weight`/`criticality`；一次性补齐，不改身份/不新建版本） | `storage/research-db.ts`（`repairLegacyMethodologyV1`） | `data-r1-legacy-methodology.test.ts` |
 
 ### 2.2 只有 Domain Contract（有类型、无实现/无闭环）
 
@@ -166,7 +167,7 @@
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 140 tests / 140 pass / 0 fail
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 144 tests / 144 pass / 0 fail
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
@@ -242,7 +243,7 @@ packages/research/src/
   migration/       pi-to-tiancha、readonly-session-manager
   methodology/     methodology-v1.ts（12 维 baseline）
   agents/ planning/ scheduler/ evidence/ dossier/ scoring/   ← 空壳（Phase B+）
-  *.test.ts        19 个测试文件（123 用例）
+  *.test.ts        20 个测试文件（研究包）＋ `src/agent`、`src/cli` 各 2 个（共 144 用例）
 
 config/methodology-v1.json     12 维 Human-approved baseline（mirror；含 weight/criticality）
 config/scoring.json            旧评分模型配置（legacy，**不接线**）
@@ -385,6 +386,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **S6** | **Report / IndustryDossier 只读投影**（append-only 快照；不改任何 SoT；含优先级只读呈现） | ✅ |
 | **S6-R1** | 投影**读取**已持久化 Priority（不重算）；`rank()` 仅剩 S5 写入路径调用 | ✅ |
 | **S7** | **Capability Exposure**：CLI 4 命令 + Agent 4 只读工具 + report 物化 Markdown（`~/.tiancha/reports/`） | ✅ |
+| **DATA-R1** | **legacy `mw-v1` 修复迁移**（补齐冻结基线自身的 `weight`/`criticality`；真实库已复验） | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -434,6 +436,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **（S7）CLI 可写 / Agent 只读**：只有人执行 `tiancha research evaluate` 会 append `investment_evaluation`；Agent 的 `research_evaluate` **只读最近一次**，无评估时明确提示跑 CLI。这是"模型不能 activate methodology"同一套治理思想。
 - **（S7）`--json` 是输出格式切换**：一个 service 结果 → human / json 两个 renderer，**不是两套业务逻辑**。
 - **（S7）Report 物化**：`report_snapshot` 是正式快照，Markdown 只是其**表现层**；文件名 `<sanitized industry>__<dossierId>.md`，**id 取自快照本身**（1:1 可追溯），目录固定 `~/.tiancha/reports/`，不做 `--out`。
+- **（DATA-R1）"方法论数据修复" ≠ "方法论变更"**：把历史库中**残缺的 v1 恢复成已批准的 v1**（补入值逐项来自冻结的 `METHODOLOGY_V1`），`versionId`/`versionTag`/`activatedAt` 不变、不新建版本/candidate/gate，因此**不走 Human Gate**；且只对"明显是旧版形态"的行生效（12 个 key 一致、`weight`/`criticality` 全缺），绝不静默覆盖手工修改过的行。
 - **（S4.5）Policy provenance 不可伪造**：一次 Evaluation 记录 methodology + evaluation + aggregation 三个 version ref；`PolicyRegistry` 拒绝用不同内容重注册同一 versionId。
 - **（S4.5）S5 之前不写 Priority**：S4.5 只恢复到 Evaluation 为止；PriorityService / ResearchPriority / 优先级排序算法属 S5。
 
@@ -455,7 +458,8 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **Policy（eval / agg / suf / prio）仍定义在代码中**（已版本化 + 不可变，但未落 DB） | "改口径 = 改方法论版本"尚未完全成立 | 后续 |
 | **S5：`acquisitionCost` 是获取难度先验**（按 gapType + 是否需要一手），非真实外部成本 | 真实成本需 Target/Chain（Phase B）接入后重估 | Phase B |
 | **S6：`MethodologyService.getActive()` 有 lazy-bootstrap 写副作用**（ReportService 读方法论时会触发首启写） | 未 bootstrap 的库上生成投影会写 methodology；已 bootstrap 后无影响 | 顺手清 |
-| **S7：真实库里 S1 之前的 `methodology.dimensions_json` 没有 `weight`/`criticality`** | 该库上新建 requirement 的 importance 退化为 1、`critical` 门控失效、S5 的 importance/criticality 因子失真。**修法涉及改写已激活方法论**，触碰 Invariant 6，需你决策 | 待裁决 |
+| ~~**S7：真实库里 S1 之前的 `methodology.dimensions_json` 没有 `weight`/`criticality`**~~ **已由 DATA-R1 修复**：`repairLegacyMethodologyV1()` 一次性迁移；真实库复验 `withWeight=12 withCriticality=12`，`risk`/`key_validation` 恢复 `critical` | 迁移只补齐冻结基线自身的值，不新建版本、不改 `activatedAt` | ✅ 已修 |
+| **DATA-R1 未覆盖**：旧库中 **已存在** 的 `information_requirement.importance`（S1 之前恒 5）不会被重算 | 只影响历史 requirement 的分级；新建的已按 weight 派生 | 见 §9.4 S2-NOTE |
 | `nextVersionTag()` 用计数、`getActive()` lazy-bootstrap 有写副作用、`isHumanApprovedBaseline` 命名漂移 | 低危 | 顺手清 |
 | `evidence/`、`dossier/`、`scoring/`、`planning/`、`agents/`、`scheduler/` 空壳 | 相关能力未实现 | Phase B+ |
 | 无模型 key 时语义路由未端到端验收 | 契约级测试 | 有模型环境后补 |
@@ -471,7 +475,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 140 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 144 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 

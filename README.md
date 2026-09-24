@@ -103,7 +103,8 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
   - `S5` **PriorityService + ResearchPriority + NextAction**：`ResearchPriority` 是**值对象**（可审计：raw / normalized / weight / contribution + policyVersionId）；六因子加权（**不是** importance 排序）；`acquisitionValue`（缺口解决价值）与 `acquisitionCost`（信息获取难度先验）**只由现有信号推导**，不伪造 Target/成本；`Priority` 决定"先做谁"、`Gap 状态`决定"做什么"；
   - `S6` **Report / IndustryDossier 只读投影**：从当前 Knowledge / Pool / Gap / State / Evaluation / Priority **冻结**一份结构化快照（认知·事实·判断·冲突·缺口·变化·证据·评价·优先级·下一步），**append-only**、**不写任何 SoT**（I14）、条目只引用不复制；优先级**只呈现不重算**；
   - `S6-R1` 投影读取的是 S5 **已持久化**的 Priority（`currentPriorities()`），**不调用** `rank()` 重算——保证报告反映"快照时"的状态，而不是"生成时的规则"；
-  - `S7` **Capability Exposure**：CLI 暴露 `research evaluate / pool / priority / report`（`--json` 可选）；其中**只有 `evaluate` 可写**（人主动落库一次评估），其余只读；`report` 除追加只读快照外还物化 Markdown 到 `~/.tiancha/reports/`。Agent 侧新增 4 个工具（共 13 个），**全部只读** —— Agent 不改变研究状态。
+  - `S7` **Capability Exposure**：CLI 暴露 `research evaluate / pool / priority / report`（`--json` 可选）；其中**只有 `evaluate` 可写**（人主动落库一次评估），其余只读；`report` 除追加只读快照外还物化 Markdown 到 `~/.tiancha/reports/`。Agent 侧新增 4 个工具（共 13 个），**全部只读** —— Agent 不改变研究状态；
+  - `DATA-R1` **legacy `mw-v1` 数据修复**：把 S1 之前 bootstrap 的冻结基线补齐 `weight`/`criticality`（只补**冻结基线自身的值**，不改 `versionId`/`tag`/`activatedAt`、不新建版本、不走 Human Gate）。
 
 **能力边界：**
 - 当前数据源是 **Echo 占位 Provider**，所有 Evidence 标记 `isRealExternalData=false` / `sourceType=echo_placeholder`。**不能据此做真实投资判断、不给"值得/不值得"结论**；真实 Wind/Web/上传文档在 Phase E 接入。
@@ -144,7 +145,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 npx tsc --noEmit                                  # 根类型检查
 npm --prefix packages/research run typecheck      # 研究包类型检查
 npm run build:cli                                 # esbuild 产出 dist/cli/tiancha.js
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 140 tests
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 144 tests
 node --import tsx src/cli/tiancha.ts research smoke
 ```
 
@@ -169,6 +170,7 @@ node --import tsx src/cli/tiancha.ts research smoke
 | S6 | Report / IndustryDossier 只读投影（append-only，不改 SoT） | ✅ |
 | S6-R1 | 投影读取已持久化 Priority（不重算 `rank()`） | ✅ |
 | S7 | Capability Exposure：CLI 4 命令（`--json`）+ Agent 4 只读工具 + report 物化 Markdown | ✅ |
+| DATA-R1 | legacy `mw-v1` 数据修复迁移（补齐冻结基线自身的 weight/criticality） | ✅ |
 
 **后续 Phase**（按业务闭环排）
 
