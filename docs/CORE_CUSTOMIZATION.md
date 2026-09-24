@@ -1,4 +1,8 @@
-# 内核定制说明（CORE_CUSTOMIZATION）
+# 内核定制说明（CORE_CUSTOMIZATION）— **LEGACY 文档**
+
+> ⛔ **本文记录的是早期对 `vendor/pi` 的内核定制（Pi 工作台时代），不是当前天查架构（2026-09-24 注）。**
+> 当前天查的 Research Core（`packages/research`）**不 import coding-agent**，上述内核定制（compaction / research-prompt / quality-gate）**不在当前主路径上**。
+> 当前架构见 [`docs/HANDOFF.md`](./HANDOFF.md)。下文原文保留，仅作历史参考。
 
 ## 1. Vendor 状态（已完成）
 

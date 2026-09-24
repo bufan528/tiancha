@@ -1,4 +1,10 @@
-# 投研工作台架构（Pi 底座版，v2.0 唯一基准）
+# 投研工作台架构（Pi 底座版，v2.0 唯一基准）— **LEGACY 文档**
+
+> ⛔ **本文描述的是 legacy 工作台（Pi v2.0），不是当前天查架构（2026-09-24 注）。**
+> 当前架构见 [`docs/HANDOFF.md`](./HANDOFF.md) 与 `docs/architecture-review/06/07/08`。
+> 注意：文中路径 `D:\diaoyan-agent` 是**旧工程目录名**（现为 `D:\tiancha-agent`）；其描述的 `src/server.ts`、`web/`、`data/`、`tools/wind_query.py` 等均为**保留的 legacy 资产，非默认入口**。下文原文保留，仅作历史参考。
+
+---
 
 工程根目录 `D:\diaoyan-agent`，Node/TypeScript 本地工程，以 `@earendil-works/pi-coding-agent`（Pi）为 agent 底座。本文件取代旧版 Python/FastAPI 约定。
 

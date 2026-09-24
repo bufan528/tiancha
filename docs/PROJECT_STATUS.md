@@ -1,6 +1,7 @@
-# 项目状态报告 · Tiancha 天查
+# 项目状态报告 · Tiancha 天查（已归档）
 
-> ⚠️ **部分过时（2026-09-23 注）**：本文撰写于 2C 接线**之前**。此后 2C 已接线、P0（知识沉淀/回填接线）与 P1（方法论版本化演进）已完成，且 `tiancha industry ingest` 的输出已从 `gaps=0/nextActions=0` 变为 `gaps=12/nextActions=12`。**请以 `docs/HANDOFF.md` 为准。**
+> ⛔ **本文已归档、不再维护（2026-09-24 注）**：它描述的是 Phase 2A/2B 时代的状态。此后已完成 2C 接线、P0、P1，以及 **Phase A 的 S1–S4**（Methodology 扩展 / 幂等 identity / Pool Slot+Item / Evaluation 四面）。
+> **当前状态一律以 [`docs/HANDOFF.md`](./HANDOFF.md) 为准。**
 > 生成日期：2026-09-22 · 基于 Phase 2A/2B 实际代码与本次全量验证。
 
 ## 1. 产品定位
