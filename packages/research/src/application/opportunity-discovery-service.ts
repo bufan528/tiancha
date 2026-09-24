@@ -33,6 +33,7 @@ import { createIndustry } from "../domain/industry.js";
 import { dimensionImportance } from "../domain/methodology.js";
 import { questionKey, requirementKey, poolSlotKey } from "../domain/identity.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
+import { SUFFICIENCY_POLICY_V1 } from "../domain/index.js";
 import { KnowledgeProjectionService } from "./knowledge-projection-service.js";
 import { MethodologyService } from "./methodology-service.js";
 import type { ResearchRepository } from "../storage/research-repository.js";
@@ -147,6 +148,8 @@ export class OpportunityDiscoveryService {
           // never hard-coded (was: importance = 5).
           importance: dimensionImportance(dim.weight),
           requiredEvidenceType: dim.requiredInfo,
+          // S4.5: the machine-executable sufficiency rule the Pool/Gap judge with.
+          sufficiencyPolicyRef: SUFFICIENCY_POLICY_V1.versionId,
           confirmedCondition: dim.confirmedCondition,
           uncertainCondition: dim.uncertainCondition,
           unknownCondition: dim.unknownCondition,

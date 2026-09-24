@@ -17,6 +17,12 @@ export interface InformationRequirement {
   /** Derived from the ACTIVE methodology dimension — never hard-coded. */
   importance: number;
   requiredEvidenceType: string;
+  /**
+   * S4.5: the machine-executable sufficiency rule this requirement is judged by
+   * (see domain/sufficiency.ts). `confirmedCondition` stays the human-readable
+   * side; THIS is the ref the Pool and Gap judge against.
+   */
+  sufficiencyPolicyRef?: string;
   // --- E1: inherited from the methodology dimension, used to judge "is this enough?" ---
   confirmedCondition: string;
   uncertainCondition: string;

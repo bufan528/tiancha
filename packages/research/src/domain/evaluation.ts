@@ -67,6 +67,12 @@ export interface InvestmentEvaluation {
   subjectId: string;
   /** The evaluation is bound to the methodology version it was computed against. */
   methodologyVersionId: string;
+  /**
+   * S4.5 provenance: the EXACT policy versions this evaluation was computed with.
+   * A historical evaluation must always be answerable: "which rules produced this?"
+   */
+  evaluationPolicyVersionId: string;
+  aggregationPolicyVersionId: string;
   dimensionEvaluations: DimensionEvaluation[];
   aggregation: Aggregation;
   coverage: EvaluationCoverage;

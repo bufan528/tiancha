@@ -21,6 +21,7 @@ import type {
   MethodologyCandidate,
   HumanGate,
   InvestmentEvaluation,
+  GapType,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -194,9 +195,10 @@ export class ResearchRepository {
       .prepare(
         `INSERT OR REPLACE INTO information_requirement
          (requirement_id, question_id, subject_kind, subject_id, dimension, description,
-          importance, required_evidence_type, confirmed_condition, uncertain_condition,
-          unknown_condition, preferred_position_kinds_json, status, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          importance, required_evidence_type, sufficiency_policy_ref, confirmed_condition,
+          uncertain_condition, unknown_condition, preferred_position_kinds_json, status,
+          created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         r.requirementId,
@@ -207,6 +209,7 @@ export class ResearchRepository {
         r.description,
         r.importance,
         r.requiredEvidenceType,
+        r.sufficiencyPolicyRef ?? null,
         r.confirmedCondition,
         r.uncertainCondition,
         r.unknownCondition,
@@ -231,6 +234,7 @@ export class ResearchRepository {
       description: r.description,
       importance: r.importance,
       requiredEvidenceType: r.required_evidence_type,
+      sufficiencyPolicyRef: r.sufficiency_policy_ref ?? undefined,
       confirmedCondition: r.confirmed_condition ?? "",
       uncertainCondition: r.uncertain_condition ?? "",
       unknownCondition: r.unknown_condition ?? "",
@@ -254,6 +258,7 @@ export class ResearchRepository {
       description: r.description,
       importance: r.importance,
       requiredEvidenceType: r.required_evidence_type,
+      sufficiencyPolicyRef: r.sufficiency_policy_ref ?? undefined,
       confirmedCondition: r.confirmed_condition ?? "",
       uncertainCondition: r.uncertain_condition ?? "",
       unknownCondition: r.unknown_condition ?? "",
@@ -269,16 +274,17 @@ export class ResearchRepository {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO research_gap
-         (gap_id, subject_kind, subject_id, description, importance, uncertainty,
+         (gap_id, subject_kind, subject_id, description, gap_type, importance, uncertainty,
           related_requirement_ids_json, related_question_ids_json, status,
           discovered_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         g.gapId,
         g.subjectKind,
         g.subjectId,
         g.description,
+        g.gapType,
         g.importance,
         g.uncertainty,
         JSON.stringify(g.relatedRequirementIds),
@@ -298,6 +304,7 @@ export class ResearchRepository {
       subjectKind: r.subject_kind,
       subjectId: r.subject_id,
       description: r.description,
+      gapType: (r.gap_type ?? "unknown") as GapType,
       importance: r.importance,
       uncertainty: r.uncertainty,
       relatedRequirementIds: JSON.parse(r.related_requirement_ids_json),
@@ -705,15 +712,18 @@ export class ResearchRepository {
       .prepare(
         `INSERT OR REPLACE INTO investment_evaluation
          (evaluation_id, subject_kind, subject_id, methodology_version_id,
+          evaluation_policy_version_id, aggregation_policy_version_id,
           dimension_evaluations_json, aggregation_json, coverage_json,
           sufficiency_summary_json, critical_flags_json, decision_json, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         e.evaluationId,
         e.subjectKind,
         e.subjectId,
         e.methodologyVersionId,
+        e.evaluationPolicyVersionId,
+        e.aggregationPolicyVersionId,
         JSON.stringify(e.dimensionEvaluations),
         JSON.stringify(e.aggregation),
         JSON.stringify(e.coverage),
@@ -855,6 +865,8 @@ function rowToEvaluation(row: any): InvestmentEvaluation {
     subjectKind: row.subject_kind,
     subjectId: row.subject_id,
     methodologyVersionId: row.methodology_version_id,
+    evaluationPolicyVersionId: row.evaluation_policy_version_id ?? "",
+    aggregationPolicyVersionId: row.aggregation_policy_version_id ?? "",
     dimensionEvaluations: JSON.parse(row.dimension_evaluations_json),
     aggregation: JSON.parse(row.aggregation_json),
     coverage: JSON.parse(row.coverage_json),

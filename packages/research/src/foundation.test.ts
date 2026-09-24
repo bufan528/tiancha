@@ -105,6 +105,7 @@ describe("T2 ResearchGap lifecycle", () => {
       subjectKind: "industry",
       subjectId: "ind-1",
       description: "需求未知",
+      gapType: "unknown",
       importance: 7,
       uncertainty: 0.8,
       relatedRequirementIds: ["ir-1"],
@@ -206,7 +207,7 @@ class RealDataProvider implements DataProviderPort {
 }
 
 describe("Phase 2C ingest wiring (real data)", () => {
-  test("real claims project into Knowledge, promote Pool to partial, flow to State and Gap", async () => {
+  test("real claims project into Knowledge, promote Pool to sufficient, flow to State and Gap", async () => {
     const { db, repo, artifacts } = setup();
     const svc = new OpportunityDiscoveryService(repo, new RealDataProvider(), artifacts);
     const res = await svc.ingestMaterial({ materialText: "x", industryName: "人形机器人" });
@@ -218,20 +219,21 @@ describe("Phase 2C ingest wiring (real data)", () => {
     assert.equal(k.beliefs.length, 2);
     assert.equal(k.beliefs.every((b) => b.state === "confirmed"), true);
 
-    // Pool: the two covered dimensions become partial; the rest stay unknown
+    // Pool (S4.5): the two covered dimensions reach `sufficient`; the rest stay unknown
     const pool = repo.listPoolSlots(res.industry.industryId);
-    assert.equal(pool.filter((s) => s.status === "partial").length, 2);
+    assert.equal(pool.filter((s) => s.status === "sufficient").length, 2);
     assert.equal(pool.filter((s) => s.status === "unknown").length, 10);
 
-    // State: known = the two partial entries; unknown = the rest
+    // State: known = the two sufficient entries; unknown = the rest
     assert.equal(res.state.known.length, 2);
     assert.equal(res.state.unknown.length, 10);
 
-    // Gaps: high importance + (partial|unknown) => open for all 12 dims
+    // Gaps (S4.5): only the 10 un-met dimensions keep an open gap — a sufficient
+    // dimension CLOSES its gap, so this is deliberately no longer a constant 12.
     const gaps = repo.listGaps(res.industry.industryId).filter((g) => g.status === "open");
-    assert.equal(gaps.length, 12);
-    assert.equal(res.gapCount, 12);
-    assert.equal(res.nextActionCount, 12);
+    assert.equal(gaps.length, 10);
+    assert.equal(res.gapCount, 10);
+    assert.equal(res.nextActionCount, 10);
     db.close();
   });
 
@@ -260,14 +262,16 @@ describe("Phase 2C ingest wiring (real data)", () => {
     assert.ok(repo.getSource(srcRef!), "sourceRef resolves to a research_source row");
 
     const pool = repo.listPoolSlots(sid);
-    assert.equal(pool.filter((s) => s.status === "partial").length, 2);
+    assert.equal(pool.filter((s) => s.status === "sufficient").length, 2);
     assert.equal(pool.filter((s) => s.status === "unknown").length, 10);
 
     const state = repo.getStateBySubject("industry", sid)!;
     assert.equal(state.known.length, 2);
     assert.equal(state.unknown.length, 10);
-    // next actions stay idempotent (no duplicates from backfill)
-    assert.equal(repo.listNextActions(sid).filter((a) => a.status === "open").length, 12);
+    // S4.5: the two backfilled dimensions are now met -> their gaps resolve -> their
+    // actions cancel, so the count drops from the ingest baseline of 12 to 10.
+    assert.equal(repo.listGaps(sid).filter((g) => g.status === "open").length, 10);
+    assert.equal(repo.listNextActions(sid).filter((a) => a.status === "open").length, 10);
     db.close();
   });
 

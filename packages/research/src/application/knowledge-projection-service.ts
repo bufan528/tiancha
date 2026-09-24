@@ -21,9 +21,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import { KnowledgeRepository } from "../storage/knowledge-repository.js";
 import { ResearchRepository } from "../storage/research-repository.js";
+import { SUFFICIENCY_POLICY_V1, isSufficient, sufficiencyFacts } from "../domain/sufficiency.js";
 import type {
   Claim,
+  GapType,
   IndustryKnowledge,
+  InformationRequirement,
   KnowledgeBelief,
   KnowledgeConflict,
   KnowledgeSubjectKind,
@@ -208,12 +211,14 @@ export class KnowledgeProjectionService {
    * S3: the Pool is Slot + Item, and a slot's identity is (subject, dimension), so
    * we read the slot's own `dimension` directly (no requirement lookup needed).
    *
-   * Rules (strict, conservative):
-   *  - unknown -> partial when >=1 `confirmed` current belief covers the slot's dimension.
-   *  - partial -> sufficient is NEVER auto-upgraded here (insufficient coverage
-   *    judgment); we would rather stay partial than over-confirm.
-   *  - open KnowledgeConflict on the dimension -> status `conflicting` (both sides kept).
-   *  - only `confirmed` current beliefs act as support; revised/superseded do not.
+   * Rules (S4.5 — judged with the SHARED SufficiencyPolicy over the slot's items):
+   *  - no beliefs on the dimension             -> `unknown`
+   *  - beliefs present, policy NOT satisfied   -> `partial`
+   *  - beliefs present, policy satisfied       -> `sufficient`  (now REACHABLE)
+   *  - open KnowledgeConflict on the dimension -> `conflicting` (both sides kept)
+   *  - conflicts clearing lets the slot fall back (NOT sticky).
+   *  - only `confirmed` current beliefs are the scored support; revised/superseded
+   *    are still indexed as items so history is never dropped.
    */
   reconcilePool(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
     const repo = new ResearchRepository(this.db);
@@ -238,30 +243,12 @@ export class KnowledgeProjectionService {
       const beliefsForDim = (knowledge ? this.knowledge.listBeliefs(knowledge.knowledgeId) : []).filter(
         (b) => b.dimension === dim,
       );
-      const support = (knowledge?.beliefs ?? []).filter(
-        (b) => b.state === "confirmed" && b.dimension === dim,
-      );
       const conflictsForDim = openConflicts.filter((c) => c.dimension === dim);
 
-      let status: PoolSlotStatus = slot.status;
-      if (conflictsForDim.length > 0) {
-        status = "conflicting";
-      } else if (slot.status === "unknown" && support.length > 0) {
-        status = "partial";
-      }
-
-      if (status !== slot.status) {
-        repo.upsertPoolSlot({
-          ...slot,
-          status,
-          coverageJudgement: slotJudgement(status, dim),
-          updatedAt: now,
-        });
-      }
-
-      // Items: PRESERVE history — upsert the claims we know about, NEVER wholesale-delete.
-      // An unresolved disagreement is expressed as `contradicts` (both sides kept) rather
-      // than dropping a side. Idempotent: same claim -> same item id; write only on change.
+      // Items FIRST: PRESERVE history — upsert the claims we know about, NEVER
+      // wholesale-delete. An unresolved disagreement is expressed as `contradicts`
+      // (both sides kept) rather than dropping a side. Idempotent: same claim ->
+      // same item id; write only on change.
       const existingById = new Map(repo.listPoolItems(slot.slotId).map((it) => [it.itemId, it]));
       for (const b of beliefsForDim) {
         const claimRef = b.claimRef;
@@ -281,6 +268,34 @@ export class KnowledgeProjectionService {
             createdAt: prev?.createdAt ?? now,
           });
         }
+      }
+
+      // S4.5: judge the slot status from the items we NOW hold, with the SHARED
+      // sufficiency policy — so `sufficient` is reachable and `conflicting` recovers
+      // (07 §7: unknown → partial → sufficient, or conflicting ⇄ partial).
+      // Only `confirmed` current beliefs count as support; revised/superseded history
+      // is indexed as items but NEVER satisfies the policy on its own.
+      const confirmedClaimRefs = new Set(
+        beliefsForDim.filter((b) => b.state === "confirmed").map((b) => b.claimRef),
+      );
+      const confirmingItems = repo.listPoolItems(slot.slotId).filter((it) => confirmedClaimRefs.has(it.claimRef));
+      const facts = sufficiencyFacts(confirmingItems);
+      const status: PoolSlotStatus =
+        conflictsForDim.length > 0
+          ? "conflicting"
+          : confirmedClaimRefs.size === 0
+            ? "unknown"
+            : isSufficient(facts, SUFFICIENCY_POLICY_V1)
+              ? "sufficient"
+              : "partial";
+
+      if (status !== slot.status) {
+        repo.upsertPoolSlot({
+          ...slot,
+          status,
+          coverageJudgement: slotJudgement(status, dim),
+          updatedAt: now,
+        });
       }
     }
   }
@@ -345,67 +360,61 @@ export class KnowledgeProjectionService {
   }
 
   /**
-   * Gap evaluation centered on InformationRequirement (not every unknown entry).
-   * One-way: reads Pool/Requirement/Question; writes only ResearchGap. Never touches
-   * Pool/Knowledge/State/Claim/Evidence. Idempotent: stable gapId = `gap-<requirementId>`.
+   * Gap lifecycle, driven by the PoolSlot status (S4.5 — NOT by an importance magic
+   * number). One-way: reads Pool/Requirement; writes only ResearchGap (+ syncs the
+   * requirement's own status). Idempotent: stable gapId = `gap-<requirementId>`.
    *
-   * Rules (A-E, conservative; importance >= 2 is "high"):
-   *  - A: high + Pool unknown (req still open)      -> open Gap
-   *  - B: low  + unknown                            -> no Gap
-   *  - C: high + Pool partial (partial != sufficient) -> open Gap
-   *  - D: confirmed / requirement met                -> close active Gap (open/mitigating -> resolved), row kept
-   *  - E: high + Pool conflict                      -> open Gap ("unresolved disagreement"), never auto-resolved
+   *   slot unknown      -> open gap, gapType = unknown       (no information at all)
+   *   slot partial      -> open gap, gapType = insufficient  (condition not met)
+   *   slot conflicting  -> open gap, gapType = conflict      (unresolved; never auto-resolved)
+   *   slot sufficient   -> gap resolved (and requirement.status = met)
+   *
+   * A resolved gap whose slot later degrades RE-OPENS (same gapId, discoveredAt kept).
+   * `importance`/`criticality` are written onto the gap as ATTRIBUTES for S5's
+   * PriorityService; they no longer decide WHETHER a gap exists.
    */
   refreshGaps(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
     const repo = new ResearchRepository(this.db);
     const reqs = repo.listRequirements(subjectId);
     if (reqs.length === 0) return;
     const slots = repo.listPoolSlots(subjectId);
+    const prevById = new Map(repo.listGaps(subjectId).map((g) => [g.gapId, g]));
     const now = new Date().toISOString();
-
-    const activeByReq = new Map<string, ResearchGap>();
-    for (const g of repo.listGaps(subjectId)) {
-      if (g.status === "open" || g.status === "mitigating") {
-        for (const rid of g.relatedRequirementIds) activeByReq.set(rid, g);
-      }
-    }
 
     for (const req of reqs) {
       const slot = slots.find((s) => s.dimension === req.dimension);
-      const poolStatus = slot?.status ?? "unknown";
-      const isHigh = req.importance >= 2;
+      const poolStatus: PoolSlotStatus = slot?.status ?? "unknown";
+      const gapId = `gap-${req.requirementId}`;
+      const prev = prevById.get(gapId);
+      const uncertainty = uncertaintyFor(poolStatus);
+      const gapType = gapTypeFor(poolStatus);
 
-      const need =
-        poolStatus === "sufficient" || req.status === "met"
-          ? false
-          : poolStatus === "conflicting"
-            ? isHigh
-            : poolStatus === "partial"
-              ? isHigh
-              : isHigh;
-
-      const uncertainty =
-        poolStatus === "unknown" ? 0.9 : poolStatus === "partial" ? 0.6 : poolStatus === "conflicting" ? 0.8 : 0.1;
-
-      if (need) {
-        const existing = activeByReq.get(req.requirementId);
-        repo.upsertGap({
-          gapId: existing?.gapId ?? `gap-${req.requirementId}`,
-          subjectKind,
-          subjectId,
-          description: `[${req.dimension}] ${req.description}`,
-          importance: req.importance,
-          uncertainty,
-          relatedRequirementIds: [req.requirementId],
-          relatedQuestionIds: [req.questionId],
-          status: "open",
-          discoveredAt: existing?.discoveredAt ?? now,
-          updatedAt: now,
-        });
-      } else {
-        const active = activeByReq.get(req.requirementId);
-        if (active) repo.upsertGap({ ...active, status: "resolved", updatedAt: now });
+      if (gapType === null) {
+        // Requirement satisfied: close any active gap; the row is KEPT (history).
+        if (prev && (prev.status === "open" || prev.status === "mitigating")) {
+          repo.upsertGap({ ...prev, uncertainty, status: "resolved", updatedAt: now });
+        }
+        syncRequirementStatus(repo, req, "met", now);
+        continue;
       }
+
+      // open — including RE-OPEN of a previously resolved gap (same id, same discoveredAt).
+      repo.upsertGap({
+        gapId,
+        subjectKind,
+        subjectId,
+        description: `[${req.dimension}] ${req.description}`,
+        gapType,
+        importance: req.importance,
+        uncertainty,
+        relatedRequirementIds: [req.requirementId],
+        relatedQuestionIds: [req.questionId],
+        status: "open",
+        discoveredAt: prev?.discoveredAt ?? now,
+        updatedAt: now,
+      });
+
+      syncRequirementStatus(repo, req, poolStatus === "unknown" ? "open" : "partially_met", now);
     }
   }
 
@@ -486,6 +495,45 @@ export class KnowledgeProjectionService {
 /** S3-R1: deterministic item id per (slot, claim) — stable across reconciles, no timestamps. */
 function poolItemId(slotId: string, claimRef: string): string {
   return `item-${slotId}-${claimRef.replace(/[^A-Za-z0-9]+/g, "_")}`;
+}
+
+/** S4.5: a slot status maps 1:1 to a gap category. `null` = sufficient = no gap. */
+function gapTypeFor(status: PoolSlotStatus): GapType | null {
+  switch (status) {
+    case "sufficient":
+      return null;
+    case "conflicting":
+      return "conflict";
+    case "partial":
+      return "insufficient";
+    default:
+      return "unknown";
+  }
+}
+
+/** S4.5: how uncertain the pool currently is on this dimension. */
+function uncertaintyFor(status: PoolSlotStatus): number {
+  switch (status) {
+    case "unknown":
+      return 0.9;
+    case "conflicting":
+      return 0.8;
+    case "partial":
+      return 0.6;
+    default:
+      return 0.1;
+  }
+}
+
+/** S4.5: keep requirement.status truthful; write only when it actually changes. */
+function syncRequirementStatus(
+  repo: ResearchRepository,
+  req: InformationRequirement,
+  status: InformationRequirement["status"],
+  now: string,
+): void {
+  if (req.status === status) return;
+  repo.upsertRequirement({ ...req, status, updatedAt: now });
 }
 
 /** S3: human-readable coverage judgement for a pool slot status. */

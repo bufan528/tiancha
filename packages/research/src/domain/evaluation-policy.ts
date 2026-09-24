@@ -1,14 +1,23 @@
 /**
- * Evaluation / Aggregation Policy (S4).
+ * Evaluation / Aggregation Policy (S4 / S4.5).
  *
  * B3: these are the Methodology's **Evaluation Policy** and **Aggregation Policy**
- * responsibilities — kept as an injectable policy object so that no scoring /
- * decision / 12→7 formula is hard-coded inside EvaluationService.
+ * responsibilities — kept as injectable, VERSIONED policy objects so that no
+ * scoring / decision / 12→7 formula is hard-coded inside EvaluationService.
  *
- * v1 defaults live here; a future methodology version can swap the policy without
- * touching the service.
+ * S4.5 provenance rule (locked with the reviewer):
+ *   - Every policy carries a `versionId` that is IMMUTABLE (see PolicyRegistry).
+ *   - An InvestmentEvaluation records the exact versions it was computed with:
+ *     methodologyVersionId + evaluationPolicyVersionId + aggregationPolicyVersionId.
+ *   - Changing any rule means publishing a NEW versionId (v1 -> v2); the old one
+ *     stays resolvable, so a historical evaluation never silently changes meaning.
+ *
+ * Policies are NOT embedded into `MethodologyVersion` (that would blur B3); the
+ * Evaluation aggregate simply references the three version ids.
  */
 
+import { PolicyRegistry } from "./policy-registry.js";
+import { SUFFICIENCY_POLICY_V1, type SufficiencyPolicy } from "./sufficiency.js";
 import type {
   Aggregation,
   DimensionEvaluation,
@@ -17,16 +26,6 @@ import type {
 } from "./evaluation.js";
 
 // ---- Evaluation Policy -------------------------------------------------------
-
-/** How much evidence makes a dimension "evaluated" (face ①). */
-export interface EvidenceSufficiencyRule {
-  /** Minimum number of pool items (claims) on the dimension. */
-  minItems: number;
-  /** Minimum number of independent sources. */
-  minIndependentSources: number;
-  /** When true, at least one first-hand source is required. */
-  requiresFirstHand: boolean;
-}
 
 /** Deterministic, evidence-driven score for an `evaluated` dimension (face ②). */
 export type ScoringRule = (ctx: {
@@ -40,13 +39,24 @@ export interface DecisionInput {
   aggregation: Aggregation;
   /** critical dimension -> was its evidence sufficient? */
   criticalFlags: Record<string, boolean>;
+  /**
+   * Investment-dimension weights from the Aggregation Policy (S4.5). The v1
+   * decision uses these so `AggregationRule.weight` is REAL, not decorative.
+   */
+  sevenDimWeights: Record<string, number>;
 }
 export type DecisionRule = (input: DecisionInput) => ReserveDecision;
 
 export interface EvaluationPolicy {
   policyId: string;
+  /** Immutable version identity (see PolicyRegistry). */
+  versionId: string;
   scoreScale: string;
-  sufficiency: EvidenceSufficiencyRule;
+  /**
+   * S4.5: the SAME sufficiency policy object the Pool judges with — one rule,
+   * no drifting second copy (see domain/sufficiency.ts).
+   */
+  sufficiency: SufficiencyPolicy;
   /** Optional: when absent, an `evaluated` dimension carries NO score. */
   scoring?: ScoringRule;
   decision: DecisionRule;
@@ -72,15 +82,19 @@ export interface AggregationRule {
 
 export interface AggregationPolicy {
   policyId: string;
+  /** Immutable version identity (see PolicyRegistry). */
+  versionId: string;
   rules: AggregationRule[];
 }
 
 // ---- v1 defaults -------------------------------------------------------------
 
 export const EVALUATION_POLICY_V1: EvaluationPolicy = {
-  policyId: "eval-v1",
+  policyId: "evaluation",
+  versionId: "eval-v1",
   scoreScale: "0-100",
-  sufficiency: { minItems: 1, minIndependentSources: 1, requiresFirstHand: false },
+  // Shared with the Pool — the single "is the evidence enough?" rule (S4.5).
+  sufficiency: SUFFICIENCY_POLICY_V1,
   // v1 baseline: a DETERMINISTIC, evidence-driven score. It reflects evidence
   // strength, not a hand-waved investment judgement; real anchor-based scoring is a
   // Methodology Evaluation Policy concern and can replace this rule wholesale.
@@ -91,7 +105,7 @@ export const EVALUATION_POLICY_V1: EvaluationPolicy = {
     const raw = base + sufficiency.independentSources * perSource + firstHandBonus;
     return Math.max(0, Math.min(100, raw));
   },
-  decision: ({ dimensionEvaluations, aggregation, criticalFlags }) => {
+  decision: ({ dimensionEvaluations, aggregation, criticalFlags, sevenDimWeights }) => {
     const now = new Date().toISOString();
 
     // ④ Critical dimensions gate the decision BEFORE any averaging.
@@ -119,23 +133,38 @@ export const EVALUATION_POLICY_V1: EvaluationPolicy = {
       };
     }
 
-    const scores = Object.values(aggregation.sevenDimScores).filter((s): s is number => s !== null);
-    const avg = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+    // S4.5: WEIGHTED total, using the Aggregation Policy's investment-dimension
+    // weights. Only dimensions that actually got a score contribute; dims with a
+    // `null` score (evidence-insufficient, e.g. exit_env in v1) are NOT averaged in.
+    let weightedSum = 0;
+    let weightTotal = 0;
+    for (const [dim, score] of Object.entries(aggregation.sevenDimScores)) {
+      if (score === null) continue;
+      const w = sevenDimWeights[dim] ?? 0;
+      weightedSum += score * w;
+      weightTotal += w;
+    }
+    const avg = weightTotal > 0 ? weightedSum / weightTotal : 0;
     const status = avg >= 70 ? "reserve" : avg >= 50 ? "watch" : "park";
     return {
       decisionStatus: status,
-      decisionReason: `综合分 ${Math.round(avg)}（已评 ${evaluated}/${total}${conflicting ? `，冲突 ${conflicting}` : ""}）`,
+      decisionReason: `加权综合分 ${Math.round(avg)}（已评 ${evaluated}/${total}${conflicting ? `，冲突 ${conflicting}` : ""}）`,
       decidedAt: now,
     };
   },
 };
 
 /**
- * 12 → 7 mapping (per 07 §3.8a). `exit_env` has NO research-dimension source in v1,
- * so its aggregated score stays `null` (evidence-insufficient) instead of being faked.
+ * 12 → 7 mapping (per 07 §3.8a). This is the versioned "methodology configuration"
+ * the aggregation code only does MATH over — changing the matrix means a new
+ * aggregation policy version, never a code edit that keeps the same versionId.
+ *
+ * `exit_env` has NO research-dimension source in v1, so its aggregated score stays
+ * `null` (evidence-insufficient) instead of being faked.
  */
 export const AGGREGATION_POLICY_V1: AggregationPolicy = {
-  policyId: "agg-v1",
+  policyId: "aggregation",
+  versionId: "agg-v1",
   rules: [
     {
       sevenDim: "market_growth",
@@ -178,3 +207,11 @@ export const AGGREGATION_POLICY_V1: AggregationPolicy = {
     },
   ],
 };
+
+// ---- Registries (immutable version identity) ---------------------------------
+
+export const evaluationPolicies = new PolicyRegistry<EvaluationPolicy>("evaluation");
+evaluationPolicies.register(EVALUATION_POLICY_V1);
+
+export const aggregationPolicies = new PolicyRegistry<AggregationPolicy>("aggregation");
+aggregationPolicies.register(AGGREGATION_POLICY_V1);

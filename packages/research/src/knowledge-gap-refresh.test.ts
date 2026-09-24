@@ -58,10 +58,10 @@ function mkSlot(
 }
 
 describe("Gap evaluation (Requirement-centered)", () => {
-  test("high+unknown creates gap; low+unknown does not", () => {
+  test("S4.5: unknown opens a gap for EVERY requirement — importance is not the trigger", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    const high = mkReq(subj, "market", 3);
+    const high = mkReq(subj, "market", 5);
     const low = mkReq(subj, "policy", 1);
     repo.upsertRequirement(high);
     repo.upsertRequirement(low);
@@ -70,9 +70,37 @@ describe("Gap evaluation (Requirement-centered)", () => {
 
     svc.refreshGaps(subj, "industry");
     const gaps = repo.listGaps(subj);
-    assert.equal(gaps.length, 1);
-    assert.deepEqual(gaps[0].relatedRequirementIds, [high.requirementId]);
-    assert.deepEqual(gaps[0].relatedQuestionIds, [high.questionId]);
+    // BOTH create a gap — the old `importance >= 2` gate (always true in practice) is gone
+    assert.equal(gaps.length, 2);
+    assert.equal(gaps.every((g) => g.status === "open"), true);
+    // each gap records WHY it exists (its producing pool state)
+    assert.equal(gaps.every((g) => g.gapType === "unknown"), true);
+    // importance is still recorded as an ATTRIBUTE for S5's Priority, just not a gate
+    const highGap = gaps.find((g) => g.relatedRequirementIds[0] === high.requirementId)!;
+    const lowGap = gaps.find((g) => g.relatedRequirementIds[0] === low.requirementId)!;
+    assert.equal(highGap.importance, 5);
+    assert.equal(lowGap.importance, 1);
+  });
+
+  test("S4.5: gapType tracks the pool state (unknown / insufficient / conflict)", () => {
+    const { repo, svc } = setup();
+    const subj = "ind-" + randomUUID();
+    repo.upsertRequirement(mkReq(subj, "market", 5));
+    repo.upsertRequirement(mkReq(subj, "demand", 4));
+    repo.upsertRequirement(mkReq(subj, "risk", 5));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "demand", "partial"));
+    repo.upsertPoolSlot(mkSlot(subj, "risk", "conflicting"));
+
+    svc.refreshGaps(subj, "industry");
+    const byDim = new Map(repo.listGaps(subj).map((g) => [g.relatedRequirementIds[0], g]));
+    const typeOf = (dim: string) => {
+      const req = repo.listRequirements(subj).find((r) => r.dimension === dim)!;
+      return byDim.get(req.requirementId)!.gapType;
+    };
+    assert.equal(typeOf("market"), "unknown");
+    assert.equal(typeOf("demand"), "insufficient");
+    assert.equal(typeOf("risk"), "conflict");
   });
 
   test("high+partial creates gap (partial != sufficient)", () => {

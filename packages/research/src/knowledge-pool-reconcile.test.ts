@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
 import { KnowledgeProjectionService } from "./application/knowledge-projection-service.js";
+import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import type { Claim, InformationPoolSlot } from "./domain/index.js";
 
 function setup() {
@@ -58,7 +59,7 @@ function poolOf(repo: ResearchRepository, subjectId: string, dimension: string):
 }
 
 describe("Knowledge -> InformationPool reconcile", () => {
-  test("unknown + matching confirmed belief -> partial, with traceable claim refs", () => {
+  test("unknown + matching confirmed belief -> sufficient (S4.5: policy satisfied)", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
     repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
@@ -66,19 +67,29 @@ describe("Knowledge -> InformationPool reconcile", () => {
     svc.reconcilePool(subj, "industry");
 
     const slot = poolOf(repo, subj, "market");
-    assert.equal(slot.status, "partial");
+    assert.equal(slot.status, "sufficient");
     const items = repo.listPoolItems(slot.slotId);
     assert.ok(items.length >= 1);
     assert.match(items[0].claimRef, /^artifact:claim\//);
   });
 
-  test("never auto-upgrades partial->sufficient with a single confirmed belief", () => {
+  test("S4.5: partial -> sufficient as soon as the shared sufficiency policy is met", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
     repo.upsertPoolSlot(mkSlot(subj, "demand", "partial"));
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand" });
     svc.reconcilePool(subj, "industry");
-    assert.equal(poolOf(repo, subj, "demand").status, "partial");
+    // one traceable confirmed claim satisfies SUFFICIENCY_POLICY_V1 (minItems 1 / 1 source)
+    assert.equal(poolOf(repo, subj, "demand").status, "sufficient");
+  });
+
+  test("S4.5: a `conflicting` slot is NOT sticky — it falls back once conflicts are gone", () => {
+    const { repo, svc } = setup();
+    const subj = "ind-" + randomUUID();
+    repo.upsertPoolSlot(mkSlot(subj, "supply", "conflicting"));
+    svc.reconcilePool(subj, "industry");
+    // no beliefs / no open conflict -> recomputed as unknown, not stuck at conflicting
+    assert.equal(poolOf(repo, subj, "supply").status, "unknown");
   });
 
   test("open conflict on dimension -> pool conflicting, both beliefs retained", () => {
@@ -98,19 +109,50 @@ describe("Knowledge -> InformationPool reconcile", () => {
     assert.equal(k.beliefs.length, 2);
   });
 
-  test("revised/superseded belief not used as current sole support", () => {
-    const { repo, svc } = setup();
+  test("S4.5: superseded history alone never satisfies sufficiency", () => {
+    const { db, repo, svc } = setup();
     const subj = "ind-" + randomUUID();
     repo.upsertPoolSlot(mkSlot(subj, "technology", "unknown"));
-    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "technology" });
-    svc.projectFromClaim({
-      claim: mkClaim(subj),
-      dimension: "technology",
-      relationHint: { kind: "SUPERSEDE", supersedesClaimRef: "old" },
+
+    // craft a knowledge projection whose ONLY belief on the dimension is superseded
+    const kr = new KnowledgeRepository(db.db);
+    const now = new Date().toISOString();
+    kr.upsertKnowledge({
+      knowledgeId: "kn-" + subj,
+      subjectKind: "industry",
+      subjectId: subj,
+      beliefs: [],
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
     });
+    kr.insertBelief({
+      beliefId: "bel-old",
+      knowledgeId: "kn-" + subj,
+      claimRef: "artifact:claim/old",
+      dimension: "technology",
+      confidence: 0.5,
+      state: "superseded",
+      historicalRelations: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    // the organizing layer still indexes that claim as an item (history kept)
+    repo.upsertPoolItem({
+      itemId: "item-" + subj + "-old",
+      slotId: `slot-${subj}-technology`,
+      valueText: "artifact:claim/old",
+      claimRef: "artifact:claim/old",
+      relation: "consistent",
+      createdAt: now,
+    });
+
     svc.reconcilePool(subj, "industry");
-    // new current confirmed belief still supports -> partial
-    assert.equal(poolOf(repo, subj, "technology").status, "partial");
+    assert.equal(
+      poolOf(repo, subj, "technology").status,
+      "unknown",
+      "superseded belief carries no current support",
+    );
   });
 
   test("idempotent: repeated reconcile yields same state, no new slots/items", () => {
@@ -152,7 +194,7 @@ describe("Knowledge -> InformationPool reconcile", () => {
 
     // A: conflicting (correct)
     assert.equal(poolOf(repo, subjA, "demand").status, "conflicting");
-    // B: must NOT inherit A's conflict; its own support drives partial
-    assert.equal(poolOf(repo, subjB, "demand").status, "partial");
+    // B: must NOT inherit A's conflict; its own (sufficient) support drives the status
+    assert.equal(poolOf(repo, subjB, "demand").status, "sufficient");
   });
 });

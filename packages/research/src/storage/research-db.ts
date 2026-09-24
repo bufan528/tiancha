@@ -80,6 +80,7 @@ export class ResearchDb {
         description TEXT NOT NULL,
         importance INTEGER NOT NULL,
         required_evidence_type TEXT NOT NULL,
+        sufficiency_policy_ref TEXT,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -89,6 +90,7 @@ export class ResearchDb {
         subject_kind TEXT NOT NULL,
         subject_id TEXT NOT NULL,
         description TEXT NOT NULL,
+        gap_type TEXT NOT NULL DEFAULT 'unknown',
         importance INTEGER NOT NULL,
         uncertainty REAL NOT NULL,
         related_requirement_ids_json TEXT NOT NULL,
@@ -271,6 +273,8 @@ export class ResearchDb {
         subject_kind TEXT NOT NULL,
         subject_id TEXT NOT NULL,
         methodology_version_id TEXT NOT NULL,
+        evaluation_policy_version_id TEXT,
+        aggregation_policy_version_id TEXT,
         dimension_evaluations_json TEXT NOT NULL,
         aggregation_json TEXT NOT NULL,
         coverage_json TEXT NOT NULL,
@@ -284,7 +288,44 @@ export class ResearchDb {
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();
     this.ensureRequirementConditionColumns();
+    this.ensureS45Columns();
     this.migratePoolEntriesToSlots();
+  }
+
+  /**
+   * S4.5: gap_type + policy-provenance + requirement sufficiency-policy columns.
+   * Same PRAGMA pre-check discipline as the other ensure* methods; existing rows
+   * get safe defaults (gap_type -> read as 'unknown', policy refs -> NULL).
+   */
+  private ensureS45Columns(): void {
+    this.addColumnIfMissing("research_gap", "gap_type", "ALTER TABLE research_gap ADD COLUMN gap_type TEXT");
+    this.addColumnIfMissing(
+      "investment_evaluation",
+      "evaluation_policy_version_id",
+      "ALTER TABLE investment_evaluation ADD COLUMN evaluation_policy_version_id TEXT",
+    );
+    this.addColumnIfMissing(
+      "investment_evaluation",
+      "aggregation_policy_version_id",
+      "ALTER TABLE investment_evaluation ADD COLUMN aggregation_policy_version_id TEXT",
+    );
+    this.addColumnIfMissing(
+      "information_requirement",
+      "sufficiency_policy_ref",
+      "ALTER TABLE information_requirement ADD COLUMN sufficiency_policy_ref TEXT",
+    );
+  }
+
+  /** PRAGMA-prechecked ALTER; try/catch is only a concurrency safety net. */
+  private addColumnIfMissing(table: string, column: string, ddl: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (cols.some((c) => c.name === column)) return;
+    try {
+      this.db.exec(ddl);
+    } catch (err) {
+      const after = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!after.some((c) => c.name === column)) throw err;
+    }
   }
 
   /**

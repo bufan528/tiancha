@@ -1,5 +1,5 @@
 /**
- * EvaluationService (S4) — the FOUR-FACE model, each face its own method.
+ * EvaluationService (S4 / S4.5) — the FOUR-FACE model, each face its own method.
  *
  *   evaluate()          orchestration only (no business rules inline)
  *   ├─ evaluateDimension()  ② (+ ① via assessEvidence)
@@ -13,6 +13,12 @@
  *  - Critical dimensions are checked BEFORE any averaging (they cannot be averaged away).
  *  - Scoring / aggregation / decision rules come from the injected policy — nothing here
  *    hard-codes a formula.
+ *
+ * S4.5:
+ *  - Face ① judges with the SHARED SufficiencyPolicy (domain/sufficiency.ts) — the
+ *    same rule the Pool uses, so the two never drift apart.
+ *  - The produced InvestmentEvaluation records the exact `evaluationPolicyVersionId`
+ *    and `aggregationPolicyVersionId` used (immutable provenance).
  */
 
 import { randomUUID } from "node:crypto";
@@ -26,15 +32,14 @@ import {
   type AggregationPolicy,
   type DecisionInput,
   type EvaluationPolicy,
-  type EvidenceSufficiencyRule,
 } from "../domain/evaluation-policy.js";
+import { isSufficient, sufficiencyFacts } from "../domain/sufficiency.js";
 import type {
   Aggregation,
   DimensionEvalStatus,
   DimensionEvaluation,
   EvaluationCoverage,
   EvidenceSufficiency,
-  InformationPoolItem,
   InvestmentEvaluation,
   MethodologyDimension,
   ReserveDecision,
@@ -89,13 +94,21 @@ export class EvaluationService {
       }
     }
 
-    const decision = this.decide({ dimensionEvaluations, aggregation, criticalFlags });
+    // S4.5: investment-dimension weights come from the Aggregation Policy, so
+    // `AggregationRule.weight` actually participates in the decision (was unused).
+    const sevenDimWeights: Record<string, number> = {};
+    for (const rule of this.aggregationPolicy.rules) sevenDimWeights[rule.sevenDim] = rule.weight;
+
+    const decision = this.decide({ dimensionEvaluations, aggregation, criticalFlags, sevenDimWeights });
 
     const evaluation: InvestmentEvaluation = {
       evaluationId: `eval-${randomUUID()}`,
       subjectKind,
       subjectId,
       methodologyVersionId: methodology.versionId,
+      // S4.5 provenance: record the EXACT rules this evaluation was computed with.
+      evaluationPolicyVersionId: this.policy.versionId,
+      aggregationPolicyVersionId: this.aggregationPolicy.versionId,
       dimensionEvaluations,
       aggregation,
       coverage,
@@ -112,6 +125,7 @@ export class EvaluationService {
 
   /**
    * Face ①: is the evidence ENOUGH? Pure judgement — **never** produces a score.
+   * Uses the SHARED sufficiency policy (same rule the Pool judges with).
    */
   assessEvidence(subjectId: string, dim: MethodologyDimension): EvidenceAssessment {
     const repo = new ResearchRepository(this.db);
@@ -119,7 +133,7 @@ export class EvaluationService {
     const slot = repo.getPoolSlot(slotId);
     const items = slot ? repo.listPoolItems(slotId) : [];
 
-    const sufficiency = sufficiencyOf(items);
+    const sufficiency = sufficiencyFacts(items);
     const evidenceRefs = items.map((i) => i.claimRef);
 
     if (!slot || slot.status === "unknown" || items.length === 0) {
@@ -207,19 +221,6 @@ export class EvaluationService {
 }
 
 // ---- helpers -----------------------------------------------------------------
-
-function sufficiencyOf(items: InformationPoolItem[]): EvidenceSufficiency {
-  // An item's source is its sourceRef, else its claimRef (each claim is its own source).
-  const sources = new Set(items.map((i) => i.sourceRef ?? i.claimRef));
-  return { itemCount: items.length, independentSources: sources.size, firstHand: false };
-}
-
-function isSufficient(s: EvidenceSufficiency, rule: EvidenceSufficiencyRule): boolean {
-  if (s.itemCount < rule.minItems) return false;
-  if (s.independentSources < rule.minIndependentSources) return false;
-  if (rule.requiresFirstHand && !s.firstHand) return false;
-  return true;
-}
 
 function rationaleFor(status: DimensionEvalStatus, dim: MethodologyDimension, s: EvidenceSufficiency): string {
   switch (status) {
