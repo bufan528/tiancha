@@ -24,7 +24,13 @@ export class ResearchDb {
       mkdirSync(dirname(this.path), { recursive: true });
     }
     this.db = new DatabaseSync(this.path);
-    this.migrate();
+    try {
+      this.migrate();
+    } catch (err) {
+      // Do not leak the connection when migration fails (keeps the file unlocked).
+      this.db.close();
+      throw err;
+    }
   }
 
   private migrate(): void {
@@ -343,25 +349,33 @@ export class ResearchDb {
        VALUES (?,?,?,?,?,?,?,?,?)`,
     );
 
-    for (const e of entries) {
-      const slotId = "slot-" + String(e.entry_id).slice(3); // pe-X -> slot-X (same suffix)
-      if (slotExists.get(slotId)) continue;
-      const status =
-        e.status === "confirmed" ? "sufficient" : e.status === "conflict" ? "conflicting" : e.status;
-      insertSlot.run(
-        slotId,
-        e.subject_kind,
-        e.subject_id,
-        e.topic ?? "",
-        status,
-        "migrated from information_pool_entry",
-        e.created_at,
-        e.updated_at,
-      );
-      const refs: string[] = e.evidence_refs_json ? JSON.parse(e.evidence_refs_json) : [];
-      refs.forEach((ref, i) => {
-        insertItem.run(`item-${slotId}-${i}`, slotId, ref, null, null, ref, null, "consistent", e.created_at);
-      });
+    // Atomic (S3-R1): a partial migration must never leave a half-built slot behind.
+    this.db.exec("BEGIN");
+    try {
+      for (const e of entries) {
+        const slotId = "slot-" + String(e.entry_id).slice(3); // pe-X -> slot-X (same suffix)
+        if (slotExists.get(slotId)) continue;
+        const status =
+          e.status === "confirmed" ? "sufficient" : e.status === "conflict" ? "conflicting" : e.status;
+        insertSlot.run(
+          slotId,
+          e.subject_kind,
+          e.subject_id,
+          e.topic ?? "",
+          status,
+          "migrated from information_pool_entry",
+          e.created_at,
+          e.updated_at,
+        );
+        const refs: string[] = e.evidence_refs_json ? JSON.parse(e.evidence_refs_json) : [];
+        refs.forEach((ref, i) => {
+          insertItem.run(`item-${slotId}-${i}`, slotId, ref, null, null, ref, null, "consistent", e.created_at);
+        });
+      }
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
     }
   }
 

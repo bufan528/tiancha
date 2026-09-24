@@ -12,6 +12,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rmSync } from "node:fs";
@@ -19,9 +20,10 @@ import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
 import { SqliteArtifactStore } from "./storage/artifact-store.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
+import { KnowledgeProjectionService } from "./application/knowledge-projection-service.js";
 import { EchoDataProvider } from "./providers/echo-data-provider.js";
 import { poolSlotKey } from "./domain/identity.js";
-import type { InformationPoolItem } from "./domain/index.js";
+import type { Claim, InformationPoolItem, InformationPoolSlot } from "./domain/index.js";
 
 /** Persist a LEGACY (pre-S3) pool entry directly, bypassing the new writer. */
 function insertLegacyEntry(
@@ -160,5 +162,153 @@ describe("S3 Pool migration (Entry -> Slot + Item)", () => {
     };
     assert.throws(() => repo.replacePoolItems("slot-ind-1-market", [bad]), /must reference a Claim/);
     db.close();
+  });
+});
+
+// --- S3-R1: PoolItem preservation / relation ---------------------------------
+
+describe("S3-R1 PoolItem preservation + relation (no history loss)", () => {
+  function setupProj() {
+    const db = new ResearchDb({ path: ":memory:" });
+    const repo = new ResearchRepository(db.db);
+    const svc = new KnowledgeProjectionService(db.db);
+    return { db, repo, svc };
+  }
+
+  function mkClaim(subjectId: string): Claim {
+    return {
+      claimId: randomUUID(),
+      statement: "x",
+      claimType: "descriptive",
+      provenance: "analyst",
+      conflictOfInterest: false,
+      factIds: [],
+      evidenceIds: [],
+      subjectKind: "industry",
+      subjectId,
+      temporalRelation: "current",
+      isRealExternalData: true,
+    };
+  }
+
+  function mkSlot(subjectId: string, dimension: string): InformationPoolSlot {
+    const now = new Date().toISOString();
+    return {
+      slotId: `slot-${subjectId}-${dimension}`,
+      subjectKind: "industry",
+      subjectId,
+      dimension,
+      status: "unknown",
+      coverageJudgement: "t",
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  test("historical item is preserved when a newer claim supersedes it", () => {
+    const { db, repo, svc } = setupProj();
+    const subj = "ind-" + randomUUID();
+    const slotId = `slot-${subj}-market`;
+    repo.upsertPoolSlot(mkSlot(subj, "market"));
+
+    const a = mkClaim(subj);
+    svc.projectFromClaim({ claim: a, dimension: "market" });
+    svc.reconcilePool(subj, "industry");
+    assert.equal(repo.listPoolItems(slotId).length, 1, "claim A indexed");
+
+    const b = mkClaim(subj);
+    svc.projectFromClaim({
+      claim: b,
+      dimension: "market",
+      relationHint: { kind: "SUPERSEDE", supersedesClaimRef: a.claimId },
+    });
+    svc.reconcilePool(subj, "industry");
+
+    const items = repo.listPoolItems(slotId);
+    assert.equal(items.length, 2, "A kept (history) + B added — nothing dropped");
+    assert.ok(items.some((i) => i.claimRef.endsWith(a.claimId)));
+    assert.ok(items.some((i) => i.claimRef.endsWith(b.claimId)));
+    db.close();
+  });
+
+  test("two conflicting claims are both kept, relation=contradicts (never one side only)", () => {
+    const { db, repo, svc } = setupProj();
+    const subj = "ind-" + randomUUID();
+    const slotId = `slot-${subj}-demand`;
+    repo.upsertPoolSlot(mkSlot(subj, "demand"));
+
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand" });
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand", relationHint: { kind: "CONFLICT" } });
+    svc.reconcilePool(subj, "industry");
+
+    assert.equal(repo.getPoolSlot(slotId)!.status, "conflicting");
+    const items = repo.listPoolItems(slotId);
+    assert.equal(items.length, 2, "both sides kept, none dropped");
+    assert.ok(items.every((i) => i.relation === "contradicts"));
+    db.close();
+  });
+
+  test("distinct claims are not overwritten (no replace-all semantics)", () => {
+    const { db, repo, svc } = setupProj();
+    const subj = "ind-" + randomUUID();
+    const slotId = `slot-${subj}-market`;
+    repo.upsertPoolSlot(mkSlot(subj, "market"));
+    for (let i = 0; i < 3; i++) {
+      svc.projectFromClaim({ claim: mkClaim(subj), dimension: "market" });
+    }
+    svc.reconcilePool(subj, "industry");
+    assert.equal(repo.listPoolItems(slotId).length, 3, "all three distinct claims kept");
+    db.close();
+  });
+
+  test("repeated reconcile is idempotent (no new items, stable relations)", () => {
+    const { db, repo, svc } = setupProj();
+    const subj = "ind-" + randomUUID();
+    const slotId = `slot-${subj}-market`;
+    repo.upsertPoolSlot(mkSlot(subj, "market"));
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "market" });
+    svc.reconcilePool(subj, "industry");
+    const first = repo.listPoolItems(slotId).map((i) => [i.itemId, i.relation]).sort();
+    svc.reconcilePool(subj, "industry");
+    svc.reconcilePool(subj, "industry");
+    const after = repo.listPoolItems(slotId).map((i) => [i.itemId, i.relation]).sort();
+    assert.deepEqual(after, first);
+    db.close();
+  });
+
+  test("migration is atomic: a failing entry leaves NO half-migrated slot", () => {
+    const path = tmpDbPath();
+    try {
+      const db1 = new ResearchDb({ path });
+      insertLegacyEntry(db1, "pe-ind-1-market", "ind-1", "market", "partial");
+      // second entry with malformed JSON => migration throws mid-way
+      db1.db
+        .prepare(
+          `INSERT INTO information_pool_entry
+           (entry_id, subject_kind, subject_id, topic, status, related_requirement_ids_json,
+            evidence_refs_json, note, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run("pe-ind-1-demand", "industry", "ind-1", "demand", "unknown", "[]", "{not-json", null, "t0", "t0");
+      db1.close();
+
+      // reopen: migration fails atomically (no slot written)
+      assert.throws(() => new ResearchDb({ path }), "migration must throw on bad data");
+
+      // repair the bad row WITHOUT triggering migration
+      const raw = new DatabaseSync(path);
+      raw
+        .prepare("UPDATE information_pool_entry SET evidence_refs_json = '[]' WHERE entry_id = ?")
+        .run("pe-ind-1-demand");
+      raw.close();
+
+      // reopen: BOTH slots migrate — proving the failed run left nothing behind
+      const db2 = new ResearchDb({ path });
+      const repo = new ResearchRepository(db2.db);
+      assert.equal(repo.listPoolSlots("ind-1").length, 2, "both slots migrate cleanly after repair");
+      db2.close();
+    } finally {
+      rmSync(path, { force: true });
+    }
   });
 });

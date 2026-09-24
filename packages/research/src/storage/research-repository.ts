@@ -398,7 +398,33 @@ export class ResearchRepository {
     return rows.map(rowToPoolSlot);
   }
 
-  /** Replace a slot's items atomically (items are a projection of the current support). */
+  /**
+   * Upsert ONE pool item (S3-R1). Items are an ORGANIZING index of the claims under a
+   * slot — they are never wholesale-replaced, so historical claims are never dropped.
+   * I5: an item MUST reference a Claim.
+   */
+  upsertPoolItem(it: InformationPoolItem): void {
+    if (!it.claimRef) throw new Error(`pool item ${it.itemId} must reference a Claim (I5)`);
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO information_pool_item
+         (item_id, slot_id, value_text, caliber, as_of, claim_ref, source_ref, relation, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        it.itemId,
+        it.slotId,
+        it.valueText,
+        it.caliber ?? null,
+        it.asOf ?? null,
+        it.claimRef,
+        it.sourceRef ?? null,
+        it.relation,
+        it.createdAt,
+      );
+  }
+
+  /** Replace a slot's items wholesale. Used by migration/tests, NOT by the projection. */
   replacePoolItems(slotId: string, items: InformationPoolItem[]): void {
     this.db.prepare("DELETE FROM information_pool_item WHERE slot_id = ?").run(slotId);
     const ins = this.db.prepare(

@@ -28,6 +28,7 @@ import type {
   KnowledgeConflict,
   KnowledgeSubjectKind,
   NextAction,
+  PoolItemRelation,
   PoolSlotStatus,
   ResearchGap,
   StateItemRef,
@@ -232,26 +233,22 @@ export class KnowledgeProjectionService {
     const now = new Date().toISOString();
     for (const slot of slots) {
       const dim = slot.dimension;
+      // ALL beliefs on this dimension (not just confirmed): a slot indexes the claims we
+      // know about, so conflicting / revised history is kept, never silently dropped.
+      const beliefsForDim = (knowledge ? this.knowledge.listBeliefs(knowledge.knowledgeId) : []).filter(
+        (b) => b.dimension === dim,
+      );
       const support = (knowledge?.beliefs ?? []).filter(
         (b) => b.state === "confirmed" && b.dimension === dim,
       );
-      const hasOpenConflict = openConflicts.some((c) => c.dimension === dim);
+      const conflictsForDim = openConflicts.filter((c) => c.dimension === dim);
 
       let status: PoolSlotStatus = slot.status;
-      if (hasOpenConflict) {
+      if (conflictsForDim.length > 0) {
         status = "conflicting";
       } else if (slot.status === "unknown" && support.length > 0) {
         status = "partial";
       }
-
-      // Canonical, sorted claim refs of the current support (idempotent set).
-      const claimRefs =
-        support.length > 0 ? [...new Set(support.map((b) => b.claimRef))].sort() : [];
-
-      const existingItems = repo.listPoolItems(slot.slotId);
-      const itemsSame =
-        existingItems.length === claimRefs.length &&
-        claimRefs.every((r, i) => existingItems[i]?.claimRef === r);
 
       if (status !== slot.status) {
         repo.upsertPoolSlot({
@@ -261,18 +258,29 @@ export class KnowledgeProjectionService {
           updatedAt: now,
         });
       }
-      if (!itemsSame) {
-        repo.replacePoolItems(
-          slot.slotId,
-          claimRefs.map((ref, i) => ({
-            itemId: `item-${slot.slotId}-${i}`,
+
+      // Items: PRESERVE history — upsert the claims we know about, NEVER wholesale-delete.
+      // An unresolved disagreement is expressed as `contradicts` (both sides kept) rather
+      // than dropping a side. Idempotent: same claim -> same item id; write only on change.
+      const existingById = new Map(repo.listPoolItems(slot.slotId).map((it) => [it.itemId, it]));
+      for (const b of beliefsForDim) {
+        const claimRef = b.claimRef;
+        const itemId = poolItemId(slot.slotId, claimRef);
+        const inConflict =
+          b.state === "conflicting" ||
+          conflictsForDim.some((c) => c.claimARef === claimRef || c.claimBRef === claimRef);
+        const relation: PoolItemRelation = inConflict ? "contradicts" : "consistent";
+        const prev = existingById.get(itemId);
+        if (!prev || prev.relation !== relation) {
+          repo.upsertPoolItem({
+            itemId,
             slotId: slot.slotId,
-            valueText: ref,
-            claimRef: ref,
-            relation: "consistent" as const,
-            createdAt: now,
-          })),
-        );
+            valueText: claimRef,
+            claimRef,
+            relation,
+            createdAt: prev?.createdAt ?? now,
+          });
+        }
       }
     }
   }
@@ -473,6 +481,11 @@ export class KnowledgeProjectionService {
       updatedAt: new Date().toISOString(),
     });
   }
+}
+
+/** S3-R1: deterministic item id per (slot, claim) — stable across reconciles, no timestamps. */
+function poolItemId(slotId: string, claimRef: string): string {
+  return `item-${slotId}-${claimRef.replace(/[^A-Za-z0-9]+/g, "_")}`;
 }
 
 /** S3: human-readable coverage judgement for a pool slot status. */
