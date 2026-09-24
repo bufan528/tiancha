@@ -17,23 +17,33 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type {
+  ChainProjectionService,
+  DiligencePreparationService,
   EvaluationService,
   MaterialIngestService,
   PriorityService,
+  QuestionTargetFitService,
   ReportService,
+  ResearchNeedService,
   ResearchRepository,
   TargetService,
 } from "@tiancha/research";
 import { MethodologyService } from "@tiancha/research";
 import {
+  formatChainHuman,
+  formatDiligenceHuman,
+  formatDiligenceListHuman,
   formatEvaluationHuman,
   formatMaterialAddHuman,
+  formatNeedHuman,
   formatPoolHuman,
   formatPriorityHuman,
   formatReportHuman,
   formatTargetHuman,
-  formatTargetListHuman,
+  formatTargetWithFitHuman,
   toJson,
+  type NeedListView,
+  type TargetListView,
 } from "./research-format.js";
 import { renderDossierMarkdown, reportFileName } from "./report-markdown.js";
 
@@ -47,6 +57,14 @@ export interface ResearchCliDeps {
   materials: MaterialIngestService;
   /** B2: the ONLY writer of ResearchTarget — human-confirmed subjects. */
   targets: TargetService;
+  /** B5: projects the chain template into `research_position` (idempotent, system-side). */
+  chain: ChainProjectionService;
+  /** B5: derives the read-only `ResearchNeed` list. */
+  needs: ResearchNeedService;
+  /** B5: read-only fit counts per target (B3 aggregation). */
+  fits: QuestionTargetFitService;
+  /** B5: assembles a preparation for one human-confirmed target (writes its own row). */
+  diligence: DiligencePreparationService;
   /** Materialised-Markdown directory (production: `~/.tiancha/reports`). */
   reportDir: string;
   out: (line: string) => void;
@@ -57,8 +75,23 @@ export interface ResearchCliOptions {
   json: boolean;
 }
 
-export type ResearchSubcommand = "evaluate" | "pool" | "priority" | "report";
-export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = ["evaluate", "pool", "priority", "report"];
+export type ResearchSubcommand =
+  | "evaluate"
+  | "pool"
+  | "priority"
+  | "report"
+  | "chain"
+  | "need"
+  | "diligence";
+export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
+  "evaluate",
+  "pool",
+  "priority",
+  "report",
+  "chain",
+  "need",
+  "diligence",
+];
 
 /** `--json` is a FORMAT switch only; the positional arg is the industry name. */
 export function parseResearchArgs(rest: string[]): { name?: string; options: ResearchCliOptions } {
@@ -76,6 +109,12 @@ export async function runResearchCommand(sub: string, rest: string[], deps: Rese
       return runPriority(name, options, deps);
     case "report":
       return runReport(name, options, deps);
+    case "chain":
+      return runChain(name, options, deps);
+    case "need":
+      return runNeed(name, options, deps);
+    case "diligence":
+      return runDiligence(rest, options, deps);
     default:
       deps.err(`unknown research subcommand: ${sub}（可用：${RESEARCH_SUBCOMMANDS.join(" | ")}）`);
       return 1;
@@ -297,9 +336,107 @@ export async function runTargetList(
     deps.err(`未找到行业「${industryName}」。`);
     return 1;
   }
-  const targets = deps.targets.list(ind.industryId);
-  deps.out(options.json ? toJson(targets) : formatTargetListHuman(targets));
+  // B5: each target is listed together with its READ-ONLY fit counts (B3 aggregation over
+  // the same `QuestionTargetFit`s the outline uses) — no target is written or chosen here.
+  const views: TargetListView[] = deps.targets
+    .list(ind.industryId)
+    .map((target) => ({ target, fit: deps.fits.summarize(target.targetRef) }));
+  deps.out(options.json ? toJson(views) : formatTargetWithFitHuman(views));
   return 0;
+}
+
+// ---- B5: chain / need / diligence exposure ---------------------------------
+// B5 exposes what B1–B4 already compute. Write boundaries are unchanged: the CLI may
+// project the chain (system-side, idempotent) and assemble a preparation for a
+// HUMAN-confirmed target; nothing here writes Gap / Priority / Requirement / Pool.
+
+/**
+ * `tiancha research chain <行业> [--json]` — B5 exposure of B1.
+ *
+ * ★ This is the ONE production entry that runs the template projection. `project()` is
+ *   idempotent (stable `positionRef`, I-B7) and writes ONLY `research_position`, which is
+ *   a system-side projection (contract §6). Without this command the B1 projection would
+ *   be unreachable outside tests, and `target add --position <ref>` would have no legal
+ *   way to obtain a `positionRef`.
+ */
+export async function runChain(
+  name: string | undefined,
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  const ind = resolveIndustry(name, options, deps, "chain");
+  if (!ind) return 1;
+  const result = deps.chain.project(ind.industryId);
+  deps.out(options.json ? toJson(result) : formatChainHuman(result));
+  return 0;
+}
+
+/** `tiancha research need <行业> [--json]` — READ-ONLY derivation of `ResearchNeed` (I-B6). */
+export async function runNeed(
+  name: string | undefined,
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  const ind = resolveIndustry(name, options, deps, "need");
+  if (!ind) return 1;
+  const view: NeedListView = {
+    industry: ind.canonicalName,
+    // Without projected positions we cannot say WHICH position serves a need; say so.
+    chainProjected: deps.repo.listPositions(ind.industryId).length > 0,
+    needs: deps.needs.list(ind.industryId),
+  };
+  deps.out(options.json ? toJson(view) : formatNeedHuman(view, dimensionNames(deps)));
+  return 0;
+}
+
+/**
+ * `tiancha research diligence <行业> [--target <targetRef>] [--json]`
+ *
+ * With `--target`: assemble (and persist) the preparation for that human-confirmed target.
+ * Without it: list the industry's existing preparations — read-only, so no target is
+ * ever guessed on the user's behalf.
+ */
+export async function runDiligence(
+  rest: string[],
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  const { positional, flags } = parseFlags(rest);
+  const industryName = positional[0];
+  const targetRef = flags.get("target")?.[0];
+  if (!industryName) {
+    deps.err("usage: tiancha research diligence <行业> [--target <targetRef>] [--json]");
+    return 1;
+  }
+  const ind = deps.repo.findIndustryByName(industryName);
+  if (!ind) {
+    deps.err(`未找到行业「${industryName}」。`);
+    return 1;
+  }
+
+  if (!targetRef) {
+    const preparations = deps.diligence.list(ind.industryId);
+    deps.out(options.json ? toJson(preparations) : formatDiligenceListHuman(preparations, ind.canonicalName));
+    return 0;
+  }
+
+  const target = deps.targets.get(targetRef);
+  if (!target) {
+    deps.err(`未找到研究对象「${targetRef}」。请先用 tiancha research target list <行业> 查看。`);
+    return 1;
+  }
+  if (target.industryId !== ind.industryId) {
+    deps.err(`研究对象「${targetRef}」不属于行业「${ind.canonicalName}」。`);
+    return 1;
+  }
+  try {
+    const preparation = deps.diligence.prepare(targetRef);
+    deps.out(options.json ? toJson(preparation) : formatDiligenceHuman(preparation));
+    return 0;
+  } catch (err) {
+    deps.err(`无法生成调研准备：${(err as Error).message}`);
+    return 1;
+  }
 }
 
 // ---- helpers ----------------------------------------------------------------

@@ -33,6 +33,10 @@ import {
   PriorityService,
   ReportService,
   MaterialIngestService,
+  TargetService,
+  ResearchNeedService,
+  QuestionTargetFitService,
+  DiligencePreparationService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 
@@ -50,6 +54,10 @@ const TIANCHA_SYSTEM_PROMPT = `你是「天查」，一个面向一级市场投�
 - research_evaluate：查看已落库的投资评估（覆盖度与各维度状态）
 - research_priority：查看研究优先级（下一步应当先补哪个缺口）
 - research_report：生成只读的研究报告投影
+- research_chain_show：查看调研链条（当前方法论建议从哪些产业链位置获取信息、建议研究哪类对象）
+- research_need_list：列出研究需求（每条缺口为什么需要调研而不只是抓数据）
+- research_target_list：列出已由人确认的研究对象及其只读适配概况
+- research_diligence_show：查看已生成的调研准备（目的、提问清单、提醒）
 
 重要边界：
 1. 当前连接的是占位数据源（echo/placeholder，非真实外部数据）。绝不能据此给出"值得投资/不值得/打多少分"这类真实价值判断。
@@ -58,7 +66,8 @@ const TIANCHA_SYSTEM_PROMPT = `你是「天查」，一个面向一级市场投�
 4. 如果信息不足或用户表述含糊，可以追问，但不要编造数字。
 5. 解读评估结果时，"证据不足"只表示该维度信息不足，不等于对该行业的负面判断；不要把"证据不足"讲成"不看好"之类的结论，也不要把系统输出表述成投资建议。
 6. 你只能查看研究状态、不能改变它：不要声称自己触发了评估、优先级或报告之外的任何写入；报告是只读投影，不改变研究数据。
-7. 用自然语言总结，不要直接粘贴工具返回的 JSON 原始内容。`;
+7. 调研链条与可研究的位置是「建议研究哪类对象」，不是具体公司/专家名单；具体调研对象必须由人确认后录入（你没有录入对象的工具），不要自行编造任何公司名、专家名或机构名，也不要声称已经选定对象。
+8. 用自然语言总结，不要直接粘贴工具返回的 JSON 原始内容。`;
 
 export class TianchaAgentHost {
   private constructor(private readonly session: AgentSession) {}
@@ -84,6 +93,13 @@ export class TianchaAgentHost {
       priority: new PriorityService(db.db),
       reports: new ReportService(db.db),
       materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
+      // B5: READ-ONLY exposure of the chain / needs / confirmed targets / preparations.
+      // No ChainProjectionService is injected: the Agent never projects a chain, and the
+      // TargetService here is read-only in practice (there is NO target-write tool).
+      targets: new TargetService(db.db),
+      needs: new ResearchNeedService(db.db),
+      fits: new QuestionTargetFitService(db.db),
+      diligence: new DiligencePreparationService(db.db),
     });
 
     const services = await createAgentSessionServices({

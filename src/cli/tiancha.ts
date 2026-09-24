@@ -47,6 +47,10 @@ import {
   ReportService,
   MaterialIngestService,
   TargetService,
+  ChainProjectionService,
+  ResearchNeedService,
+  QuestionTargetFitService,
+  DiligencePreparationService,
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
@@ -468,6 +472,10 @@ async function run(): Promise<void> {
         reports: new ReportService(db.db),
         materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
         targets: new TargetService(db.db),
+        chain: new ChainProjectionService(db.db),
+        needs: new ResearchNeedService(db.db),
+        fits: new QuestionTargetFitService(db.db),
+        diligence: new DiligencePreparationService(db.db),
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),
         err: (line) => console.error(line),

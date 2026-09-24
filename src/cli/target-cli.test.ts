@@ -21,6 +21,9 @@ import {
   MaterialIngestService,
   TargetService,
   ChainProjectionService,
+  ResearchNeedService,
+  QuestionTargetFitService,
+  DiligencePreparationService,
 } from "@tiancha/research";
 import { runTargetAdd, runTargetList, parseFlags, type ResearchCliDeps } from "./research-commands.js";
 
@@ -44,6 +47,10 @@ async function setupCli() {
     reports: new ReportService(db.db),
     materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
     targets: new TargetService(db.db),
+    chain: new ChainProjectionService(db.db),
+    needs: new ResearchNeedService(db.db),
+    fits: new QuestionTargetFitService(db.db),
+    diligence: new DiligencePreparationService(db.db),
     reportDir: dir,
     out: (l) => lines.push(l),
     err: (l) => lines.push(`ERR:${l}`),
@@ -102,7 +109,13 @@ describe("B2 CLI (research target)", () => {
 
       lines.length = 0;
       assert.equal(await runTargetList(INDUSTRY, { json: true }, deps), 0);
-      assert.deepEqual(JSON.parse(lines.join("\n")), repo.listTargets(sid));
+      const views = JSON.parse(lines.join("\n"));
+      assert.equal(views.length, 1);
+      // B5: the confirmed target is returned VERBATIM (unchanged) …
+      assert.deepEqual(views[0].target, repo.listTargets(sid)[0]);
+      assert.equal(views[0].target.createdBy, "user");
+      // … together with its READ-ONLY fit counts (B3 aggregation, no new judgement).
+      assert.deepEqual(views[0].fit, new QuestionTargetFitService(db.db).summarize(repo.listTargets(sid)[0]!.targetRef));
     } finally {
       rmSync(deps.reportDir, { recursive: true, force: true });
       db.close();

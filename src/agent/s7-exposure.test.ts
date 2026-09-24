@@ -27,11 +27,21 @@ import {
   ReportService,
   EvaluationService,
   MaterialIngestService,
+  TargetService,
+  ResearchNeedService,
+  QuestionTargetFitService,
+  DiligencePreparationService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 import { EVIDENCE_INSUFFICIENT, dimensionStatusLabel, formatEvaluationHuman } from "../cli/research-format.js";
 
 const S7_TOOLS = ["research_pool_show", "research_evaluate", "research_priority", "research_report"] as const;
+const B5_TOOLS = [
+  "research_chain_show",
+  "research_need_list",
+  "research_target_list",
+  "research_diligence_show",
+] as const;
 const FORBIDDEN = ["不看好", "值得投", "建议投资", "不值得投", "看好"];
 
 async function setup() {
@@ -53,6 +63,10 @@ async function setup() {
     priority: new PriorityService(db.db),
     reports: new ReportService(db.db),
     materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
+    targets: new TargetService(db.db),
+    needs: new ResearchNeedService(db.db),
+    fits: new QuestionTargetFitService(db.db),
+    diligence: new DiligencePreparationService(db.db),
   }) as any[];
   const byName = new Map(tools.map((t) => [t.name, t]));
   return { db, repo, sid, tools, byName };
@@ -74,11 +88,11 @@ const countEvals = (db: ResearchDb) =>
   (db.db.prepare("SELECT COUNT(*) AS n FROM investment_evaluation").get() as any).n;
 
 describe("S7 capability exposure", () => {
-  test("T-A12-1 / T-A12-2: exactly 14 uniquely-named tools; the 4 S7 tools registered", async () => {
+  test("T-A12-1 / T-A12-2: exactly 18 uniquely-named tools; the S7 + B5 tools registered", async () => {
     const { tools, byName, db } = await setup();
-    assert.equal(tools.length, 14, "exactly 14 tools (13 from S7 + C-MVP material_add)");
-    assert.equal(new Set(tools.map((t) => t.name)).size, 14, "no duplicate registration");
-    for (const n of S7_TOOLS) assert.ok(byName.has(n), `missing tool ${n}`);
+    assert.equal(tools.length, 18, "exactly 18 tools (14 after C-MVP + 4 B5 read-only)");
+    assert.equal(new Set(tools.map((t) => t.name)).size, 18, "no duplicate registration");
+    for (const n of [...S7_TOOLS, ...B5_TOOLS]) assert.ok(byName.has(n), `missing tool ${n}`);
     db.close();
   });
 

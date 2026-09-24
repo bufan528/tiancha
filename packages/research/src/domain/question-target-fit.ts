@@ -153,3 +153,36 @@ export function evaluateFit(input: FitInput): FitEvaluation {
 export function canAnswer(answerability: Answerability): boolean {
   return answerability !== "none";
 }
+
+/**
+ * B5 exposure: a READ-ONLY count of one target's fits — "how well does this object cover
+ * the open questions, and how often does it raise a fallback need?".
+ *
+ * It is pure aggregation over `QuestionTargetFit[]` (no new semantics, no new state), so
+ * the CLI and the Agent render the SAME numbers instead of each re-deriving them.
+ */
+export interface FitSummary {
+  questionCount: number;
+  strong: number;
+  partial: number;
+  weak: number;
+  none: number;
+  /** Questions where this target cannot do the job and a fallback is demanded (I-B4). */
+  requiresFallback: number;
+}
+
+export function summarizeFits(fits: QuestionTargetFit[]): FitSummary {
+  const summary: FitSummary = {
+    questionCount: fits.length,
+    strong: 0,
+    partial: 0,
+    weak: 0,
+    none: 0,
+    requiresFallback: 0,
+  };
+  for (const fit of fits) {
+    summary[fit.answerability] += 1;
+    if (fit.requiresFallback) summary.requiresFallback += 1;
+  }
+  return summary;
+}

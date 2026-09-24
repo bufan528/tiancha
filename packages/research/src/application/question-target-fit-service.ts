@@ -10,8 +10,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { ResearchRepository } from "../storage/research-repository.js";
 import { PriorityService } from "./priority-service.js";
-import { canAnswer, evaluateFit } from "../domain/question-target-fit.js";
+import { canAnswer, evaluateFit, summarizeFits } from "../domain/question-target-fit.js";
 import type {
+  FitSummary,
   InformationRequirement,
   QuestionTargetFit,
   ResearchPosition,
@@ -52,6 +53,11 @@ export class QuestionTargetFitService {
   /** ★ The fallback NEEDS B3 raises. It reports; it never picks a substitute target. */
   fallbackRequirements(targetRef: string): QuestionTargetFit[] {
     return this.fitAll(targetRef).filter((f) => f.requiresFallback);
+  }
+
+  /** B5 exposure: the read-only fit counts shown next to a target (pure aggregation). */
+  summarize(targetRef: string): FitSummary {
+    return summarizeFits(this.fitAll(targetRef));
   }
 
   // ---- assembly ---------------------------------------------------------------

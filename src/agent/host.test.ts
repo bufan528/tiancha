@@ -18,6 +18,10 @@ import {
   PriorityService,
   ReportService,
   MaterialIngestService,
+  TargetService,
+  ResearchNeedService,
+  QuestionTargetFitService,
+  DiligencePreparationService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 
@@ -36,6 +40,10 @@ describe("T6 research tools delegate to repository (no keyword classifier)", () 
       priority: new PriorityService(db.db),
       reports: new ReportService(db.db),
       materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
+      targets: new TargetService(db.db),
+      needs: new ResearchNeedService(db.db),
+      fits: new QuestionTargetFitService(db.db),
+      diligence: new DiligencePreparationService(db.db),
     });
     const names = tools.map((t: any) => t.name);
     for (const n of [

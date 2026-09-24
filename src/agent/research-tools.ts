@@ -19,6 +19,10 @@ import type { MethodologyService } from "@tiancha/research";
 import type { PriorityService } from "@tiancha/research";
 import type { ReportService } from "@tiancha/research";
 import type { MaterialIngestService } from "@tiancha/research";
+import type { TargetService } from "@tiancha/research";
+import type { ResearchNeedService } from "@tiancha/research";
+import type { QuestionTargetFitService } from "@tiancha/research";
+import type { DiligencePreparationService } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
@@ -30,6 +34,16 @@ export interface ResearchToolDeps {
   reports: ReportService;
   /** C-MVP: the material input pipe (writes a Material, then the existing claim pipeline). */
   materials: MaterialIngestService;
+  /** B5: READ-ONLY target listing (the ONLY writer of targets stays CLI-only). */
+  targets: TargetService;
+  /** B5: READ-ONLY derivation of `ResearchNeed`. */
+  needs: ResearchNeedService;
+  /** B5: READ-ONLY fit counts per target (B3 aggregation). */
+  fits: QuestionTargetFitService;
+  /** B5: READ-ONLY access to already-assembled preparations. */
+  diligence: DiligencePreparationService;
+  // ★ B5 deliberately injects NO chain-projection service: the Agent reads the projected
+  //   chain but never projects it (that stays a human CLI action, `tiancha research chain`).
 }
 
 function json(text: string) {
@@ -61,7 +75,18 @@ const ProposeMethodologyParams = Type.Object({
 });
 
 export function buildResearchTools(deps: ResearchToolDeps) {
-  const { repo, service, methodology, priority, reports, materials } = deps;
+  const {
+    repo,
+    service,
+    methodology,
+    priority,
+    reports,
+    materials,
+    targets: targetService,
+    needs: needService,
+    fits,
+    diligence,
+  } = deps;
 
   const research_industry_show = defineTool({
     name: "research_industry_show",
@@ -422,6 +447,126 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     },
   });
 
+  // ---- B5: chain / need / target / diligence exposure (READ-ONLY) ------------
+  // B5 exposes what B1–B4 already computed. The Agent READS the projected chain, the
+  // derived needs, the human-confirmed targets and the assembled preparations — it never
+  // projects a chain, never creates/selects a target and never assembles an outline.
+  // When the upstream artefact does not exist yet, the tool says WHO must produce it
+  // (the researcher, via CLI) instead of producing it itself (same governance as S7
+  // `research_evaluate`).
+
+  const research_chain_show = defineTool({
+    name: "research_chain_show",
+    label: "查看调研链条（建议研究哪些位置）",
+    description:
+      "查看某行业已生成的调研链条：当前方法论建议从产业链哪些位置获取信息、每个位置为什么重要、建议研究哪类对象、适合提供什么证据、服务多少个研究问题。注意：它是「建议研究哪类对象」的模板实例，不是该行业客观的链条，也不含任何具体公司/专家名单——具体对象必须由人确认后录入。本工具只读取已生成的链条；若尚未生成，会提示由研究者执行生成命令。",
+    promptSnippet: "查看调研链条",
+    parameters: NameParam,
+    async execute(_id, params: Static<typeof NameParam>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const positions = repo.listPositions(ind.industryId);
+      if (positions.length === 0) {
+        return json(
+          `行业「${ind.canonicalName}」尚未生成调研链条（没有已投影的研究位置）。请先由研究者执行 \`tiancha research chain ${ind.canonicalName}\`；本工具不会自行生成研究数据。`,
+        );
+      }
+      const view = positions.map((p) => ({
+        positionRef: p.positionRef,
+        label: p.label,
+        kind: p.kind,
+        whyImportant: p.whyImportant,
+        suggestedTargetKinds: p.suggestedTargetKinds,
+        suitableEvidenceKinds: p.suitableEvidenceKinds,
+        limitations: p.limitations,
+        importance: p.importance,
+        servesRequirementCount: p.satisfiesRequirementRefs.length,
+        chainTemplateId: p.chainTemplateId,
+        chainVersion: p.chainVersion,
+      }));
+      return json(JSON.stringify(view, null, 2));
+    },
+  });
+
+  const research_need_list = defineTool({
+    name: "research_need_list",
+    label: "列出研究需求（为什么需要调研）",
+    description:
+      "列出某行业由研究缺口派生出的研究需求：每条包含维度、问题原文、『为什么这个缺口需要调研而不只是抓数据』的规则解释、当前优先级分数，以及可服务该需求的位置。当用户问『为什么还要去调研/该去问谁/先解决哪个缺口』时使用。只读派生，不会修改缺口或优先级。",
+    promptSnippet: "列出研究需求",
+    parameters: NameParam,
+    async execute(_id, params: Static<typeof NameParam>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const needs = needService.list(ind.industryId);
+      if (needs.length === 0) return json(`行业「${ind.canonicalName}」当前没有开放的研究缺口，因此暂无研究需求。`);
+      return json(JSON.stringify(needs, null, 2));
+    },
+  });
+
+  const research_target_list = defineTool({
+    name: "research_target_list",
+    label: "列出已确认的研究对象",
+    description:
+      "列出某行业已由人确认的研究对象（公司/专家/机构等），每个对象附带只读的适配概况：它能覆盖多少个问题（强/部分/弱/无）以及有多少个重要问题需要更换更合适的对象。当用户问『我们确认了哪些调研对象/能问谁』时使用。本工具不会新增、选择或修改研究对象——对象必须由人确认后录入。",
+    promptSnippet: "列出已确认的研究对象",
+    parameters: NameParam,
+    async execute(_id, params: Static<typeof NameParam>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const list = targetService.list(ind.industryId);
+      if (list.length === 0) {
+        return json(`行业「${ind.canonicalName}」尚无已确认的研究对象（对象由人确认后录入，系统不会自行产生主体）。`);
+      }
+      const view = list.map((target) => ({ target, fit: fits.summarize(target.targetRef) }));
+      return json(JSON.stringify(view, null, 2));
+    },
+  });
+
+  const DiligenceParams = Type.Object({
+    name: Type.String({ description: "行业标准名（canonical name），如：人形机器人" }),
+    target: Type.Optional(
+      Type.String({ description: "研究对象 ref（tgt-…）；给出时查看该对象的调研准备，省略时列出本行业已有的调研准备" }),
+    ),
+  });
+
+  const research_diligence_show = defineTool({
+    name: "research_diligence_show",
+    label: "查看调研准备（提纲与提醒）",
+    description:
+      "查看某行业已生成的调研准备：调研目的、对象简介、当前理解、为什么选这个对象、需要的数据与材料、已知局限、提醒事项，以及问题清单（行业通用 / 对象定制 / 适配度派生三类，每条可溯源）。当用户问『这次调研要问什么/提纲准备好了吗』时使用。本工具只读取已生成的准备；若尚未生成，会提示由研究者执行生成命令。",
+    promptSnippet: "查看调研准备",
+    parameters: DiligenceParams,
+    async execute(_id, params: Static<typeof DiligenceParams>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const preparations = diligence.list(ind.industryId);
+      if (params.target) {
+        const preparation = preparations.find((p) => p.targetRef === params.target);
+        if (!preparation) {
+          return json(
+            `研究对象「${params.target}」尚无调研准备。请先由研究者执行 \`tiancha research diligence ${ind.canonicalName} --target ${params.target}\`；本工具不会自行生成。`,
+          );
+        }
+        return json(JSON.stringify(preparation, null, 2));
+      }
+      if (preparations.length === 0) {
+        return json(
+          `行业「${ind.canonicalName}」暂无调研准备。请先由研究者确认研究对象（tiancha research target add）并生成调研准备（tiancha research diligence ${ind.canonicalName} --target <targetRef>）。`,
+        );
+      }
+      const view = preparations.map((p) => ({
+        preparationRef: p.preparationRef,
+        targetRef: p.targetRef,
+        targetBrief: p.targetBrief,
+        status: p.status,
+        questionCount: p.questions.length,
+        cautionCount: p.cautions.length,
+      }));
+      return json(JSON.stringify(view, null, 2));
+    },
+  });
+
   return [
     research_industry_ingest,
     research_industry_show,
@@ -434,6 +579,10 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     research_priority,
     research_report,
     research_material_add,
+    research_chain_show,
+    research_need_list,
+    research_target_list,
+    research_diligence_show,
     research_methodology_show,
     research_methodology_list,
     research_methodology_propose,

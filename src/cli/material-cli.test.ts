@@ -19,6 +19,10 @@ import {
   ReportService,
   MaterialIngestService,
   TargetService,
+  ChainProjectionService,
+  ResearchNeedService,
+  QuestionTargetFitService,
+  DiligencePreparationService,
 } from "@tiancha/research";
 import { runMaterialAdd, type ResearchCliDeps } from "./research-commands.js";
 
@@ -54,6 +58,10 @@ async function setupCli() {
     reports: new ReportService(db.db),
     materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
     targets: new TargetService(db.db),
+    chain: new ChainProjectionService(db.db),
+    needs: new ResearchNeedService(db.db),
+    fits: new QuestionTargetFitService(db.db),
+    diligence: new DiligencePreparationService(db.db),
     reportDir: join(dir, "reports"),
     out: (l) => lines.push(l),
     err: (l) => lines.push(`ERR:${l}`),

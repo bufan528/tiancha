@@ -10,10 +10,14 @@
  */
 
 import type {
+  DiligencePreparation,
+  FitSummary,
   IndustryDossier,
   InformationPoolItem,
   InformationPoolSlot,
   InvestmentEvaluation,
+  PositionProjectionResult,
+  ResearchNeed,
   ResearchPriority,
   ResearchTarget,
 } from "@tiancha/research";
@@ -172,12 +176,113 @@ export function formatTargetHuman(t: ResearchTarget): string {
   return lines.join("\n");
 }
 
-export function formatTargetListHuman(targets: ResearchTarget[]): string {
-  if (targets.length === 0) return "研究对象：暂无（请用 tiancha research target add 录入）。";
-  const lines: string[] = [`研究对象（${targets.length}）`];
-  for (const t of targets) {
+// ---- B5: chain / need / target-with-fit / diligence exposure ----------------
+
+/** One B5 chain view: the projection result (positions + reported empty nodes). */
+export function formatChainHuman(result: PositionProjectionResult): string {
+  const head = result.positions[0];
+  const version = head ? `${head.chainTemplateId}@${head.chainVersion}` : "（尚未生成）";
+  const lines: string[] = [
+    `调研链条（模板实例 ${version}，共 ${result.positions.length} 个位置）`,
+    "  说明：这是「当前方法论建议从哪里获取信息」，不是该行业客观存在的链条节点。",
+  ];
+  if (result.positions.length === 0) {
+    lines.push("  暂无位置：该行业尚无信息需求（先执行 tiancha industry ingest 建立行业）。");
+  }
+  result.positions.forEach((p, i) => {
+    lines.push(`  ${i + 1}. ${p.label}（${p.kind}）· 重要度 ${p.importance.toFixed(2)}`);
+    lines.push(`     ${p.positionRef}`);
+    lines.push(`     为什么重要：${p.whyImportant}`);
+    lines.push(`     建议研究哪类对象：${p.suggestedTargetKinds.join("、") || "（无）"}`);
+    lines.push(`     适合提供的证据：${p.suitableEvidenceKinds.join("、") || "（无）"}`);
+    lines.push(
+      `     服务问题数：${p.satisfiesRequirementRefs.length} · 固有局限：${p.limitations.join("；") || "（无）"}`,
+    );
+  });
+  for (const s of result.skipped) lines.push(`  （跳过空节点 ${s.positionKey}：${s.reason}）`);
+  lines.push(
+    "  下一步：具体对象由人确认后录入 —— tiancha research target add <行业> --kind <k> --name <主体> --position <posRef> --purpose <…> --reason <…>",
+  );
+  return lines.join("\n");
+}
+
+/** B5: the derived needs (read-only) — `whyStudyNotJustFetch` is a closed-enum phrase. */
+export interface NeedListView {
+  industry: string;
+  /** Whether the chain was projected at all (without it, "which position serves it" is unknown). */
+  chainProjected: boolean;
+  needs: ResearchNeed[];
+}
+
+export function formatNeedHuman(view: NeedListView, names: Record<string, string> = {}): string {
+  const lines: string[] = [`研究需求（按优先级降序，共 ${view.needs.length}）`];
+  if (!view.chainProjected) {
+    lines.push("  提示：该行业尚未生成调研链条，因此「可服务的位置」为空；先执行 tiancha research chain <行业>。");
+  }
+  if (view.needs.length === 0) lines.push("  暂无：当前没有开放的研究缺口。");
+  view.needs.forEach((n, i) => {
+    // Never render "no persisted priority" as a 0 score — that would read as "least important".
+    const priority = n.priorityPolicyVersionId
+      ? `优先级 ${n.priorityScore}/100（规则 ${n.priorityPolicyVersionId}）`
+      : "暂无已落库优先级";
+    lines.push(`  ${i + 1}. [${priority}] ${dimensionLabel(n.dimension, names)} · ${n.gapId}`);
+    lines.push(`     问题：${n.question}`);
+    lines.push(`     为什么需要调研：${n.whyStudyNotJustFetch}`);
+    lines.push(`     可服务该需求的位置：${n.suggestedPositionRefs.join("、") || "（无）"}`);
+  });
+  return lines.join("\n");
+}
+
+/** B5: one target plus its read-only fit counts (B3 aggregation, not a new judgement). */
+export interface TargetListView {
+  target: ResearchTarget;
+  fit: FitSummary;
+}
+
+export function formatTargetWithFitHuman(views: TargetListView[]): string {
+  if (views.length === 0) return "研究对象：暂无（请用 tiancha research target add 录入）。";
+  const lines: string[] = [`研究对象（${views.length}）`];
+  for (const v of views) {
+    const t = v.target;
     const flag = t.isFallback ? ` [备选→${t.fallbackForTargetRef}]` : "";
     lines.push(`  - ${t.subjectKey}（${t.targetKind}）${flag} · ${t.status} · 价值 ${t.expectedInformationValue.toFixed(2)}`);
+    lines.push(
+      `     位置 ${t.positionRef} · 适配：强 ${v.fit.strong} / 部分 ${v.fit.partial} / 弱 ${v.fit.weak} / 无 ${v.fit.none}（共 ${v.fit.questionCount} 问）· 需备选对象 ${v.fit.requiresFallback}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+/** B5: one assembled preparation (outline + cautions). Presentation only. */
+export function formatDiligenceHuman(p: DiligencePreparation): string {
+  const lines: string[] = [
+    `调研准备（${p.status}）：${p.targetBrief}`,
+    `  编号 ${p.preparationRef} · 目标 ${p.targetRef} · 方法论 ${p.methodologyVersionRef}`,
+    `  目的：${p.purpose}`,
+    `  为什么是这个对象：${p.whyThisTarget}`,
+    `  当前理解：认知 ${p.currentUnderstanding.beliefs.length} 条 · 冲突 ${p.currentUnderstanding.conflictCount} 处（知识版本 v${p.currentUnderstanding.knowledgeVersion}）`,
+    `  需要的数据：${p.requestedData.join("、") || "（无）"}`,
+    `  需要的材料：${p.requestedMaterials.join("、") || "（暂无来源，不臆造）"}`,
+    `  已知局限：${p.limitations.join("；") || "（无）"}`,
+    `  提醒：${p.cautions.join("；") || "（无）"}`,
+    `  问题清单（${p.questions.length}）：`,
+  ];
+  for (const q of p.questions) {
+    const mark = q.isFallbackSource ? " ⚠需备选对象" : "";
+    // A question with no persisted priority shows none — "0" would read as "least important".
+    const priority = q.priority > 0 ? `（优先级 ${q.priority}）` : "";
+    lines.push(`    · [${q.source}] ${q.text}${mark}${priority}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatDiligenceListHuman(preparations: DiligencePreparation[], industry: string): string {
+  if (preparations.length === 0) {
+    return `调研准备（${industry}）：暂无。请先确认研究对象，再执行 tiancha research diligence <行业> --target <targetRef>。`;
+  }
+  const lines: string[] = [`调研准备（${industry}，共 ${preparations.length}）`];
+  for (const p of preparations) {
+    lines.push(`  - ${p.preparationRef} · ${p.targetBrief} · ${p.status} · 问题 ${p.questions.length}`);
   }
   return lines.join("\n");
 }
