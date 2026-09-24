@@ -127,16 +127,16 @@ describe("T3 InformationPool vs Knowledge invariant", () => {
     const svc = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
     const res = await svc.ingestMaterial({ materialText: "x", industryName: "新能源" });
 
-    // Pool entries exist and track status/coverage; echo never marks them partial
-    const pool = repo.listPoolEntries(res.industry.industryId);
+    // Pool SLOTS exist and track status/coverage; echo never marks them partial
+    const pool = repo.listPoolSlots(res.industry.industryId);
     assert.ok(pool.length >= 12);
-    for (const e of pool) {
-      assert.ok(["unknown", "partial", "confirmed", "conflict"].includes(e.status));
-      assert.equal(e.status, "unknown", "echo placeholder must not promote coverage");
-      assert.equal(e.evidenceRefs.length, 0);
-      // Pool entry is coverage metadata, NOT a claim statement
-      assert.equal(typeof e.topic, "string");
-      assert.equal((e as any).statement, undefined);
+    for (const s of pool) {
+      assert.ok(["unknown", "partial", "sufficient", "conflicting"].includes(s.status));
+      assert.equal(s.status, "unknown", "echo placeholder must not promote coverage");
+      // S3: slots carry NO content; content lives in items (each pointing at a Claim)
+      assert.equal(typeof s.dimension, "string");
+      assert.equal(repo.listPoolItems(s.slotId).length, 0);
+      assert.equal((s as any).statement, undefined);
     }
 
     // State keeps echo out of known/confirmed (Invariant 5)
@@ -219,9 +219,9 @@ describe("Phase 2C ingest wiring (real data)", () => {
     assert.equal(k.beliefs.every((b) => b.state === "confirmed"), true);
 
     // Pool: the two covered dimensions become partial; the rest stay unknown
-    const pool = repo.listPoolEntries(res.industry.industryId);
-    assert.equal(pool.filter((e) => e.status === "partial").length, 2);
-    assert.equal(pool.filter((e) => e.status === "unknown").length, 10);
+    const pool = repo.listPoolSlots(res.industry.industryId);
+    assert.equal(pool.filter((s) => s.status === "partial").length, 2);
+    assert.equal(pool.filter((s) => s.status === "unknown").length, 10);
 
     // State: known = the two partial entries; unknown = the rest
     assert.equal(res.state.known.length, 2);
@@ -259,9 +259,9 @@ describe("Phase 2C ingest wiring (real data)", () => {
     assert.ok(srcRef, "belief carries a sourceRef");
     assert.ok(repo.getSource(srcRef!), "sourceRef resolves to a research_source row");
 
-    const pool = repo.listPoolEntries(sid);
-    assert.equal(pool.filter((e) => e.status === "partial").length, 2);
-    assert.equal(pool.filter((e) => e.status === "unknown").length, 10);
+    const pool = repo.listPoolSlots(sid);
+    assert.equal(pool.filter((s) => s.status === "partial").length, 2);
+    assert.equal(pool.filter((s) => s.status === "unknown").length, 10);
 
     const state = repo.getStateBySubject("industry", sid)!;
     assert.equal(state.known.length, 2);

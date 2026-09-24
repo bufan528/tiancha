@@ -11,6 +11,8 @@ import type {
   InformationRequirement,
   ResearchGap,
   InformationPoolEntry,
+  InformationPoolSlot,
+  InformationPoolItem,
   ResearchState,
   ResearchSource,
   ResearchDocument,
@@ -364,6 +366,70 @@ export class ResearchRepository {
     }));
   }
 
+  // ---- InformationPool: S3 Slot + Item ----
+  upsertPoolSlot(s: InformationPoolSlot): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO information_pool_slot
+         (slot_id, subject_kind, subject_id, dimension, status, coverage_judgement, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        s.slotId,
+        s.subjectKind,
+        s.subjectId,
+        s.dimension,
+        s.status,
+        s.coverageJudgement,
+        s.createdAt,
+        s.updatedAt,
+      );
+  }
+
+  getPoolSlot(slotId: string): InformationPoolSlot | undefined {
+    const r = this.db.prepare("SELECT * FROM information_pool_slot WHERE slot_id = ?").get(slotId) as any;
+    return r ? rowToPoolSlot(r) : undefined;
+  }
+
+  listPoolSlots(subjectId: string): InformationPoolSlot[] {
+    const rows = this.db
+      .prepare("SELECT * FROM information_pool_slot WHERE subject_id = ? ORDER BY created_at ASC")
+      .all(subjectId) as any[];
+    return rows.map(rowToPoolSlot);
+  }
+
+  /** Replace a slot's items atomically (items are a projection of the current support). */
+  replacePoolItems(slotId: string, items: InformationPoolItem[]): void {
+    this.db.prepare("DELETE FROM information_pool_item WHERE slot_id = ?").run(slotId);
+    const ins = this.db.prepare(
+      `INSERT OR REPLACE INTO information_pool_item
+       (item_id, slot_id, value_text, caliber, as_of, claim_ref, source_ref, relation, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const it of items) {
+      // I5: an item MUST reference a Claim (Pool is an organizing layer, not a source of truth).
+      if (!it.claimRef) throw new Error(`pool item ${it.itemId} must reference a Claim (I5)`);
+      ins.run(
+        it.itemId,
+        it.slotId,
+        it.valueText,
+        it.caliber ?? null,
+        it.asOf ?? null,
+        it.claimRef,
+        it.sourceRef ?? null,
+        it.relation,
+        it.createdAt,
+      );
+    }
+  }
+
+  listPoolItems(slotId: string): InformationPoolItem[] {
+    const rows = this.db
+      .prepare("SELECT * FROM information_pool_item WHERE slot_id = ? ORDER BY item_id ASC")
+      .all(slotId) as any[];
+    return rows.map(rowToPoolItem);
+  }
+
   // ---- ResearchState ----
   upsertState(s: ResearchState): void {
     this.db
@@ -685,5 +751,32 @@ function rowToHumanGate(row: any): HumanGate {
     resumeTokenScope: row.resume_token_scope_json ? JSON.parse(row.resume_token_scope_json) : undefined,
     resumeTokenExpiresAt: row.resume_token_expires_at ?? undefined,
     resumeTokenConsumed: row.resume_token_consumed === 1,
+  };
+}
+
+function rowToPoolSlot(row: any): InformationPoolSlot {
+  return {
+    slotId: row.slot_id,
+    subjectKind: row.subject_kind,
+    subjectId: row.subject_id,
+    dimension: row.dimension,
+    status: row.status,
+    coverageJudgement: row.coverage_judgement,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToPoolItem(row: any): InformationPoolItem {
+  return {
+    itemId: row.item_id,
+    slotId: row.slot_id,
+    valueText: row.value_text,
+    caliber: row.caliber ?? undefined,
+    asOf: row.as_of ?? undefined,
+    claimRef: row.claim_ref,
+    sourceRef: row.source_ref ?? undefined,
+    relation: row.relation,
+    createdAt: row.created_at,
   };
 }

@@ -232,10 +232,37 @@ export class ResearchDb {
         resume_token_consumed INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_gate_status ON human_gate(status);
+
+      -- S3: Pool = Slot + Item (identity: subject + dimension)
+      CREATE TABLE IF NOT EXISTS information_pool_slot (
+        slot_id TEXT PRIMARY KEY,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        dimension TEXT NOT NULL,
+        status TEXT NOT NULL,
+        coverage_judgement TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pool_slot_subject ON information_pool_slot(subject_id);
+      CREATE TABLE IF NOT EXISTS information_pool_item (
+        item_id TEXT PRIMARY KEY,
+        slot_id TEXT NOT NULL,
+        value_text TEXT NOT NULL,
+        caliber TEXT,
+        as_of TEXT,
+        claim_ref TEXT NOT NULL,
+        source_ref TEXT,
+        relation TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_pool_item_slot ON information_pool_item(slot_id);
+      CREATE INDEX IF NOT EXISTS idx_pool_item_claim ON information_pool_item(claim_ref);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();
     this.ensureRequirementConditionColumns();
+    this.migratePoolEntriesToSlots();
   }
 
   /**
@@ -293,6 +320,49 @@ export class ResearchDb {
       "preferred_position_kinds_json",
       "ALTER TABLE information_requirement ADD COLUMN preferred_position_kinds_json TEXT",
     );
+  }
+
+  /**
+   * S3 migration: legacy single-layer pool entries -> Slot (+ Item).
+   * Idempotent AND identity-preserving: `pe-<subject>-<dim>` -> `slot-<subject>-<dim>`
+   * (SAME suffix — the logical research slot is NOT re-generated).
+   */
+  private migratePoolEntriesToSlots(): void {
+    const entries = this.db.prepare("SELECT * FROM information_pool_entry").all() as any[];
+    if (entries.length === 0) return;
+
+    const slotExists = this.db.prepare("SELECT 1 FROM information_pool_slot WHERE slot_id = ?");
+    const insertSlot = this.db.prepare(
+      `INSERT INTO information_pool_slot
+       (slot_id, subject_kind, subject_id, dimension, status, coverage_judgement, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
+    );
+    const insertItem = this.db.prepare(
+      `INSERT INTO information_pool_item
+       (item_id, slot_id, value_text, caliber, as_of, claim_ref, source_ref, relation, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+    );
+
+    for (const e of entries) {
+      const slotId = "slot-" + String(e.entry_id).slice(3); // pe-X -> slot-X (same suffix)
+      if (slotExists.get(slotId)) continue;
+      const status =
+        e.status === "confirmed" ? "sufficient" : e.status === "conflict" ? "conflicting" : e.status;
+      insertSlot.run(
+        slotId,
+        e.subject_kind,
+        e.subject_id,
+        e.topic ?? "",
+        status,
+        "migrated from information_pool_entry",
+        e.created_at,
+        e.updated_at,
+      );
+      const refs: string[] = e.evidence_refs_json ? JSON.parse(e.evidence_refs_json) : [];
+      refs.forEach((ref, i) => {
+        insertItem.run(`item-${slotId}-${i}`, slotId, ref, null, null, ref, null, "consistent", e.created_at);
+      });
+    }
   }
 
   close(): void {

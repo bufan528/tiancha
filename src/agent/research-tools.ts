@@ -69,7 +69,7 @@ export function buildResearchTools(deps: ResearchToolDeps) {
         reserveStatus: ind.reserveStatus,
         questions: repo.listQuestions(ind.industryId).length,
         requirements: repo.listRequirements(ind.industryId).length,
-        pool: repo.listPoolEntries(ind.industryId).length,
+        pool: repo.listPoolSlots(ind.industryId).length,
         gaps: repo.listGaps(ind.industryId).length,
         nextActions: repo.listNextActions(ind.industryId).length,
       };

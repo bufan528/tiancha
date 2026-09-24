@@ -1,5 +1,6 @@
 /**
  * Phase 2C Step 2-B-3-A: Gap evaluation tests.
+ * S3: the Pool is now Slot + Item (slots read from `information_pool_slot`).
  */
 
 import { test, describe } from "node:test";
@@ -8,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
 import { KnowledgeProjectionService } from "./application/knowledge-projection-service.js";
-import type { InformationPoolEntry, InformationRequirement } from "./domain/index.js";
+import type { InformationPoolSlot, InformationRequirement } from "./domain/index.js";
 
 function setup() {
   const db = new ResearchDb({ path: ":memory:" });
@@ -38,16 +39,19 @@ function mkReq(subjectId: string, dimension: string, importance: number): Inform
   };
 }
 
-function mkPool(subjectId: string, topic: string, status: InformationPoolEntry["status"]): InformationPoolEntry {
+function mkSlot(
+  subjectId: string,
+  dimension: string,
+  status: InformationPoolSlot["status"],
+): InformationPoolSlot {
   const now = new Date().toISOString();
   return {
-    entryId: "pe-" + randomUUID(),
+    slotId: `slot-${subjectId}-${dimension}`,
     subjectKind: "industry",
     subjectId,
-    topic,
+    dimension,
     status,
-    relatedRequirementIds: [],
-    evidenceRefs: [],
+    coverageJudgement: "test",
     createdAt: now,
     updatedAt: now,
   };
@@ -61,8 +65,8 @@ describe("Gap evaluation (Requirement-centered)", () => {
     const low = mkReq(subj, "policy", 1);
     repo.upsertRequirement(high);
     repo.upsertRequirement(low);
-    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
-    repo.upsertPoolEntry(mkPool(subj, "policy", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "policy", "unknown"));
 
     svc.refreshGaps(subj, "industry");
     const gaps = repo.listGaps(subj);
@@ -76,34 +80,34 @@ describe("Gap evaluation (Requirement-centered)", () => {
     const subj = "ind-" + randomUUID();
     const r = mkReq(subj, "demand", 2);
     repo.upsertRequirement(r);
-    repo.upsertPoolEntry(mkPool(subj, "demand", "partial"));
+    repo.upsertPoolSlot(mkSlot(subj, "demand", "partial"));
     svc.refreshGaps(subj, "industry");
     assert.equal(repo.listGaps(subj).length, 1);
   });
 
-  test("confirmed closes active gap (row kept, not deleted)", () => {
+  test("sufficient closes active gap (row kept, not deleted)", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
     const r = mkReq(subj, "technology", 3);
     repo.upsertRequirement(r);
-    repo.upsertPoolEntry(mkPool(subj, "technology", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "technology", "unknown"));
     svc.refreshGaps(subj, "industry");
     assert.equal(repo.listGaps(subj).length, 1);
-    // now confirmed (update the SAME pool entry, not a second one)
-    const entry = repo.listPoolEntries(subj)[0];
-    repo.upsertPoolEntry({ ...entry, status: "confirmed" });
+    // now sufficient (update the SAME slot, not a second one)
+    const slot = repo.listPoolSlots(subj)[0];
+    repo.upsertPoolSlot({ ...slot, status: "sufficient" });
     svc.refreshGaps(subj, "industry");
     const gaps = repo.listGaps(subj);
     assert.equal(gaps.length, 1); // row preserved
     assert.equal(gaps[0].status, "resolved");
   });
 
-  test("high+conflict keeps conflict gap (no auto-resolution)", () => {
+  test("high+conflicting keeps conflict gap (no auto-resolution)", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
     const r = mkReq(subj, "profitability", 3);
     repo.upsertRequirement(r);
-    repo.upsertPoolEntry(mkPool(subj, "profitability", "conflict"));
+    repo.upsertPoolSlot(mkSlot(subj, "profitability", "conflicting"));
     svc.refreshGaps(subj, "industry");
     const g = repo.listGaps(subj);
     assert.equal(g.length, 1);
@@ -115,7 +119,7 @@ describe("Gap evaluation (Requirement-centered)", () => {
     const subj = "ind-" + randomUUID();
     const r = mkReq(subj, "market", 3);
     repo.upsertRequirement(r);
-    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
     svc.refreshGaps(subj, "industry");
     svc.refreshGaps(subj, "industry");
     svc.refreshGaps(subj, "industry");
@@ -128,21 +132,21 @@ describe("Gap evaluation (Requirement-centered)", () => {
     const subjB = "ind-" + randomUUID();
     const ra = mkReq(subjA, "market", 3);
     repo.upsertRequirement(ra);
-    repo.upsertPoolEntry(mkPool(subjA, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subjA, "market", "unknown"));
     svc.refreshGaps(subjA, "industry");
     assert.equal(repo.listGaps(subjB).length, 0);
     assert.equal(repo.listGaps(subjA).length, 1);
   });
 
-  test("one-way: refreshGaps does not modify pool", () => {
+  test("one-way: refreshGaps does not modify pool slots", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
     const r = mkReq(subj, "market", 3);
     repo.upsertRequirement(r);
-    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
-    const before = repo.listPoolEntries(subj)[0];
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
+    const before = repo.listPoolSlots(subj)[0];
     svc.refreshGaps(subj, "industry");
-    const after = repo.listPoolEntries(subj)[0];
+    const after = repo.listPoolSlots(subj)[0];
     assert.equal(after.status, before.status);
   });
 });
@@ -153,7 +157,7 @@ describe("Gap -> NextAction refresh", () => {
     const subj = "ind-" + randomUUID();
     const r = mkReq(subj, "market", 3);
     repo.upsertRequirement(r);
-    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
     svc.refreshGaps(subj, "industry");
     svc.refreshNextActions(subj, "industry");
     assert.equal(repo.listNextActions(subj).length, 1);
@@ -168,13 +172,13 @@ describe("Gap -> NextAction refresh", () => {
     const subj = "ind-" + randomUUID();
     const r = mkReq(subj, "technology", 3);
     repo.upsertRequirement(r);
-    repo.upsertPoolEntry(mkPool(subj, "technology", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "technology", "unknown"));
     svc.refreshGaps(subj, "industry");
     svc.refreshNextActions(subj, "industry");
     assert.equal(repo.listNextActions(subj)[0].status, "open");
-    // resolve the gap by confirming its pool entry
-    const entry = repo.listPoolEntries(subj)[0];
-    repo.upsertPoolEntry({ ...entry, status: "confirmed" });
+    // resolve the gap by making its slot sufficient
+    const slot = repo.listPoolSlots(subj)[0];
+    repo.upsertPoolSlot({ ...slot, status: "sufficient" });
     svc.refreshGaps(subj, "industry");
     svc.refreshNextActions(subj, "industry");
     assert.equal(repo.listNextActions(subj)[0].status, "cancelled");

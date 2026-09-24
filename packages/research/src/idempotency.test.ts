@@ -4,7 +4,7 @@
  * Acceptance (from the S2 gate):
  *   T-A3 question identity stable (subject + dimension)
  *   T-A4 requirement identity stable (same question)
- *   T-A5 pool entry identity stable (same subject + requirement)
+ *   T-A5 pool slot identity stable (same subject + dimension)
  *   T-A6 repeated ingest does not grow the skeleton
  *   T-A7 different subject / dimension does NOT wrongly merge
  *   T-A8 re-running the same operation leaves an identical skeleton state
@@ -17,7 +17,7 @@ import { ResearchRepository } from "./storage/research-repository.js";
 import { SqliteArtifactStore } from "./storage/artifact-store.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
 import { EchoDataProvider } from "./providers/echo-data-provider.js";
-import { questionKey, requirementKey, poolEntryKey } from "./domain/identity.js";
+import { questionKey, requirementKey, poolSlotKey } from "./domain/identity.js";
 
 function setup() {
   const db = new ResearchDb({ path: ":memory:" });
@@ -36,8 +36,8 @@ function skeletonSnapshot(repo: ResearchRepository, sid: string): string {
       .map((r) => ({ id: r.requirementId, dim: r.dimension, imp: r.importance }))
       .sort((a, b) => (a.id < b.id ? -1 : 1)),
     pool: repo
-      .listPoolEntries(sid)
-      .map((p) => ({ id: p.entryId, topic: p.topic, status: p.status, refs: p.relatedRequirementIds }))
+      .listPoolSlots(sid)
+      .map((s) => ({ id: s.slotId, dim: s.dimension, status: s.status }))
       .sort((a, b) => (a.id < b.id ? -1 : 1)),
     gaps: repo
       .listGaps(sid)
@@ -65,10 +65,11 @@ describe("S2 E2 idempotent identity", () => {
     assert.ok(req, "requirement key is deterministic");
     assert.equal(req.questionId, questionKey(sid, "market"), "requirement links to the stable question");
 
-    // T-A5: pool entry identity stable, linked to the same requirement
-    const pool = repo.getPoolEntry(poolEntryKey(sid, "market"))!;
-    assert.ok(pool, "pool key is deterministic");
-    assert.deepEqual(pool.relatedRequirementIds, [requirementKey(sid, "market")]);
+    // T-A5: pool SLOT identity stable (subject + dimension); migration maps pe-X -> slot-X
+    const slot = repo.getPoolSlot(poolSlotKey(sid, "market"))!;
+    assert.ok(slot, "pool slot key is deterministic");
+    assert.equal(slot.subjectId, sid);
+    assert.equal(slot.dimension, "market");
 
     db.close();
   });
@@ -81,7 +82,7 @@ describe("S2 E2 idempotent identity", () => {
     const before = {
       q: repo.listQuestions(sid).length,
       r: repo.listRequirements(sid).length,
-      pool: repo.listPoolEntries(sid).length,
+      pool: repo.listPoolSlots(sid).length,
       gaps: repo.listGaps(sid).length,
       actions: repo.listNextActions(sid).length,
       snapshot: skeletonSnapshot(repo, sid),
@@ -93,7 +94,7 @@ describe("S2 E2 idempotent identity", () => {
     const after = {
       q: repo.listQuestions(sid).length,
       r: repo.listRequirements(sid).length,
-      pool: repo.listPoolEntries(sid).length,
+      pool: repo.listPoolSlots(sid).length,
       gaps: repo.listGaps(sid).length,
       actions: repo.listNextActions(sid).length,
       snapshot: skeletonSnapshot(repo, sid),
@@ -101,7 +102,7 @@ describe("S2 E2 idempotent identity", () => {
 
     assert.equal(after.q, before.q, "questions must not grow");
     assert.equal(after.r, before.r, "requirements must not grow");
-    assert.equal(after.pool, before.pool, "pool entries must not grow");
+    assert.equal(after.pool, before.pool, "pool slots must not grow");
     assert.equal(after.gaps, before.gaps, "gaps must not grow");
     assert.equal(after.actions, before.actions, "next actions must not grow");
     // T-A8: identical final skeleton state
@@ -130,7 +131,7 @@ describe("S2 E2 idempotent identity", () => {
   test("identity keys contain no timestamp / randomness (deterministic by construction)", () => {
     assert.equal(questionKey("ind-1", "market"), questionKey("ind-1", "market"));
     assert.equal(requirementKey("ind-1", "market"), "ir-ind-1-market");
-    assert.equal(poolEntryKey("ind-1", "market"), "pe-ind-1-market");
+    assert.equal(poolSlotKey("ind-1", "market"), "slot-ind-1-market");
     // no digits that look like a ms-timestamp / uuid segment
     assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}/.test(questionKey("ind-1", "market")));
   });

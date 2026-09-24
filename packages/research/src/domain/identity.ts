@@ -31,3 +31,12 @@ export function requirementKey(subjectId: string, dimension: string): string {
 export function poolEntryKey(subjectId: string, dimension: string): string {
   return `pe-${subjectId}-${dimension}`;
 }
+
+/**
+ * S3: pool SLOT identity — the same logical key as the legacy entry, with the
+ * `slot-` prefix. Migration maps `pe-X` -> `slot-X` (same suffix) so the logical
+ * research slot is preserved, never re-generated.
+ */
+export function poolSlotKey(subjectId: string, dimension: string): string {
+  return `slot-${subjectId}-${dimension}`;
+}

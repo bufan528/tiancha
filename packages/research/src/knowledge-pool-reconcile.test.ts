@@ -1,5 +1,7 @@
 /**
  * Phase 2C Step 2-B-1: Knowledge -> InformationPool reconcile tests.
+ * S3: the Pool is now Slot + Item (slot read from `information_pool_slot`,
+ * support read from `information_pool_item`).
  */
 
 import { test, describe } from "node:test";
@@ -8,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
 import { KnowledgeProjectionService } from "./application/knowledge-projection-service.js";
-import type { Claim, InformationPoolEntry } from "./domain/index.js";
+import type { Claim, InformationPoolSlot } from "./domain/index.js";
 
 function setup() {
   const db = new ResearchDb({ path: ":memory:" });
@@ -33,52 +35,56 @@ function mkClaim(subjectId: string): Claim {
   };
 }
 
-function mkPool(subjectId: string, topic: string, status: InformationPoolEntry["status"]): InformationPoolEntry {
+function mkSlot(
+  subjectId: string,
+  dimension: string,
+  status: InformationPoolSlot["status"],
+): InformationPoolSlot {
   const now = new Date().toISOString();
   return {
-    entryId: "pe-" + randomUUID(),
+    slotId: `slot-${subjectId}-${dimension}`,
     subjectKind: "industry",
     subjectId,
-    topic,
+    dimension,
     status,
-    relatedRequirementIds: [],
-    evidenceRefs: [],
+    coverageJudgement: "test",
     createdAt: now,
     updatedAt: now,
   };
 }
 
-function poolOf(repo: ResearchRepository, subjectId: string, topic: string): InformationPoolEntry {
-  return repo.listPoolEntries(subjectId).find((e) => e.topic === topic)!;
+function poolOf(repo: ResearchRepository, subjectId: string, dimension: string): InformationPoolSlot {
+  return repo.getPoolSlot(`slot-${subjectId}-${dimension}`)!;
 }
 
 describe("Knowledge -> InformationPool reconcile", () => {
   test("unknown + matching confirmed belief -> partial, with traceable claim refs", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "market" });
     svc.reconcilePool(subj, "industry");
 
-    const e = poolOf(repo, subj, "market");
-    assert.equal(e.status, "partial");
-    assert.ok(e.evidenceRefs.length >= 1);
-    assert.match(e.evidenceRefs[0], /^artifact:claim\//);
+    const slot = poolOf(repo, subj, "market");
+    assert.equal(slot.status, "partial");
+    const items = repo.listPoolItems(slot.slotId);
+    assert.ok(items.length >= 1);
+    assert.match(items[0].claimRef, /^artifact:claim\//);
   });
 
-  test("never auto-upgrades partial->confirmed with a single confirmed belief", () => {
+  test("never auto-upgrades partial->sufficient with a single confirmed belief", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "demand", "partial"));
+    repo.upsertPoolSlot(mkSlot(subj, "demand", "partial"));
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand" });
     svc.reconcilePool(subj, "industry");
     assert.equal(poolOf(repo, subj, "demand").status, "partial");
   });
 
-  test("open conflict on dimension -> pool conflict, both beliefs retained", () => {
+  test("open conflict on dimension -> pool conflicting, both beliefs retained", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "demand", "partial"));
+    repo.upsertPoolSlot(mkSlot(subj, "demand", "partial"));
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand" });
     svc.projectFromClaim({
       claim: mkClaim(subj),
@@ -86,7 +92,7 @@ describe("Knowledge -> InformationPool reconcile", () => {
       relationHint: { kind: "CONFLICT" },
     });
     svc.reconcilePool(subj, "industry");
-    assert.equal(poolOf(repo, subj, "demand").status, "conflict");
+    assert.equal(poolOf(repo, subj, "demand").status, "conflicting");
     // both beliefs still present
     const k = svc.repository().findKnowledgeBySubject("industry", subj)!;
     assert.equal(k.beliefs.length, 2);
@@ -95,7 +101,7 @@ describe("Knowledge -> InformationPool reconcile", () => {
   test("revised/superseded belief not used as current sole support", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "technology", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "technology", "unknown"));
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "technology" });
     svc.projectFromClaim({
       claim: mkClaim(subj),
@@ -107,10 +113,10 @@ describe("Knowledge -> InformationPool reconcile", () => {
     assert.equal(poolOf(repo, subj, "technology").status, "partial");
   });
 
-  test("idempotent: repeated reconcile yields same state, no new entries/refs", () => {
+  test("idempotent: repeated reconcile yields same state, no new slots/items", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "market" });
     svc.reconcilePool(subj, "industry");
     const first = poolOf(repo, subj, "market");
@@ -118,16 +124,19 @@ describe("Knowledge -> InformationPool reconcile", () => {
     svc.reconcilePool(subj, "industry");
     const second = poolOf(repo, subj, "market");
     assert.equal(second.status, first.status);
-    assert.deepEqual(second.evidenceRefs, first.evidenceRefs);
-    assert.equal(repo.listPoolEntries(subj).length, 1);
+    assert.deepEqual(
+      repo.listPoolItems(second.slotId).map((i) => i.claimRef),
+      repo.listPoolItems(first.slotId).map((i) => i.claimRef),
+    );
+    assert.equal(repo.listPoolSlots(subj).length, 1);
   });
 
   test("conflict is subject-scoped: A's conflict must not mark B's pool", () => {
     const { repo, svc } = setup();
     const subjA = "ind-" + randomUUID();
     const subjB = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subjA, "demand", "partial"));
-    repo.upsertPoolEntry(mkPool(subjB, "demand", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subjA, "demand", "partial"));
+    repo.upsertPoolSlot(mkSlot(subjB, "demand", "unknown"));
     // A develops an open conflict on demand
     svc.projectFromClaim({ claim: mkClaim(subjA), dimension: "demand" });
     svc.projectFromClaim({
@@ -141,8 +150,8 @@ describe("Knowledge -> InformationPool reconcile", () => {
     svc.reconcilePool(subjA, "industry");
     svc.reconcilePool(subjB, "industry");
 
-    // A: conflict (correct)
-    assert.equal(poolOf(repo, subjA, "demand").status, "conflict");
+    // A: conflicting (correct)
+    assert.equal(poolOf(repo, subjA, "demand").status, "conflicting");
     // B: must NOT inherit A's conflict; its own support drives partial
     assert.equal(poolOf(repo, subjB, "demand").status, "partial");
   });

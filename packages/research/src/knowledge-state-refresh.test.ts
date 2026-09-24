@@ -1,5 +1,6 @@
 /**
  * Phase 2C Step 2-B-2-A: Pool -> ResearchState refresh tests.
+ * S3: the Pool is now Slot + Item (read from `information_pool_slot`).
  */
 
 import { test, describe } from "node:test";
@@ -9,7 +10,7 @@ import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
 import { KnowledgeProjectionService } from "./application/knowledge-projection-service.js";
 import { emptyResearchState } from "./domain/index.js";
-import type { InformationPoolEntry } from "./domain/index.js";
+import type { InformationPoolSlot } from "./domain/index.js";
 
 function setup() {
   const db = new ResearchDb({ path: ":memory:" });
@@ -18,29 +19,32 @@ function setup() {
   return { db, repo, svc };
 }
 
-function mkPool(subjectId: string, topic: string, status: InformationPoolEntry["status"]): InformationPoolEntry {
+function mkSlot(
+  subjectId: string,
+  dimension: string,
+  status: InformationPoolSlot["status"],
+): InformationPoolSlot {
   const now = new Date().toISOString();
   return {
-    entryId: "pe-" + randomUUID(),
+    slotId: `slot-${subjectId}-${dimension}`,
     subjectKind: "industry",
     subjectId,
-    topic,
+    dimension,
     status,
-    relatedRequirementIds: [],
-    evidenceRefs: [],
+    coverageJudgement: "test",
     createdAt: now,
     updatedAt: now,
   };
 }
 
 describe("Pool -> ResearchState refresh", () => {
-  test("maps confirmed/partial/conflict/unknown with known/uncertain split", () => {
+  test("maps sufficient/partial/conflicting/unknown with known/uncertain split", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "market", "confirmed"));
-    repo.upsertPoolEntry(mkPool(subj, "demand", "partial"));
-    repo.upsertPoolEntry(mkPool(subj, "profitability", "conflict"));
-    repo.upsertPoolEntry(mkPool(subj, "policy", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "sufficient"));
+    repo.upsertPoolSlot(mkSlot(subj, "demand", "partial"));
+    repo.upsertPoolSlot(mkSlot(subj, "profitability", "conflicting"));
+    repo.upsertPoolSlot(mkSlot(subj, "policy", "unknown"));
 
     svc.refreshState(subj, "industry");
     const s = repo.getStateBySubject("industry", subj)!;
@@ -58,7 +62,7 @@ describe("Pool -> ResearchState refresh", () => {
   test("preserves existing gap/next-action/key-question ids; does not create them", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
     // seed a prior state carrying auxiliary ids
     const prior = emptyResearchState({ stateId: `state-industry-${subj}`, subjectKind: "industry", subjectId: subj });
     prior.keyQuestionIds = ["q1"];
@@ -77,7 +81,7 @@ describe("Pool -> ResearchState refresh", () => {
   test("idempotent: repeated refresh yields same projection, version bumps but no dup ids", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "market", "partial"));
+    repo.upsertPoolSlot(mkSlot(subj, "market", "partial"));
     svc.refreshState(subj, "industry");
     const s1 = repo.getStateBySubject("industry", subj)!;
     svc.refreshState(subj, "industry");
@@ -94,8 +98,8 @@ describe("Pool -> ResearchState refresh", () => {
     const { repo, svc } = setup();
     const subjA = "ind-" + randomUUID();
     const subjB = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subjA, "market", "confirmed"));
-    repo.upsertPoolEntry(mkPool(subjB, "market", "unknown"));
+    repo.upsertPoolSlot(mkSlot(subjA, "market", "sufficient"));
+    repo.upsertPoolSlot(mkSlot(subjB, "market", "unknown"));
 
     svc.refreshState(subjA, "industry");
     const bBefore = repo.getStateBySubject("industry", subjB);
@@ -109,14 +113,14 @@ describe("Pool -> ResearchState refresh", () => {
     assert.equal(bBefore, undefined);
   });
 
-  test("one-way: refreshState does not modify pool", () => {
+  test("one-way: refreshState does not modify pool slots", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
-    repo.upsertPoolEntry(mkPool(subj, "market", "unknown"));
-    const before = repo.listPoolEntries(subj)[0];
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
+    const before = repo.listPoolSlots(subj)[0];
     svc.refreshState(subj, "industry");
-    const after = repo.listPoolEntries(subj)[0];
+    const after = repo.listPoolSlots(subj)[0];
     assert.equal(after.status, before.status);
-    assert.deepEqual(after.evidenceRefs, before.evidenceRefs);
+    assert.equal(after.dimension, before.dimension);
   });
 });

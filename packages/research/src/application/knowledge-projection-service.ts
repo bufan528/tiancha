@@ -24,12 +24,11 @@ import { ResearchRepository } from "../storage/research-repository.js";
 import type {
   Claim,
   IndustryKnowledge,
-  InformationPoolEntry,
   KnowledgeBelief,
   KnowledgeConflict,
   KnowledgeSubjectKind,
   NextAction,
-  PoolStatus,
+  PoolSlotStatus,
   ResearchGap,
   StateItemRef,
 } from "../domain/index.js";
@@ -201,34 +200,28 @@ export class KnowledgeProjectionService {
 
   // ---- Step 2-B-1: Knowledge -> InformationPool (one-way) ----
   /**
-   * Reconcile InformationPool against the CURRENT knowledge projection.
+   * Reconcile the Pool SLOTS against the CURRENT knowledge projection.
    * One-way: Knowledge/Claim/Evidence -> Pool only. Never writes State, Gap,
-   * NextAction. Idempotent: recomputed from the current projection; a no-op
-   * projection yields no entry/ref changes.
+   * NextAction. Idempotent: recomputed from the current projection.
+   *
+   * S3: the Pool is Slot + Item, and a slot's identity is (subject, dimension), so
+   * we read the slot's own `dimension` directly (no requirement lookup needed).
    *
    * Rules (strict, conservative):
-   *  - unknown -> partial when >=1 `confirmed` current belief covers the entry's
-   *    dimension (resolved via relatedRequirementIds -> requirement.dimension,
-   *    else entry.topic).
-   *  - partial -> confirmed is NEVER auto-upgraded here (insufficient coverage
-   *    judgment). We would rather stay partial than over-confirm.
-   *  - open KnowledgeConflict on the dimension -> status `conflict` (both sides
-   *    kept; pool conflict only means "unresolved disagreement").
+   *  - unknown -> partial when >=1 `confirmed` current belief covers the slot's dimension.
+   *  - partial -> sufficient is NEVER auto-upgraded here (insufficient coverage
+   *    judgment); we would rather stay partial than over-confirm.
+   *  - open KnowledgeConflict on the dimension -> status `conflicting` (both sides kept).
    *  - only `confirmed` current beliefs act as support; revised/superseded do not.
    */
   reconcilePool(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
     const repo = new ResearchRepository(this.db);
     const knowledge = this.knowledge.findKnowledgeBySubject(subjectKind, subjectId);
-    const entries = repo.listPoolEntries(subjectId);
-    if (entries.length === 0) return;
-
-    const reqDim = new Map<string, string>();
-    for (const r of repo.listRequirements(subjectId)) reqDim.set(r.questionId, r.dimension);
+    const slots = repo.listPoolSlots(subjectId);
+    if (slots.length === 0) return;
 
     // Subject-scoped conflict: an open conflict only counts for THIS subject when
-    // one of its claim refs belongs to this subject's knowledge beliefs (incl.
-    // history). Dimensions are shared across industries, so a global dimension
-    // match would wrongly mark subject B's pool as conflicted by subject A's dispute.
+    // one of its claim refs belongs to this subject's knowledge beliefs.
     const subjectClaimRefs = new Set<string>(
       knowledge ? this.knowledge.listBeliefs(knowledge.knowledgeId).map((b) => b.claimRef) : [],
     );
@@ -236,48 +229,52 @@ export class KnowledgeProjectionService {
       .listOpenConflicts()
       .filter((c) => subjectClaimRefs.has(c.claimARef) || subjectClaimRefs.has(c.claimBRef));
 
-    for (const entry of entries) {
-      const dims = this.entryDimensions(entry, reqDim);
+    const now = new Date().toISOString();
+    for (const slot of slots) {
+      const dim = slot.dimension;
       const support = (knowledge?.beliefs ?? []).filter(
-        (b) => b.state === "confirmed" && dims.includes(b.dimension),
+        (b) => b.state === "confirmed" && b.dimension === dim,
       );
-      const hasOpenConflict = openConflicts.some((c) => dims.includes(c.dimension));
+      const hasOpenConflict = openConflicts.some((c) => c.dimension === dim);
 
-      let status: PoolStatus = entry.status;
+      let status: PoolSlotStatus = slot.status;
       if (hasOpenConflict) {
-        status = "conflict";
-      } else if (entry.status === "unknown" && support.length > 0) {
+        status = "conflicting";
+      } else if (slot.status === "unknown" && support.length > 0) {
         status = "partial";
       }
 
-      // Canonical, sorted claim refs of current support (idempotent set).
-      const refs = support.length > 0
-        ? [...new Set(support.map((b) => b.claimRef))].sort()
-        : entry.evidenceRefs;
+      // Canonical, sorted claim refs of the current support (idempotent set).
+      const claimRefs =
+        support.length > 0 ? [...new Set(support.map((b) => b.claimRef))].sort() : [];
 
-      const refsSame =
-        refs.length === entry.evidenceRefs.length &&
-        refs.every((r, i) => r === entry.evidenceRefs[i]);
+      const existingItems = repo.listPoolItems(slot.slotId);
+      const itemsSame =
+        existingItems.length === claimRefs.length &&
+        claimRefs.every((r, i) => existingItems[i]?.claimRef === r);
 
-      if (status !== entry.status || !refsSame) {
-        const next: InformationPoolEntry = {
-          ...entry,
+      if (status !== slot.status) {
+        repo.upsertPoolSlot({
+          ...slot,
           status,
-          evidenceRefs: refs,
-          updatedAt: new Date().toISOString(),
-        };
-        repo.upsertPoolEntry(next);
+          coverageJudgement: slotJudgement(status, dim),
+          updatedAt: now,
+        });
+      }
+      if (!itemsSame) {
+        repo.replacePoolItems(
+          slot.slotId,
+          claimRefs.map((ref, i) => ({
+            itemId: `item-${slot.slotId}-${i}`,
+            slotId: slot.slotId,
+            valueText: ref,
+            claimRef: ref,
+            relation: "consistent" as const,
+            createdAt: now,
+          })),
+        );
       }
     }
-  }
-
-  private entryDimensions(
-    entry: InformationPoolEntry,
-    reqDim: Map<string, string>,
-  ): string[] {
-    const dims = entry.relatedRequirementIds.map((id) => reqDim.get(id)).filter(Boolean) as string[];
-    if (dims.length > 0) return dims;
-    return [entry.topic];
   }
 
   /**
@@ -289,7 +286,7 @@ export class KnowledgeProjectionService {
    */
   refreshState(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
     const repo = new ResearchRepository(this.db);
-    const entries = repo.listPoolEntries(subjectId);
+    const slots = repo.listPoolSlots(subjectId);
     const prev = repo.getStateBySubject(subjectKind, subjectId);
     const now = new Date().toISOString();
 
@@ -299,10 +296,10 @@ export class KnowledgeProjectionService {
     const conflicting: StateItemRef[] = [];
     const unknown: StateItemRef[] = [];
 
-    for (const e of entries) {
-      const ref: StateItemRef = { ref: e.entryId };
-      switch (e.status) {
-        case "confirmed":
+    for (const s of slots) {
+      const ref: StateItemRef = { ref: s.slotId };
+      switch (s.status) {
+        case "sufficient":
           confirmed.push(ref);
           known.push(ref);
           break;
@@ -310,7 +307,7 @@ export class KnowledgeProjectionService {
           known.push(ref);
           uncertain.push(ref);
           break;
-        case "conflict":
+        case "conflicting":
           conflicting.push(ref);
           break;
         case "unknown":
@@ -355,7 +352,7 @@ export class KnowledgeProjectionService {
     const repo = new ResearchRepository(this.db);
     const reqs = repo.listRequirements(subjectId);
     if (reqs.length === 0) return;
-    const entries = repo.listPoolEntries(subjectId);
+    const slots = repo.listPoolSlots(subjectId);
     const now = new Date().toISOString();
 
     const activeByReq = new Map<string, ResearchGap>();
@@ -366,23 +363,21 @@ export class KnowledgeProjectionService {
     }
 
     for (const req of reqs) {
-      const entry = entries.find(
-        (e) => e.relatedRequirementIds.includes(req.requirementId) || e.topic === req.dimension,
-      );
-      const poolStatus = entry?.status ?? "unknown";
+      const slot = slots.find((s) => s.dimension === req.dimension);
+      const poolStatus = slot?.status ?? "unknown";
       const isHigh = req.importance >= 2;
 
       const need =
-        poolStatus === "confirmed" || req.status === "met"
+        poolStatus === "sufficient" || req.status === "met"
           ? false
-          : poolStatus === "conflict"
+          : poolStatus === "conflicting"
             ? isHigh
             : poolStatus === "partial"
               ? isHigh
               : isHigh;
 
       const uncertainty =
-        poolStatus === "unknown" ? 0.9 : poolStatus === "partial" ? 0.6 : poolStatus === "conflict" ? 0.8 : 0.1;
+        poolStatus === "unknown" ? 0.9 : poolStatus === "partial" ? 0.6 : poolStatus === "conflicting" ? 0.8 : 0.1;
 
       if (need) {
         const existing = activeByReq.get(req.requirementId);
@@ -477,5 +472,19 @@ export class KnowledgeProjectionService {
       nextActionIds: actions.map((a) => a.actionId),
       updatedAt: new Date().toISOString(),
     });
+  }
+}
+
+/** S3: human-readable coverage judgement for a pool slot status. */
+function slotJudgement(status: PoolSlotStatus, dimension: string): string {
+  switch (status) {
+    case "sufficient":
+      return `${dimension}: 证据满足确认条件`;
+    case "partial":
+      return `${dimension}: 部分掌握（尚未满足确认条件）`;
+    case "conflicting":
+      return `${dimension}: 存在未解冲突`;
+    default:
+      return `${dimension}: 尚无信息`;
   }
 }

@@ -270,7 +270,7 @@ async function cmdIndustryShow(name: string): Promise<void> {
   console.log(`Industry: ${ind.canonicalName} [${ind.reserveStatus}]`);
   console.log(`  questions: ${repo.listQuestions(ind.industryId).length}`);
   console.log(`  requirements: ${repo.listRequirements(ind.industryId).length}`);
-  console.log(`  pool: ${repo.listPoolEntries(ind.industryId).length}`);
+  console.log(`  pool: ${repo.listPoolSlots(ind.industryId).length}`);
   console.log(`  gaps: ${repo.listGaps(ind.industryId).length}`);
   console.log(`  nextActions: ${repo.listNextActions(ind.industryId).length}`);
   db.close();

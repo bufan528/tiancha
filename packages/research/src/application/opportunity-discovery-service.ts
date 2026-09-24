@@ -20,7 +20,7 @@ import type {
   Industry,
   ResearchQuestion,
   InformationRequirement,
-  InformationPoolEntry,
+  InformationPoolSlot,
   ResearchState,
   ResearchSource,
   ResearchDocument,
@@ -31,7 +31,7 @@ import type {
 } from "../domain/index.js";
 import { createIndustry } from "../domain/industry.js";
 import { dimensionImportance } from "../domain/methodology.js";
-import { questionKey, requirementKey, poolEntryKey } from "../domain/identity.js";
+import { questionKey, requirementKey, poolSlotKey } from "../domain/identity.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 import { KnowledgeProjectionService } from "./knowledge-projection-service.js";
 import { MethodologyService } from "./methodology-service.js";
@@ -159,21 +159,19 @@ export class OpportunityDiscoveryService {
       }
       requirementIds.push(requirementId);
 
-      const entryId = poolEntryKey(industry.industryId, dim.key);
-      if (!this.repo.getPoolEntry(entryId)) {
-        const pool: InformationPoolEntry = {
-          entryId,
+      const slotId = poolSlotKey(industry.industryId, dim.key);
+      if (!this.repo.getPoolSlot(slotId)) {
+        const slot: InformationPoolSlot = {
+          slotId,
           subjectKind: "industry",
           subjectId: industry.industryId,
-          topic: dim.key,
+          dimension: dim.key,
           status: "unknown",
-          relatedRequirementIds: [requirementId],
-          evidenceRefs: [],
-          note: dim.unknownCondition,
+          coverageJudgement: `${dim.key}: 尚无信息`,
           createdAt: nowIso,
           updatedAt: nowIso,
         };
-        this.repo.upsertPoolEntry(pool);
+        this.repo.upsertPoolSlot(slot);
       }
     }
 
@@ -244,12 +242,12 @@ export class OpportunityDiscoveryService {
       .listGaps(industry.industryId)
       .filter((g) => g.status === "open" || g.status === "mitigating");
     const actions = this.repo.listNextActions(industry.industryId).filter((a) => a.status === "open");
-    const poolEntries = this.repo.listPoolEntries(industry.industryId);
+    const poolSlots = this.repo.listPoolSlots(industry.industryId);
     return {
       industry,
       questionCount: questionIds.length,
       requirementCount: requirementIds.length,
-      poolEntryCount: poolEntries.length,
+      poolEntryCount: poolSlots.length,
       gapCount: gaps.length,
       nextActionCount: actions.length,
       state,
