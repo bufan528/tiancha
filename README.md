@@ -5,8 +5,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase%20C-MVP%20material%20entry%20-%20done-green.svg)](#开发路线)
-[![Tests](https://img.shields.io/badge/tests-154%20passing-brightgreen.svg)](#开发)
+[![Status](https://img.shields.io/badge/Phase%20B%20v1%20B1%20chain%2Fposition%2Fneed%20-%20done-green.svg)](#开发路线)
+[![Tests](https://img.shields.io/badge/tests-160%20passing-brightgreen.svg)](#开发)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -174,6 +174,9 @@ node --import tsx src/cli/tiancha.ts research smoke
 | S7 | Capability Exposure：CLI 4 命令（`--json`）+ Agent 4 只读工具 + report 物化 Markdown | ✅ |
 | DATA-R1 | legacy `mw-v1` 数据修复迁移（补齐冻结基线自身的 weight/criticality） | ✅ |
 | C-MVP | 最小材料入口（Material + 规则解析 + 复用 ingestClaims + 幂等） | ✅ |
+| Phase B v1 | 调研准备链 `ResearchNeed → Position → Target → Fit → Diligence`（契约：`docs/phaseB/implementation-contract.md`；**Step B1 已完成**） | 🚧 |
+
+> **Phase B v1 分步**：B1 `ChainTemplate/Position/Need` ✅ → B2 `ResearchTarget` → B3 `QuestionTargetFit` → B4 `DiligencePreparation` → B5 CLI/Agent。
 
 **后续 Phase**（按业务闭环排）
 

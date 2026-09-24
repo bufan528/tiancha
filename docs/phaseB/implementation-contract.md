@@ -315,7 +315,7 @@ CREATE INDEX IF NOT EXISTS idx_dp_target ON diligence_preparation(target_ref);
 | 对象 | identity |
 |---|---|
 | ResearchNeed | `= gapId`（派生） |
-| ResearchPosition | `pos-<industryId>-<templateId>-<positionKey>` |
+| ResearchPosition | `pos-<industryId>-<templateId>-<chainVersion>-<positionKey>`（**版本参与身份**，I-B7） |
 | ResearchTarget | `tgt-<industryId>-<slug(subjectKey)>` |
 | QuestionTargetFit | `fit-<targetRef>-<questionRef>`（派生） |
 | DiligencePreparation | `dp-<targetRef>` |
@@ -415,3 +415,20 @@ LLM / 外部数据源 / Company Discovery / Evidence 全链 / Priority·Evaluati
 | **Q1** | Agent 是否可获得**写 target** 的能力（把用户口述的对象录成 target）？ | v1 **不给**（保持"Human-confirmed"为硬边界）；等真实使用后再评估 |
 | **Q2** | `config/chain-templates/*.json` 的覆盖机制 v1 是否要做？ | 做**最小**：仅支持覆盖 `(templateId,version)` 且必须逐字段一致；否则报错要求新版本 |
 | **Q3** | `expectedInformationValue` 缺省来源 | v1：人可给；缺省时按 `position.importance` 派生（不拍脑袋） |
+
+---
+
+## 12. 实现进度（逐步冻结，按此分步验收）
+
+| Step | 内容 | 状态 |
+|---|---|---|
+| **B1** | Domain + Template Registry（`ChainTemplate` / `ResearchPosition` / `ResearchNeed` 派生 / ID / version / invariant） | ✅ `eb30a1f` |
+| **B2** | `ResearchTarget`（人录入 / stable ID / fallback / provenance / CLI；**不开放 Agent 写**） | ⏳ |
+| **B3** | `QuestionTargetFit`（规则判定；weak + important ⇒ fallback + caveat） | ⏳ |
+| **B4** | `DiligencePreparation`（`common` / `target_specific` / `fit_derived` + 可追溯） | ⏳ |
+| **B5** | CLI / Agent 展示（含 `research chain / need / target / diligence`） | ⏳ |
+
+> **B1 的实现修正**：`positionRef` 现**包含模板版本**
+> （`pos-<industryId>-<templateId>-<chainVersion>-<positionKey>`）。§4 的 identity 表原写作
+> `pos-<industryId>-<templateId>-<positionKey>`，与 §2.3 / I-B7 的"版本变化 ⇒ 新 ref"矛盾——
+> 不含版本时 `upsert` 会**覆盖历史**。§4 已同步修正。

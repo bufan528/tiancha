@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-24 重写 · C-MVP 后更新** · HEAD `79a470a` · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **154 tests 全过** · `research smoke` PASS。
+> **2026-09-24 重写 · Phase B v1 Step B1 后更新** · HEAD `eb30a1f` · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **160 tests 全过** · `research smoke` PASS。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。
 
 ---
@@ -150,6 +150,7 @@
 | **S7** **能力暴露**：CLI 4 命令（evaluate 可写 / pool·priority·report 只读；`--json`）+ Agent 4 只读工具（9→13）+ report 物化 Markdown | `src/cli/research-*.ts`、`src/cli/report-markdown.ts`、`src/agent/research-tools.ts` | `s7-exposure.test.ts`、`research-format.test.ts`、`s7-cli.test.ts` |
 | **DATA-R1** **legacy `mw-v1` 数据修复迁移**（S1 之前 bootstrap 的冻结基线缺 `weight`/`criticality`；一次性补齐，不改身份/不新建版本） | `storage/research-db.ts`（`repairLegacyMethodologyV1`） | `data-r1-legacy-methodology.test.ts` |
 | **C-MVP** **最小材料入口**：`Material`（**自带 subject provenance**）+ 规则解析（`[CLAIM]` 块，**无 LLM**）+ 复用既有 `ingestClaims` + content-hash 幂等 | `domain/material*.ts`、`application/material-ingest-service.ts`、`src/cli/research-commands.ts` | `c-mvp-material.test.ts`、`material-cli.test.ts` |
+| **B1**（Phase B v1 第一步）**ChainTemplate + ResearchPosition + ResearchNeed**（模板实例带 `chainVersion`；I-B1 无空节点；Need 只读派生） | `domain/chain-template.ts`、`domain/research-position.ts`、`domain/research-need.ts`、`application/chain-projection-service.ts`、`application/research-need-service.ts` | `phase-b-step-b1.test.ts`（T-B1–T-B5） |
 
 ### 2.2 只有 Domain Contract（有类型、无实现/无闭环）
 
@@ -170,7 +171,7 @@
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 154 tests / 154 pass / 0 fail
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 160 tests / 160 pass / 0 fail
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
@@ -234,12 +235,13 @@ src/
 web/  data/  tools/wind_query.py   （旧 Web + JSON 仓储 + Wind 桥，legacy）
 
 packages/research/src/
-  domain/          40 个领域文件（含 identity.ts / evaluation*.ts / sufficiency.ts / policy-registry.ts / priority*.ts / report.ts / material*.ts）
+  domain/          43 个领域文件（含 identity.ts / evaluation*.ts / sufficiency.ts / policy-registry.ts / priority*.ts / report.ts / material*.ts / chain-template.ts / research-position.ts / research-need.ts）
   ports/           Port 抽象（AgentSessionFactory/EventBus/Session/DataProvider/ModelResolver…）
   storage/         research-db.ts（20 表 + PRAGMA 迁移）、research-repository.ts、knowledge-repository.ts、
                    report-repository.ts（S6 只读投影）、artifact-store.ts、research-event-store.ts
   application/     report-service.ts(S6) · priority-service.ts(S5) · evaluation-service.ts(S4) ·
-                   material-ingest-service.ts(C-MVP) · knowledge-projection-service.ts(2C) ·
+                   material-ingest-service.ts(C-MVP) · chain-projection-service.ts(B1) ·
+                   research-need-service.ts(B1) · knowledge-projection-service.ts(2C) ·
                    methodology-service.ts(P1) · opportunity-discovery-service.ts(2A + 回填)
   providers/       echo-data-provider.ts（占位）
   runtime/         tiancha-runtime / task-engine / orchestrator / child-session / human-gate / model-router / event-adapter
@@ -306,7 +308,7 @@ node --import tsx src/cli/tiancha.ts research smoke
 
 ---
 
-## 7. 数据模型（21 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
+## 7. 数据模型（22 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
 
 **2A（11）**：industry · company · research_question · information_requirement · research_gap · information_pool_entry(legacy) · research_state · research_source · research_document · next_action · methodology
 
@@ -321,6 +323,8 @@ node --import tsx src/cli/tiancha.ts research smoke
 **S6（1，只读投影）**：report_snapshot（append-only；`report_kind` 区分 report/dossier）
 
 **C-MVP（1）**：material（**自带 `subject_kind`/`subject_id`**；`content_hash` 为幂等键；`claim_refs_json` 双向可追溯）
+
+**B1（1）**：research_position（**模板实例**：`chain_template_id` + `chain_version` 参与身份，I-B7）
 
 **加列（PRAGMA 预检查）**：`industry.current_knowledge_id`、`methodology.dimensions_json`、`information_requirement.{confirmed,uncertain,unknown}_condition` + `preferred_position_kinds_json` + `sufficiency_policy_ref`（S4.5）、`research_gap.gap_type`（S4.5）、`investment_evaluation.{evaluation,aggregation}_policy_version_id`（S4.5）
 
@@ -395,6 +399,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **S7** | **Capability Exposure**：CLI 4 命令 + Agent 4 只读工具 + report 物化 Markdown（`~/.tiancha/reports/`） | ✅ |
 | **DATA-R1** | **legacy `mw-v1` 修复迁移**（补齐冻结基线自身的 `weight`/`criticality`；真实库已复验） | ✅ |
 | **C-MVP** | **最小材料入口**（`research material add` / `research_material_add`；规则解析 + 复用 `ingestClaims` + 幂等） | ✅ |
+| **B1** | Phase B v1 第一步：`ChainTemplate` + `ResearchPosition`（模板实例）+ `ResearchNeed`（只读派生） | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -489,7 +494,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 154 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 160 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
