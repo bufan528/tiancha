@@ -46,10 +46,11 @@ import {
   PriorityService,
   ReportService,
   MaterialIngestService,
+  TargetService,
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
-import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runResearchCommand, type ResearchCliDeps } from "./research-commands.js";
+import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runResearchCommand, runTargetAdd, runTargetList, type ResearchCliDeps } from "./research-commands.js";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -452,7 +453,9 @@ async function run(): Promise<void> {
   const isResearchSub =
     args[0] === "research" && (RESEARCH_SUBCOMMANDS as readonly string[]).includes(args[1] ?? "");
   const isMaterialAdd = args[0] === "research" && args[1] === "material" && args[2] === "add";
-  if (tianchaBrand && (isResearchSub || isMaterialAdd)) {
+  const isTargetCmd =
+    args[0] === "research" && args[1] === "target" && (args[2] === "add" || args[2] === "list");
+  if (tianchaBrand && (isResearchSub || isMaterialAdd || isTargetCmd)) {
     const { dbPath, artifactDbPath } = foundationPaths();
     const db = new ResearchDb({ path: dbPath });
     const artifacts = new SqliteArtifactStore({ path: artifactDbPath });
@@ -464,13 +467,22 @@ async function run(): Promise<void> {
         priority: new PriorityService(db.db),
         reports: new ReportService(db.db),
         materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
+        targets: new TargetService(db.db),
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),
         err: (line) => console.error(line),
       };
-      process.exitCode = isMaterialAdd
-        ? await runMaterialAdd(args[3], args[4], { json: args.includes("--json") }, deps)
-        : await runResearchCommand(args[1] as string, args.slice(2), deps);
+      const json = args.includes("--json");
+      if (isMaterialAdd) {
+        process.exitCode = await runMaterialAdd(args[3], args[4], { json }, deps);
+      } else if (isTargetCmd) {
+        process.exitCode =
+          args[2] === "add"
+            ? await runTargetAdd(args.slice(3), { json }, deps)
+            : await runTargetList(args[3], { json }, deps);
+      } else {
+        process.exitCode = await runResearchCommand(args[1] as string, args.slice(2), deps);
+      }
     } finally {
       await artifacts.close();
       db.close();

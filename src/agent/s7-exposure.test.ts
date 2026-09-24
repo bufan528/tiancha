@@ -88,6 +88,14 @@ describe("S7 capability exposure", () => {
     db.close();
   });
 
+  test("B2: the Agent has NO target-write tool — targets stay human-confirmed", async () => {
+    const { tools, db } = await setup();
+    const names = tools.map((t) => t.name).join(",");
+    assert.ok(!names.includes("research_target_add"), "no target add tool");
+    assert.ok(!/target_(add|write|create)/.test(names), "no target write surface at all");
+    db.close();
+  });
+
   test("T-A12-3: research_pool_show == a direct repository read", async () => {
     const { byName, repo, sid, db } = await setup();
     const { parsed } = await call(byName.get("research_pool_show"), "S7 行业");

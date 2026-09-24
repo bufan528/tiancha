@@ -22,6 +22,7 @@ import type {
   PriorityService,
   ReportService,
   ResearchRepository,
+  TargetService,
 } from "@tiancha/research";
 import { MethodologyService } from "@tiancha/research";
 import {
@@ -30,6 +31,8 @@ import {
   formatPoolHuman,
   formatPriorityHuman,
   formatReportHuman,
+  formatTargetHuman,
+  formatTargetListHuman,
   toJson,
 } from "./research-format.js";
 import { renderDossierMarkdown, reportFileName } from "./report-markdown.js";
@@ -42,6 +45,8 @@ export interface ResearchCliDeps {
   reports: ReportService;
   /** C-MVP: the material input pipe (writes a Material, then the existing claim pipeline). */
   materials: MaterialIngestService;
+  /** B2: the ONLY writer of ResearchTarget — human-confirmed subjects. */
+  targets: TargetService;
   /** Materialised-Markdown directory (production: `~/.tiancha/reports`). */
   reportDir: string;
   out: (line: string) => void;
@@ -182,6 +187,118 @@ export async function runMaterialAdd(
     after,
   };
   deps.out(options.json ? toJson(view) : formatMaterialAddHuman(view));
+  return 0;
+}
+
+// ---- B2: ResearchTarget (human-confirmed subjects) ---------------------------
+
+/** `--flag value` / repeated `--flag` parser (positional args collected separately). */
+export function parseFlags(args: string[]): { positional: string[]; flags: Map<string, string[]> } {
+  const positional: string[] = [];
+  const flags = new Map<string, string[]>();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] ?? "";
+    if (!arg.startsWith("--")) {
+      positional.push(arg);
+      continue;
+    }
+    const key = arg.slice(2);
+    const next = args[i + 1];
+    const value = next !== undefined && !next.startsWith("--") ? (i++, next) : "";
+    flags.set(key, [...(flags.get(key) ?? []), value]);
+  }
+  return { positional, flags };
+}
+
+/**
+ * `tiancha research target add <行业> --kind <k> --name <主体> --position <posRef>
+ *  --purpose <...> --reason <...> [--fallback-for <ref>] [--limitation <...>]...
+ *  [--accessibility <a>] [--value <n>] [--json]`
+ *
+ * ★ This is the ONLY target write path in the product (contract §6): the subject `--name`
+ *   is human input, and `TargetService` hard-codes `createdBy="user"`.
+ */
+export async function runTargetAdd(
+  rest: string[],
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  const { positional, flags } = parseFlags(rest);
+  const industryName = positional[0];
+  const name = flags.get("name")?.[0];
+  const kind = flags.get("kind")?.[0];
+  const positionRef = flags.get("position")?.[0];
+  const purpose = flags.get("purpose")?.[0];
+  const reason = flags.get("reason")?.[0];
+  const fallbackFor = flags.get("fallback-for")?.[0] || undefined;
+
+  if (!industryName || !name || !kind || !positionRef || !purpose || !reason) {
+    deps.err(
+      "usage: tiancha research target add <行业> --kind <k> --name <主体> --position <posRef> " +
+        "--purpose <...> --reason <...> [--fallback-for <ref>] [--limitation <...>]... " +
+        "[--accessibility <contactable|likely|unlikely|unknown>] [--value <0..1>] [--json]",
+    );
+    return 1;
+  }
+
+  const ind = deps.repo.findIndustryByName(industryName);
+  if (!ind) {
+    deps.err(`未找到行业「${industryName}」。请先用 tiancha industry ingest 建立该行业。`);
+    return 1;
+  }
+
+  const accessibility = flags.get("accessibility")?.[0] as
+    | "contactable"
+    | "likely"
+    | "unlikely"
+    | "unknown"
+    | undefined;
+  const valueRaw = flags.get("value")?.[0];
+  const expectedInformationValue = valueRaw !== undefined && valueRaw !== "" ? Number(valueRaw) : undefined;
+  if (expectedInformationValue !== undefined && Number.isNaN(expectedInformationValue)) {
+    deps.err(`--value 必须是数字：${valueRaw}`);
+    return 1;
+  }
+
+  try {
+    const target = deps.targets.add({
+      industryId: ind.industryId,
+      subjectKey: name,
+      targetKind: kind,
+      positionRef,
+      researchPurpose: purpose,
+      selectionReason: reason,
+      limitations: flags.get("limitation") ?? [],
+      accessibility,
+      expectedInformationValue,
+      isFallback: fallbackFor !== undefined,
+      fallbackForTargetRef: fallbackFor ?? null,
+    });
+    deps.out(options.json ? toJson(target) : formatTargetHuman(target));
+    return 0;
+  } catch (err) {
+    deps.err(`无法录入研究对象：${(err as Error).message}`);
+    return 1;
+  }
+}
+
+/** `tiancha research target list <行业> [--json]` */
+export async function runTargetList(
+  industryName: string | undefined,
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (!industryName) {
+    deps.err("usage: tiancha research target list <行业> [--json]");
+    return 1;
+  }
+  const ind = deps.repo.findIndustryByName(industryName);
+  if (!ind) {
+    deps.err(`未找到行业「${industryName}」。`);
+    return 1;
+  }
+  const targets = deps.targets.list(ind.industryId);
+  deps.out(options.json ? toJson(targets) : formatTargetListHuman(targets));
   return 0;
 }
 

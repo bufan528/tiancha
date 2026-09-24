@@ -21,6 +21,7 @@ import {
   PriorityService,
   ReportService,
   MaterialIngestService,
+  TargetService,
 } from "@tiancha/research";
 import { parseResearchArgs, runResearchCommand, type ResearchCliDeps } from "./research-commands.js";
 
@@ -44,6 +45,7 @@ async function setupCli() {
     priority: new PriorityService(db.db),
     reports: new ReportService(db.db),
     materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
+    targets: new TargetService(db.db),
     reportDir,
     out: (l) => lines.push(l),
     err: (l) => lines.push(`ERR:${l}`),

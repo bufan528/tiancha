@@ -336,6 +336,30 @@ export class ResearchDb {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_position_industry ON research_position(industry_id);
+
+      -- Phase B v1: ResearchTarget — a HUMAN-CONFIRMED subject (never system-invented).
+      CREATE TABLE IF NOT EXISTS research_target (
+        target_ref TEXT PRIMARY KEY,
+        industry_id TEXT NOT NULL,
+        subject_key TEXT NOT NULL,
+        target_kind TEXT NOT NULL,
+        position_ref TEXT NOT NULL,
+        kind_subject_json TEXT NOT NULL,
+        research_purpose TEXT NOT NULL,
+        selection_reason TEXT NOT NULL,
+        expected_information_value REAL NOT NULL,
+        accessibility TEXT NOT NULL,
+        limitations_json TEXT NOT NULL,
+        is_fallback INTEGER NOT NULL,
+        fallback_for_target_ref TEXT,
+        related_question_refs_json TEXT NOT NULL,
+        related_requirement_refs_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_target_industry ON research_target(industry_id);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();

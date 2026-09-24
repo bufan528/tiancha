@@ -15,6 +15,7 @@ import type {
   InformationPoolSlot,
   InvestmentEvaluation,
   ResearchPriority,
+  ResearchTarget,
 } from "@tiancha/research";
 
 /** The one and only rendering of the `insufficient_evidence` state. */
@@ -124,8 +125,7 @@ export function formatReportHuman(d: IndustryDossier, markdownPath: string): str
   ].join("\n");
 }
 
-/** C-MVP: the before/after view of one material ingestion (so a user SEES the effect). */
-export interface MaterialAddView {
+/** C-MVP: the before/after view of one material ingestion (so a user SEES the effect). */export interface MaterialAddView {
   industry: string;
   title: string;
   materialId: string;
@@ -152,5 +152,32 @@ export function formatMaterialAddHuman(v: MaterialAddView): string {
       ? `  槽位变化：${changed.map((k) => `${k} ${v.before.slotStatuses[k]}→${v.after.slotStatuses[k]}`).join("，")}`
       : "  槽位变化：（无）",
   );
+  return lines.join("\n");
+}
+
+/** B2: one human-confirmed research target. */
+export function formatTargetHuman(t: ResearchTarget): string {
+  const lines: string[] = [
+    `研究对象已确认：${t.subjectKey}（${t.targetKind}）`,
+    `  ${t.targetRef} · 位置 ${t.positionRef} · 状态 ${t.status} · 确认人 ${t.createdBy}`,
+    `  研究目的：${t.researchPurpose}`,
+    `  选择理由：${t.selectionReason}`,
+    `  预期信息价值 ${t.expectedInformationValue.toFixed(2)} · 可接触性 ${t.accessibility}`,
+  ];
+  if (t.isFallback) {
+    lines.push(`  ⚠ 备选对象（替代 ${t.fallbackForTargetRef}）：${t.limitations.join("；")}`);
+  } else {
+    lines.push(`  局限：${t.limitations.join("；") || "（无）"}`);
+  }
+  return lines.join("\n");
+}
+
+export function formatTargetListHuman(targets: ResearchTarget[]): string {
+  if (targets.length === 0) return "研究对象：暂无（请用 tiancha research target add 录入）。";
+  const lines: string[] = [`研究对象（${targets.length}）`];
+  for (const t of targets) {
+    const flag = t.isFallback ? ` [备选→${t.fallbackForTargetRef}]` : "";
+    lines.push(`  - ${t.subjectKey}（${t.targetKind}）${flag} · ${t.status} · 价值 ${t.expectedInformationValue.toFixed(2)}`);
+  }
   return lines.join("\n");
 }

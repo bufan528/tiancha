@@ -24,6 +24,7 @@ import type {
   GapType,
   Material,
   ResearchPosition,
+  ResearchTarget,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -641,6 +642,56 @@ export class ResearchRepository {
     return rows.map(rowToPosition);
   }
 
+  // ---- ResearchTarget (Phase B v1) ----
+  /**
+   * The ONLY writer of targets is `TargetService.add()` (human / CLI). `created_by` is
+   * stored verbatim so provenance can never be fabricated (T-B8).
+   */
+  upsertTarget(t: ResearchTarget): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO research_target
+         (target_ref, industry_id, subject_key, target_kind, position_ref, kind_subject_json,
+          research_purpose, selection_reason, expected_information_value, accessibility,
+          limitations_json, is_fallback, fallback_for_target_ref, related_question_refs_json,
+          related_requirement_refs_json, status, created_by, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        t.targetRef,
+        t.industryId,
+        t.subjectKey,
+        t.targetKind,
+        t.positionRef,
+        JSON.stringify(t.kindSubject),
+        t.researchPurpose,
+        t.selectionReason,
+        t.expectedInformationValue,
+        t.accessibility,
+        JSON.stringify(t.limitations),
+        t.isFallback ? 1 : 0,
+        t.fallbackForTargetRef ?? null,
+        JSON.stringify(t.relatedQuestionRefs),
+        JSON.stringify(t.relatedRequirementRefs),
+        t.status,
+        t.createdBy,
+        t.createdAt,
+        t.updatedAt,
+      );
+  }
+
+  getTarget(targetRef: string): ResearchTarget | undefined {
+    const r = this.db.prepare("SELECT * FROM research_target WHERE target_ref = ?").get(targetRef) as any;
+    return r ? rowToTarget(r) : undefined;
+  }
+
+  listTargets(industryId: string): ResearchTarget[] {
+    const rows = this.db
+      .prepare("SELECT * FROM research_target WHERE industry_id = ? ORDER BY target_ref ASC")
+      .all(industryId) as any[];
+    return rows.map(rowToTarget);
+  }
+
   // ---- NextAction ----
   upsertNextAction(a: NextAction): void {
     this.db
@@ -929,6 +980,30 @@ function rowToHumanGate(row: any): HumanGate {
     resumeTokenScope: row.resume_token_scope_json ? JSON.parse(row.resume_token_scope_json) : undefined,
     resumeTokenExpiresAt: row.resume_token_expires_at ?? undefined,
     resumeTokenConsumed: row.resume_token_consumed === 1,
+  };
+}
+
+function rowToTarget(row: any): ResearchTarget {
+  return {
+    targetRef: row.target_ref,
+    industryId: row.industry_id,
+    subjectKey: row.subject_key,
+    targetKind: row.target_kind,
+    positionRef: row.position_ref,
+    kindSubject: JSON.parse(row.kind_subject_json),
+    researchPurpose: row.research_purpose,
+    selectionReason: row.selection_reason,
+    expectedInformationValue: row.expected_information_value,
+    accessibility: row.accessibility,
+    limitations: JSON.parse(row.limitations_json),
+    isFallback: row.is_fallback === 1,
+    fallbackForTargetRef: row.fallback_for_target_ref ?? null,
+    relatedQuestionRefs: JSON.parse(row.related_question_refs_json),
+    relatedRequirementRefs: JSON.parse(row.related_requirement_refs_json),
+    status: row.status,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
