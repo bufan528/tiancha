@@ -211,6 +211,13 @@ export class KnowledgeProjectionService {
     const openConflicts = this.openConflictsForDimension(existingKnowledge, dimension);
     const canBuildCandidate = claim.statement.trim().length > 0 && dimension.trim().length > 0;
     const blockedByOpenConflict = openConflicts.length > 0 && !explicitEvolution;
+    // A SECOND conflict is NOT executed while one is already open: writing it would mutate the
+    // dimension's cognition (every confirmed belief leaves current + a new conflict pair) BEFORE
+    // any human confirmation. The contract defines no lifecycle for "conflict on top of an open
+    // conflict", so C1 SKIPS it rather than inventing one — zero mutation (C-FIX-7 / §6.4).
+    if (blockedByOpenConflict && hint?.kind === "CONFLICT") {
+      return skip(knowledgeId, "OPEN_CONFLICT_REQUIRES_REVIEW");
+    }
     if (blockedByOpenConflict && !canBuildCandidate) {
       return skip(knowledgeId, "OPEN_CONFLICT_REQUIRES_REVIEW");
     }
@@ -371,6 +378,23 @@ export class KnowledgeProjectionService {
       throw new Error(`belief '${beliefId}' is not a candidate (state=${belief.state})`);
     }
 
+    // C-FIX-7 applies to the HUMAN path as well: while the dimension still has an open
+    // conflict, an ordinary NEW / SUPPORT must not promote cognition back to current — that
+    // is exactly the bypass §6.4 forbids (it would silently revive the dimension). The legal
+    // way out is an explicit REVISE / SUPERSEDE (§6.7). Nothing is auto-resolved here.
+    if (relation === "NEW" || relation === "SUPPORT") {
+      const openConflicts = this.openConflictsForDimension(
+        this.knowledge.getKnowledge(belief.knowledgeId),
+        belief.dimension,
+      );
+      if (openConflicts.length > 0) {
+        throw new Error(
+          `confirmCandidate: dimension '${belief.dimension}' still has an open conflict — ` +
+            `confirm with an explicit REVISE / SUPERSEDE instead of ${relation}`,
+        );
+      }
+    }
+
     const affectedBeliefRefs: string[] = [];
     if (relation === "REVISE" || relation === "SUPERSEDE") {
       const target = targetClaimRef
@@ -386,7 +410,26 @@ export class KnowledgeProjectionService {
     }
 
     this.knowledge.updateBeliefState(beliefId, "confirmed", now);
+    // The CURRENT cognition changed ⇒ the current projection header must move with it
+    // (same rule as `projectFromClaim` step ⑤).
+    this.bumpCurrentProjection(belief.knowledgeId, now);
     return { knowledgeId: belief.knowledgeId, beliefId, state: "confirmed", affectedBeliefRefs };
+  }
+
+  /**
+   * Re-write the CURRENT projection header after a human decision.
+   * `beliefs[]` is always DERIVED (`findKnowledgeBySubject` fills it from `knowledge_belief`),
+   * so only `version` / `updatedAt` really change here.
+   */
+  private bumpCurrentProjection(knowledgeId: string, now: string): void {
+    const knowledge = this.knowledge.getKnowledge(knowledgeId);
+    if (!knowledge) return;
+    this.knowledge.upsertKnowledge({
+      ...knowledge,
+      version: knowledge.version + 1,
+      beliefs: this.knowledge.listCurrentBeliefs(knowledgeId),
+      updatedAt: now,
+    });
   }
 
   /**

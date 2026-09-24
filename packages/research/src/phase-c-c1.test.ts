@@ -481,6 +481,76 @@ describe("Phase C · C1 · Knowledge Projection Semantic Alignment", () => {
     assert.equal(repo.listOpenConflicts().length, 1, "the conflict EVENT is not auto-closed");
     assert.deepEqual(statesOf(repo.listCurrentBeliefs(knowledgeId)), ["confirmed", "confirmed"]);
   });
+
+  test("C1-27: with an open conflict, a SECOND CONFLICT is SKIPPED (no mutation before review)", () => {
+    const { svc, repo } = setup();
+    const subject = "ind-" + randomUUID();
+    project(svc, subject, "demand");
+    project(svc, subject, "demand", { relationHint: { kind: "CONFLICT" } });
+    const knowledgeId = repo.findKnowledgeBySubject("industry", subject)!.knowledgeId;
+    const beliefsBefore = JSON.stringify(repo.listBeliefs(knowledgeId));
+    const conflictsBefore = JSON.stringify(repo.listOpenConflicts());
+
+    const { result } = project(svc, subject, "demand", { relationHint: { kind: "CONFLICT" } });
+    assert.equal(result.evolution, "SKIPPED");
+    assert.equal(result.reason, "OPEN_CONFLICT_REQUIRES_REVIEW");
+    assert.equal(result.beliefId, "", "nothing was written");
+    assert.equal(
+      JSON.stringify(repo.listBeliefs(knowledgeId)),
+      beliefsBefore,
+      "no dimension-level conflict mutation happened before any human review",
+    );
+    assert.equal(JSON.stringify(repo.listOpenConflicts()), conflictsBefore, "no second pair invented");
+  });
+
+  test("C1-28: confirmation cannot bypass an open conflict — only REVISE / SUPERSEDE can", () => {
+    const { svc, repo } = setup();
+    const subject = "ind-" + randomUUID();
+    project(svc, subject, "demand");
+    const b = project(svc, subject, "demand", { relationHint: { kind: "CONFLICT" } }).claim;
+    const candidate = project(svc, subject, "demand").result; // ordinary claim under the open conflict
+
+    assert.throws(() => svc.confirmCandidate(candidate.beliefId, "NEW"), /open conflict/);
+    assert.throws(() => svc.confirmCandidate(candidate.beliefId, "SUPPORT"), /open conflict/);
+    assert.equal(repo.getBelief(candidate.beliefId)!.state, "candidate", "still unresolved");
+    assert.equal(repo.listOpenConflicts().length, 1, "the conflict is still open");
+
+    // The legal path out: an explicit evolution of one of the conflicting beliefs (§6.7).
+    const decision = svc.confirmCandidate(candidate.beliefId, "SUPERSEDE", b.claimId);
+    assert.equal(decision.state, "confirmed");
+    assert.equal(repo.getBelief(decision.affectedBeliefRefs[0]!)!.state, "superseded");
+    assert.equal(repo.listOpenConflicts().length, 1, "the conflict EVENT is NOT auto-closed");
+    assert.deepEqual(
+      repo.listCurrentBeliefs(decision.knowledgeId).map((x) => x.beliefId),
+      [candidate.beliefId],
+      "exactly the confirmed candidate is current",
+    );
+  });
+
+  test("C1-29: confirming moves the CURRENT projection version; rejecting does not", () => {
+    const { svc, repo } = setup();
+    const subject = "ind-" + randomUUID();
+    const { result } = project(svc, subject, "market", { requiresHumanGate: true });
+    const knowledgeId = result.knowledgeId;
+
+    const beforeConfirm = repo.findKnowledgeBySubject("industry", subject)!;
+    assert.equal(beforeConfirm.version, 1);
+    assert.deepEqual(beforeConfirm.beliefs, [], "a candidate is not current cognition");
+
+    svc.confirmCandidate(result.beliefId, "SUPPORT");
+    const afterConfirm = repo.findKnowledgeBySubject("industry", subject)!;
+    assert.equal(afterConfirm.version, 2, "confirming changed current cognition ⇒ the version moves");
+    assert.deepEqual(afterConfirm.beliefs.map((x) => x.beliefId), [result.beliefId]);
+    assert.notEqual(afterConfirm.updatedAt, beforeConfirm.updatedAt);
+
+    // A rejected candidate was never current ⇒ it must NOT move the version.
+    const other = project(svc, subject, "supply", { requiresHumanGate: true }).result;
+    const beforeReject = repo.findKnowledgeBySubject("industry", subject)!;
+    svc.rejectCandidate(other.beliefId);
+    const afterReject = repo.findKnowledgeBySubject("industry", subject)!;
+    assert.equal(afterReject.version, beforeReject.version, "rejection never was current cognition");
+    assert.equal(repo.getBelief(other.beliefId)!.state, "rejected");
+  });
 });
 
 // ---------------------------------------------------------------------------
