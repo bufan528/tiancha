@@ -5,8 +5,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase%20A%20S6-R1%20report%20projection%20-%20done-green.svg)](#开发路线)
-[![Tests](https://img.shields.io/badge/tests-123%20passing-brightgreen.svg)](#开发)
+[![Status](https://img.shields.io/badge/Phase%20A%20S7%20capability%20exposure%20-%20done-green.svg)](#开发路线)
+[![Tests](https://img.shields.io/badge/tests-140%20passing-brightgreen.svg)](#开发)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -69,11 +69,18 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 | `tiancha methodology propose <file.json> --rationale <文本>` | 提出方法论修订提案（**不生效**），输出一次性审批凭据 |
 | `tiancha methodology decide <candidateId> (--approve\|--reject) --operator <名>` | **人工**审批；approve 才激活新版本 |
 | `tiancha research smoke` | 运行时自检 |
+| `tiancha research evaluate <行业>` | 产出并落库一次投资评估（**唯一可写的 research 命令**） |
+| `tiancha research pool <行业>` | 查看信息池槽位与条目（只读） |
+| `tiancha research priority <行业>` | 查看研究优先级（只读） |
+| `tiancha research report <行业>` | 生成只读投影 + 物化 Markdown 到 `~/.tiancha/reports/` |
 | `tiancha session readonly <path>` | 只读恢复历史会话 |
 
-**研究工具（9 个）**：主模型按语义自行选择调用（**无关键词分类器**）——
-`research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list / research_methodology_show / research_methodology_list / research_methodology_propose`。
+> 上述 4 条 `research` 命令均支持 `--json`（输出格式切换，与文本渲染同一结果）。
+
+**研究工具（13 个）**：主模型按语义自行选择调用（**无关键词分类器**）——
+`research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list / research_methodology_show / research_methodology_list / research_methodology_propose / research_pool_show / research_evaluate / research_priority / research_report`。
 > **没有** `research_methodology_decide`：模型只能提案，激活必须由人通过 CLI 完成。
+> **Agent 只读**：`research_evaluate` 读已落库的评估、绝不触发重算；`research_report` 只追加投影。
 
 ---
 
@@ -95,7 +102,8 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
   - `S4.5-R1` Pool 的 sufficiency policy **由 `Requirement.sufficiencyPolicyRef` 经 registry 解析**（不再硬编码版本；缺失/未知 ref 直接报错），从根上消除 Pool 与 Evaluation 的语义漂移；
   - `S5` **PriorityService + ResearchPriority + NextAction**：`ResearchPriority` 是**值对象**（可审计：raw / normalized / weight / contribution + policyVersionId）；六因子加权（**不是** importance 排序）；`acquisitionValue`（缺口解决价值）与 `acquisitionCost`（信息获取难度先验）**只由现有信号推导**，不伪造 Target/成本；`Priority` 决定"先做谁"、`Gap 状态`决定"做什么"；
   - `S6` **Report / IndustryDossier 只读投影**：从当前 Knowledge / Pool / Gap / State / Evaluation / Priority **冻结**一份结构化快照（认知·事实·判断·冲突·缺口·变化·证据·评价·优先级·下一步），**append-only**、**不写任何 SoT**（I14）、条目只引用不复制；优先级**只呈现不重算**；
-  - `S6-R1` 投影读取的是 S5 **已持久化**的 Priority（`currentPriorities()`），**不调用** `rank()` 重算——保证报告反映"快照时"的状态，而不是"生成时的规则"。
+  - `S6-R1` 投影读取的是 S5 **已持久化**的 Priority（`currentPriorities()`），**不调用** `rank()` 重算——保证报告反映"快照时"的状态，而不是"生成时的规则"；
+  - `S7` **Capability Exposure**：CLI 暴露 `research evaluate / pool / priority / report`（`--json` 可选）；其中**只有 `evaluate` 可写**（人主动落库一次评估），其余只读；`report` 除追加只读快照外还物化 Markdown 到 `~/.tiancha/reports/`。Agent 侧新增 4 个工具（共 13 个），**全部只读** —— Agent 不改变研究状态。
 
 **能力边界：**
 - 当前数据源是 **Echo 占位 Provider**，所有 Evidence 标记 `isRealExternalData=false` / `sourceType=echo_placeholder`。**不能据此做真实投资判断、不给"值得/不值得"结论**；真实 Wind/Web/上传文档在 Phase E 接入。
@@ -136,7 +144,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 npx tsc --noEmit                                  # 根类型检查
 npm --prefix packages/research run typecheck      # 研究包类型检查
 npm run build:cli                                 # esbuild 产出 dist/cli/tiancha.js
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts   # 123 tests
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 140 tests
 node --import tsx src/cli/tiancha.ts research smoke
 ```
 
@@ -160,7 +168,7 @@ node --import tsx src/cli/tiancha.ts research smoke
 | S5 | PriorityService + ResearchPriority + NextAction（六因子加权 + 可追溯） | ✅ |
 | S6 | Report / IndustryDossier 只读投影（append-only，不改 SoT） | ✅ |
 | S6-R1 | 投影读取已持久化 Priority（不重算 `rank()`） | ✅ |
-| S7 | CLI + Agent 工具（pool / evaluate / priority / report） | ⏳ |
+| S7 | Capability Exposure：CLI 4 命令（`--json`）+ Agent 4 只读工具 + report 物化 Markdown | ✅ |
 
 **后续 Phase**（按业务闭环排）
 

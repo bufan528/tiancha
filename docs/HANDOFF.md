@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-24 重写 · S6-R1 后更新** · HEAD `980bf57` · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **123 tests 全过** · `research smoke` PASS。
+> **2026-09-24 重写 · S7 后更新** · HEAD `b78c42b` · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **140 tests 全过** · `research smoke` PASS。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。
 
 ---
@@ -147,6 +147,7 @@
 | **S5** **PriorityService + ResearchPriority + NextAction**（六因子加权；`acquisitionValue`=缺口解决价值、`acquisitionCost`=获取难度先验，均由**现有信号**推导；NextAction 由 Priority/Gap 驱动） | `application/priority-service.ts`、`domain/priority*.ts` | `s5-priority.test.ts`（10 条红线） |
 | **S6** **Report / IndustryDossier 只读投影**（`report_snapshot` 表 + append-only；sections 覆盖认知/事实/判断/冲突/缺口/变化/证据/评价/优先级/下一步） | `application/report-service.ts`、`domain/report.ts`、`storage/report-repository.ts` | `s6-report.test.ts`（T-A10） |
 | **S6-R1** 投影**只读取**已持久化的 Priority（`PriorityService.currentPriorities()`，不调 `rank()`）；`rank()` 生产调用点仅剩 S5 写入路径 | `application/report-service.ts`、`application/priority-service.ts` | `s6-report.test.ts`（S6-R1 3 个） |
+| **S7** **能力暴露**：CLI 4 命令（evaluate 可写 / pool·priority·report 只读；`--json`）+ Agent 4 只读工具（9→13）+ report 物化 Markdown | `src/cli/research-*.ts`、`src/cli/report-markdown.ts`、`src/agent/research-tools.ts` | `s7-exposure.test.ts`、`research-format.test.ts`、`s7-cli.test.ts` |
 
 ### 2.2 只有 Domain Contract（有类型、无实现/无闭环）
 
@@ -165,7 +166,7 @@
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts → 123 tests / 123 pass / 0 fail
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 140 tests / 140 pass / 0 fail
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
@@ -218,10 +219,13 @@ Phase A 详细设计 + S1–S7 小步拆分。**注**：S1–S4.5 已实现，S5
 
 ```
 src/
-  cli/tiancha.ts                Composition Root；无参数进 Agent REPL + ask/industry/state/methodology/session/research
+  cli/tiancha.ts                Composition Root；无参数进 Agent REPL + ask/industry/state/methodology/research/session
+  cli/research-commands.ts      **S7** composition seam（evaluate/pool/priority/report 的注入式 handler）
+  cli/research-format.ts        **S7** 纯 formatter（human + `--json`；`insufficient_evidence` → 证据不足）
+  cli/report-markdown.ts        **S7** Markdown 物化（纯函数）
   agent/tiancha-agent-host.ts   TianchaAgentHost（startInteractive / askOneShot）
-  agent/research-tools.ts       9 个研究工具（主模型语义选择，无关键词分类器）
-  agent/host.test.ts
+  agent/research-tools.ts       **13** 个研究工具（主模型语义选择，无关键词分类器）
+  agent/host.test.ts · s7-exposure.test.ts · cli/s7-cli.test.ts · cli/research-format.test.ts
   # legacy（Pi 工作台 v2.0，见 §11）：server.ts / store.ts / invest-extension.ts / wind-bridge.ts / agent-factory.ts / tools/*
 web/  data/  tools/wind_query.py   （旧 Web + JSON 仓储 + Wind 桥，legacy）
 
@@ -278,13 +282,21 @@ node --import tsx src/cli/tiancha.ts research smoke
 | `tiancha industry show <行业>` / `state show <行业>` | 行业概况 / ResearchState |
 | `tiancha methodology show\|list\|propose\|decide` | 方法论查看 / 提案 / **人工审批**（approve 才激活新版本） |
 | `tiancha research smoke` | 运行时自检 |
+| `tiancha research evaluate <行业>` | **（S7）**产出并落库一次投资评估（覆盖度 + 各维度状态 + 决策）——**唯一可写的 research 命令** |
+| `tiancha research pool <行业>` | **（S7）**查看信息池槽位与条目（只读） |
+| `tiancha research priority <行业>` | **（S7）**查看研究优先级（读取已持久化结果，只读） |
+| `tiancha research report <行业>` | **（S7）**生成只读投影：append 快照 + 物化 Markdown 到 `~/.tiancha/reports/` |
 | `tiancha session readonly <path>` | 只读恢复会话 |
 
-### 研究工具（9 个，主模型语义选择）
+> 以上 4 条 research 命令均支持 `--json`（**输出格式切换**：与文本渲染消费同一个 service 结果）。
+
+### 研究工具（13 个，主模型语义选择）
 `research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list`（2A/2B）
 `+ research_methodology_show / research_methodology_list / research_methodology_propose`（P1）
+`+ research_pool_show / research_evaluate / research_priority / research_report`（**S7，全部只读**）
 
 > **没有** `research_methodology_decide` —— 模型只能**提案**，激活必须人通过 CLI（Invariant 6）。`host.test.ts` 有硬断言。
+> **（S7）Agent 不改变研究状态**：`research_evaluate` 读**已落库**的评估、**绝不**触发计算（无评估时明确提示由研究者跑 CLI）；`research_report` 只 append 投影。
 
 ---
 
@@ -372,7 +384,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **S5** | **PriorityService + ResearchPriority + NextAction**（六因子加权、`acquisition` 由现有信号推导、NextAction 由 Priority/Gap 驱动） | ✅ |
 | **S6** | **Report / IndustryDossier 只读投影**（append-only 快照；不改任何 SoT；含优先级只读呈现） | ✅ |
 | **S6-R1** | 投影**读取**已持久化 Priority（不重算）；`rank()` 仅剩 S5 写入路径调用 | ✅ |
-| **S7** | CLI + Agent 工具（pool/evaluate/priority/report） | ⏳ |
+| **S7** | **Capability Exposure**：CLI 4 命令 + Agent 4 只读工具 + report 物化 Markdown（`~/.tiancha/reports/`） | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -419,6 +431,9 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **（S5）`NextAction.priority` = 0..100 优先分（越大越先做）**，`listNextActions` 改为 `priority DESC, action_id ASC`（确定性）。
 - **（S6）Report / Dossier 只是投影**：只读现有 Knowledge/Pool/Gap/State/Evaluation/Priority 并**冻结快照**；**不写任何 SoT**（I14，测试用"全状态指纹前后一致"证明）；条目只**引用**（claimRef/beliefId/gapId）不复制；**不**引入 Evidence/Target/Chain/Strategy/LLM 抽取。
 - **（S6-R1）Priority 在投影里是"读取"而非"重算"**：S5 已把 priority（含因子明细 + policy 版本）持久化在 `NextAction.params`；`PriorityService.currentPriorities()` 是**只读面**，`ReportService` 只调它——**绝不**调 `rank()`/`computeFor()`。否则报告会反映"生成时的当前规则"而非"快照时的状态"。
+- **（S7）CLI 可写 / Agent 只读**：只有人执行 `tiancha research evaluate` 会 append `investment_evaluation`；Agent 的 `research_evaluate` **只读最近一次**，无评估时明确提示跑 CLI。这是"模型不能 activate methodology"同一套治理思想。
+- **（S7）`--json` 是输出格式切换**：一个 service 结果 → human / json 两个 renderer，**不是两套业务逻辑**。
+- **（S7）Report 物化**：`report_snapshot` 是正式快照，Markdown 只是其**表现层**；文件名 `<sanitized industry>__<dossierId>.md`，**id 取自快照本身**（1:1 可追溯），目录固定 `~/.tiancha/reports/`，不做 `--out`。
 - **（S4.5）Policy provenance 不可伪造**：一次 Evaluation 记录 methodology + evaluation + aggregation 三个 version ref；`PolicyRegistry` 拒绝用不同内容重注册同一 versionId。
 - **（S4.5）S5 之前不写 Priority**：S4.5 只恢复到 Evaluation 为止；PriorityService / ResearchPriority / 优先级排序算法属 S5。
 
@@ -440,6 +455,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **Policy（eval / agg / suf / prio）仍定义在代码中**（已版本化 + 不可变，但未落 DB） | "改口径 = 改方法论版本"尚未完全成立 | 后续 |
 | **S5：`acquisitionCost` 是获取难度先验**（按 gapType + 是否需要一手），非真实外部成本 | 真实成本需 Target/Chain（Phase B）接入后重估 | Phase B |
 | **S6：`MethodologyService.getActive()` 有 lazy-bootstrap 写副作用**（ReportService 读方法论时会触发首启写） | 未 bootstrap 的库上生成投影会写 methodology；已 bootstrap 后无影响 | 顺手清 |
+| **S7：真实库里 S1 之前的 `methodology.dimensions_json` 没有 `weight`/`criticality`** | 该库上新建 requirement 的 importance 退化为 1、`critical` 门控失效、S5 的 importance/criticality 因子失真。**修法涉及改写已激活方法论**，触碰 Invariant 6，需你决策 | 待裁决 |
 | `nextVersionTag()` 用计数、`getActive()` lazy-bootstrap 有写副作用、`isHumanApprovedBaseline` 命名漂移 | 低危 | 顺手清 |
 | `evidence/`、`dossier/`、`scoring/`、`planning/`、`agents/`、`scheduler/` 空壳 | 相关能力未实现 | Phase B+ |
 | 无模型 key 时语义路由未端到端验收 | 契约级测试 | 有模型环境后补 |
@@ -455,7 +471,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts   # 预期 123 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 140 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
