@@ -9,6 +9,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { SUFFICIENCY_POLICY_V1 } from "../domain/sufficiency.js";
 
 export interface ResearchDbOptions {
   path: string;
@@ -289,7 +290,20 @@ export class ResearchDb {
     this.ensureMethodologyDimensionsColumn();
     this.ensureRequirementConditionColumns();
     this.ensureS45Columns();
+    this.backfillRequirementSufficiencyRef();
     this.migratePoolEntriesToSlots();
+  }
+
+  /**
+   * S4.5-R1: requirements that predate `sufficiency_policy_ref` are backfilled with the
+   * explicit version they were implicitly judged by (v1). The Pool resolves its policy
+   * FROM the requirement, so a NULL ref must never reach runtime — migration pins it
+   * here rather than letting the runtime guess a default.
+   */
+  private backfillRequirementSufficiencyRef(): void {
+    this.db
+      .prepare("UPDATE information_requirement SET sufficiency_policy_ref = ? WHERE sufficiency_policy_ref IS NULL")
+      .run(SUFFICIENCY_POLICY_V1.versionId);
   }
 
   /**

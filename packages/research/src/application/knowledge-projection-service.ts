@@ -21,7 +21,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { KnowledgeRepository } from "../storage/knowledge-repository.js";
 import { ResearchRepository } from "../storage/research-repository.js";
-import { SUFFICIENCY_POLICY_V1, isSufficient, sufficiencyFacts } from "../domain/sufficiency.js";
+import { isSufficient, sufficiencyFacts, sufficiencyPolicies, type SufficiencyPolicy } from "../domain/sufficiency.js";
 import type {
   Claim,
   GapType,
@@ -211,10 +211,13 @@ export class KnowledgeProjectionService {
    * S3: the Pool is Slot + Item, and a slot's identity is (subject, dimension), so
    * we read the slot's own `dimension` directly (no requirement lookup needed).
    *
-   * Rules (S4.5 — judged with the SHARED SufficiencyPolicy over the slot's items):
+   * Rules (S4.5-R1 — judged with the SufficiencyPolicy the slot's REQUIREMENT names,
+   * resolved through PolicyRegistry; never a hard-coded version):
    *  - no beliefs on the dimension             -> `unknown`
    *  - beliefs present, policy NOT satisfied   -> `partial`
-   *  - beliefs present, policy satisfied       -> `sufficient`  (now REACHABLE)
+   *  - beliefs present, policy satisfied       -> `sufficient`  (REACHABLE)
+   *  - no requirement for the dimension        -> cannot judge `sufficient` (stays partial)
+   *  - requirement ref missing / unknown       -> THROW (never a silent fallback)
    *  - open KnowledgeConflict on the dimension -> `conflicting` (both sides kept)
    *  - conflicts clearing lets the slot fall back (NOT sticky).
    *  - only `confirmed` current beliefs are the scored support; revised/superseded
@@ -225,6 +228,11 @@ export class KnowledgeProjectionService {
     const knowledge = this.knowledge.findKnowledgeBySubject(subjectKind, subjectId);
     const slots = repo.listPoolSlots(subjectId);
     if (slots.length === 0) return;
+
+    // S4.5-R1: each slot judges with the policy ITS OWN requirement references
+    // (same subject + dimension), resolved through the immutable PolicyRegistry —
+    // the same rule semantics the Evaluation side uses. No hard-coded version here.
+    const requirementByDimension = new Map(repo.listRequirements(subjectId).map((r) => [r.dimension, r]));
 
     // Subject-scoped conflict: an open conflict only counts for THIS subject when
     // one of its claim refs belongs to this subject's knowledge beliefs.
@@ -270,11 +278,11 @@ export class KnowledgeProjectionService {
         }
       }
 
-      // S4.5: judge the slot status from the items we NOW hold, with the SHARED
-      // sufficiency policy — so `sufficient` is reachable and `conflicting` recovers
-      // (07 §7: unknown → partial → sufficient, or conflicting ⇄ partial).
-      // Only `confirmed` current beliefs count as support; revised/superseded history
-      // is indexed as items but NEVER satisfies the policy on its own.
+      // S4.5-R1: judge with the policy the requirement NAMES (not a constant) —
+      // so a methodology that pins `suf-v2` is honoured by the Pool AND Evaluation
+      // alike. Only `confirmed` current beliefs count as support; revised/superseded
+      // history is indexed as items but NEVER satisfies the policy on its own.
+      const policy = resolveSufficiencyPolicy(requirementByDimension.get(dim));
       const confirmedClaimRefs = new Set(
         beliefsForDim.filter((b) => b.state === "confirmed").map((b) => b.claimRef),
       );
@@ -285,7 +293,7 @@ export class KnowledgeProjectionService {
           ? "conflicting"
           : confirmedClaimRefs.size === 0
             ? "unknown"
-            : isSufficient(facts, SUFFICIENCY_POLICY_V1)
+            : policy !== undefined && isSufficient(facts, policy)
               ? "sufficient"
               : "partial";
 
@@ -495,6 +503,29 @@ export class KnowledgeProjectionService {
 /** S3-R1: deterministic item id per (slot, claim) — stable across reconciles, no timestamps. */
 function poolItemId(slotId: string, claimRef: string): string {
   return `item-${slotId}-${claimRef.replace(/[^A-Za-z0-9]+/g, "_")}`;
+}
+
+/**
+ * S4.5-R1: resolve the sufficiency policy the Pool must judge with, from the
+ * Requirement's `sufficiencyPolicyRef`. NEVER a hard-coded version:
+ *   - no requirement         -> undefined (nothing to judge against; the slot can
+ *                               only reach `partial`, never `sufficient`)
+ *   - ref missing / unknown  -> THROW (silently falling back to a default would make
+ *                               the recorded provenance a lie)
+ */
+function resolveSufficiencyPolicy(req?: InformationRequirement): SufficiencyPolicy | undefined {
+  if (!req) return undefined;
+  const ref = req.sufficiencyPolicyRef;
+  if (!ref) {
+    throw new Error(`requirement ${req.requirementId} has no sufficiencyPolicyRef (S4.5-R1)`);
+  }
+  const policy = sufficiencyPolicies.get(ref);
+  if (!policy) {
+    throw new Error(
+      `unknown sufficiency policy version '${ref}' referenced by requirement ${req.requirementId}`,
+    );
+  }
+  return policy;
 }
 
 /** S4.5: a slot status maps 1:1 to a gap category. `null` = sufficient = no gap. */

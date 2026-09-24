@@ -36,8 +36,8 @@ import {
   aggregationPolicies,
   evaluationPolicies,
 } from "./domain/evaluation-policy.js";
-import { SUFFICIENCY_POLICY_V1, sufficiencyPolicies } from "./domain/sufficiency.js";
-import type { DimensionEvaluation, InformationPoolSlot, InformationRequirement } from "./domain/index.js";
+import { SUFFICIENCY_POLICY_V1, sufficiencyPolicies, type SufficiencyPolicy } from "./domain/sufficiency.js";
+import type { Claim, DimensionEvaluation, InformationPoolSlot, InformationRequirement } from "./domain/index.js";
 
 function setup() {
   const db = new ResearchDb({ path: ":memory:" });
@@ -59,6 +59,22 @@ function mkSlot(subjectId: string, dimension: string, status: InformationPoolSlo
     coverageJudgement: "test",
     createdAt: NOW,
     updatedAt: NOW,
+  };
+}
+
+function mkClaim(subjectId: string): Claim {
+  return {
+    claimId: randomUUID(),
+    statement: "x",
+    claimType: "descriptive",
+    provenance: "analyst",
+    conflictOfInterest: false,
+    factIds: [],
+    evidenceIds: [],
+    subjectKind: "industry",
+    subjectId,
+    temporalRelation: "current",
+    isRealExternalData: true,
   };
 }
 
@@ -274,5 +290,85 @@ describe("S4.5-C: policy provenance", () => {
       sevenDimWeights: { a: 0, b: 1 },
     });
     assert.equal(weightedLow.decisionStatus, "park", "weighted 0 should park");
+  });
+});
+
+describe("S4.5-R1: the Pool's sufficiency policy is resolved FROM the Requirement", () => {
+  const STRICT_V2: SufficiencyPolicy = {
+    policyId: "sufficiency",
+    versionId: "suf-v2-strict",
+    minItems: 2,
+    minIndependentSources: 1,
+    requiresFirstHand: false,
+  };
+
+  test("conflict recovery: conflict clears while confirmed support remains -> re-judged by policy", () => {
+    const { repo, svc } = setup();
+    const subj = "ind-" + randomUUID();
+    repo.upsertRequirement(mkReq(subj, "demand"));
+    repo.upsertPoolSlot(mkSlot(subj, "demand", "unknown"));
+
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand", sourceRef: "src-a" });
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand", sourceRef: "src-b" });
+    const k = svc.repository().findKnowledgeBySubject("industry", subj)!;
+    assert.equal(k.beliefs.length, 2);
+
+    // open a conflict over the two (already confirmed) beliefs
+    const conflictId = "kcf-" + randomUUID();
+    svc.repository().insertConflict({
+      conflictId,
+      claimARef: k.beliefs[0].claimRef,
+      claimBRef: k.beliefs[1].claimRef,
+      dimension: "demand",
+      status: "open",
+      createdAt: NOW,
+    });
+
+    svc.reconcilePool(subj, "industry");
+    assert.equal(repo.getPoolSlot(`slot-${subj}-demand`)!.status, "conflicting");
+
+    // the conflict goes away -> the slot must be RE-JUDGED by policy, not stay conflicting
+    svc.repository().resolveConflict(conflictId, "resolved", NOW);
+    svc.reconcilePool(subj, "industry");
+    assert.equal(repo.getPoolSlot(`slot-${subj}-demand`)!.status, "sufficient");
+  });
+
+  test("the VERSION comes from the requirement: same facts, v1 -> sufficient, strict v2 -> partial", () => {
+    sufficiencyPolicies.register(STRICT_V2);
+    const { repo, svc } = setup();
+
+    // one confirmed claim satisfies v1 (minItems 1) …
+    const subjV1 = "ind-" + randomUUID();
+    repo.upsertRequirement(mkReq(subjV1, "market")); // suf-v1
+    repo.upsertPoolSlot(mkSlot(subjV1, "market", "unknown"));
+    svc.projectFromClaim({ claim: mkClaim(subjV1), dimension: "market" });
+    svc.reconcilePool(subjV1, "industry");
+    assert.equal(repo.getPoolSlot(`slot-${subjV1}-market`)!.status, "sufficient");
+
+    // … but NOT the stricter v2 the other requirement names
+    const subjV2 = "ind-" + randomUUID();
+    repo.upsertRequirement({ ...mkReq(subjV2, "market"), sufficiencyPolicyRef: STRICT_V2.versionId });
+    repo.upsertPoolSlot(mkSlot(subjV2, "market", "unknown"));
+    svc.projectFromClaim({ claim: mkClaim(subjV2), dimension: "market" });
+    svc.reconcilePool(subjV2, "industry");
+    assert.equal(repo.getPoolSlot(`slot-${subjV2}-market`)!.status, "partial");
+  });
+
+  test("an unknown policy version is an explicit error (no silent fallback)", () => {
+    const { repo, svc } = setup();
+    const subj = "ind-" + randomUUID();
+    repo.upsertRequirement({ ...mkReq(subj, "market"), sufficiencyPolicyRef: "suf-does-not-exist" });
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "market" });
+    assert.throws(() => svc.reconcilePool(subj, "industry"), /unknown sufficiency policy version/);
+  });
+
+  test("a requirement with no ref is an explicit error (migration must pin it)", () => {
+    const { repo, svc } = setup();
+    const subj = "ind-" + randomUUID();
+    repo.upsertRequirement({ ...mkReq(subj, "market"), sufficiencyPolicyRef: undefined });
+    repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "market" });
+    assert.throws(() => svc.reconcilePool(subj, "industry"), /has no sufficiencyPolicyRef/);
   });
 });

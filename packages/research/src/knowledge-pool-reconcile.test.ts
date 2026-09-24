@@ -11,7 +11,8 @@ import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
 import { KnowledgeProjectionService } from "./application/knowledge-projection-service.js";
 import { KnowledgeRepository } from "./storage/knowledge-repository.js";
-import type { Claim, InformationPoolSlot } from "./domain/index.js";
+import { SUFFICIENCY_POLICY_V1 } from "./domain/sufficiency.js";
+import type { Claim, InformationPoolSlot, InformationRequirement } from "./domain/index.js";
 
 function setup() {
   const db = new ResearchDb({ path: ":memory:" });
@@ -58,11 +59,38 @@ function poolOf(repo: ResearchRepository, subjectId: string, dimension: string):
   return repo.getPoolSlot(`slot-${subjectId}-${dimension}`)!;
 }
 
+/**
+ * S4.5-R1: the Pool resolves its sufficiency policy FROM the requirement, so the
+ * reconcile tests must supply one (the real ingest chain always does).
+ */
+function mkReq(subjectId: string, dimension: string): InformationRequirement {
+  const now = new Date().toISOString();
+  return {
+    requirementId: `ir-${subjectId}-${dimension}`,
+    questionId: `q-${subjectId}-${dimension}`,
+    subjectKind: "industry",
+    subjectId,
+    dimension,
+    description: "needs " + dimension,
+    importance: 3,
+    requiredEvidenceType: "text",
+    sufficiencyPolicyRef: SUFFICIENCY_POLICY_V1.versionId,
+    confirmedCondition: "c",
+    uncertainCondition: "u",
+    unknownCondition: "n",
+    preferredPositionKinds: [],
+    status: "open",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 describe("Knowledge -> InformationPool reconcile", () => {
   test("unknown + matching confirmed belief -> sufficient (S4.5: policy satisfied)", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
     repo.upsertPoolSlot(mkSlot(subj, "market", "unknown"));
+    repo.upsertRequirement(mkReq(subj, "market"));
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "market" });
     svc.reconcilePool(subj, "industry");
 
@@ -77,6 +105,7 @@ describe("Knowledge -> InformationPool reconcile", () => {
     const { repo, svc } = setup();
     const subj = "ind-" + randomUUID();
     repo.upsertPoolSlot(mkSlot(subj, "demand", "partial"));
+    repo.upsertRequirement(mkReq(subj, "demand"));
     svc.projectFromClaim({ claim: mkClaim(subj), dimension: "demand" });
     svc.reconcilePool(subj, "industry");
     // one traceable confirmed claim satisfies SUFFICIENCY_POLICY_V1 (minItems 1 / 1 source)
@@ -179,6 +208,7 @@ describe("Knowledge -> InformationPool reconcile", () => {
     const subjB = "ind-" + randomUUID();
     repo.upsertPoolSlot(mkSlot(subjA, "demand", "partial"));
     repo.upsertPoolSlot(mkSlot(subjB, "demand", "unknown"));
+    repo.upsertRequirement(mkReq(subjB, "demand"));
     // A develops an open conflict on demand
     svc.projectFromClaim({ claim: mkClaim(subjA), dimension: "demand" });
     svc.projectFromClaim({
@@ -196,5 +226,15 @@ describe("Knowledge -> InformationPool reconcile", () => {
     assert.equal(poolOf(repo, subjA, "demand").status, "conflicting");
     // B: must NOT inherit A's conflict; its own (sufficient) support drives the status
     assert.equal(poolOf(repo, subjB, "demand").status, "sufficient");
+  });
+
+  test("S4.5-R1: a slot with NO requirement can never reach `sufficient` (no silent default)", () => {
+    const { repo, svc } = setup();
+    const subj = "ind-" + randomUUID();
+    repo.upsertPoolSlot(mkSlot(subj, "policy", "unknown"));
+    svc.projectFromClaim({ claim: mkClaim(subj), dimension: "policy" });
+    svc.reconcilePool(subj, "industry");
+    // a confirmed belief exists, but nothing names a sufficiency policy -> partial, never sufficient
+    assert.equal(poolOf(repo, subj, "policy").status, "partial");
   });
 });
