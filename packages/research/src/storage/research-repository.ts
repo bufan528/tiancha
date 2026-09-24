@@ -570,7 +570,9 @@ export class ResearchRepository {
 
   listNextActions(subjectId: string): NextAction[] {
     const rows = this.db
-      .prepare("SELECT * FROM next_action WHERE subject_id = ? ORDER BY priority ASC")
+      // S5: `priority` is a 0..100 priority score (higher = do first); action_id keeps
+      // the order deterministic when two actions share a score.
+      .prepare("SELECT * FROM next_action WHERE subject_id = ? ORDER BY priority DESC, action_id ASC")
       .all(subjectId) as any[];
     return rows.map((r) => ({
       actionId: r.action_id,

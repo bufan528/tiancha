@@ -22,6 +22,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { KnowledgeRepository } from "../storage/knowledge-repository.js";
 import { ResearchRepository } from "../storage/research-repository.js";
 import { isSufficient, sufficiencyFacts, sufficiencyPolicies, type SufficiencyPolicy } from "../domain/sufficiency.js";
+import { PriorityService } from "./priority-service.js";
 import type {
   Claim,
   GapType,
@@ -427,9 +428,16 @@ export class KnowledgeProjectionService {
   }
 
   /**
-   * Gap -> NextAction refresh. One-way: reads Gap, writes only NextAction.
-   * Idempotent: stable actionId = `act-<gapId>`; a gap with an existing open
-   * action is not duplicated; actions whose gap is no longer active are cancelled.
+   * Gap -> NextAction refresh (S5). One-way: reads Gap + Priority, writes only NextAction.
+   * Idempotent: stable actionId = `act-<gapId>`; a gap with an existing open action is not
+   * duplicated; actions whose gap is no longer active are cancelled.
+   *
+   * S5 split (red line 8):
+   *   - PriorityService decides the ORDER and the numeric priority (score 0..100).
+   *   - The GAP state decides the ACTION KIND (policy's gap-type map) — NOT the cost.
+   *   - The full factor breakdown is stored in params so the ranking is auditable.
+   * Values are rewritten whenever they change, so the ranking never goes stale; a
+   * no-change refresh writes nothing (deterministic: same state -> same values).
    */
   refreshNextActions(subjectId: string, subjectKind: KnowledgeSubjectKind): void {
     const repo = new ResearchRepository(this.db);
@@ -438,6 +446,8 @@ export class KnowledgeProjectionService {
       .filter((g) => g.status === "open" || g.status === "mitigating");
     const existing = repo.listNextActions(subjectId);
     const now = new Date().toISOString();
+    const priorityService = new PriorityService(this.db);
+    const ranked = new Map(priorityService.rank(subjectId, subjectKind).map((p) => [p.gapId, p]));
 
     const byGap = new Map<string, NextAction>();
     for (const a of existing) {
@@ -448,16 +458,34 @@ export class KnowledgeProjectionService {
 
     for (const gap of gaps) {
       const existingAction = byGap.get(gap.gapId);
-      if (existingAction && existingAction.status === "open") continue;
+      const p = ranked.get(gap.gapId);
+      const score = p?.score ?? 0;
+      const kind = priorityService.actionKindFor(gap.gapType);
+
+      if (
+        existingAction &&
+        existingAction.status === "open" &&
+        existingAction.priority === score &&
+        existingAction.kind === kind
+      ) {
+        continue; // nothing changed -> do not churn the row
+      }
+
       repo.upsertNextAction({
         actionId: existingAction?.actionId ?? `act-${gap.gapId}`,
         subjectKind,
         subjectId,
-        kind: "retrieve_data",
-        params: { gapId: gap.gapId },
+        kind,
+        params: {
+          gapId: gap.gapId,
+          gapType: gap.gapType,
+          // S5 traceability: why this action sits where it does.
+          priorityBreakdown: p?.factors,
+          priorityPolicyVersionId: p?.policyVersionId,
+        },
         dependsOn: [],
-        priority: 0,
-        rationale: "信息缺失，需补全",
+        priority: score,
+        rationale: p?.rationale ?? "信息缺失，需补全",
         status: "open",
         createdBy: "planner",
         createdAt: existingAction?.createdAt ?? now,
