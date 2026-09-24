@@ -285,6 +285,19 @@ export class ResearchDb {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_eval_subject ON investment_evaluation(subject_kind, subject_id);
+
+      -- S6: read-only projections (ReportSnapshot / IndustryDossier). Append-only.
+      CREATE TABLE IF NOT EXISTS report_snapshot (
+        report_id TEXT PRIMARY KEY,
+        report_kind TEXT NOT NULL,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        methodology_version_id TEXT NOT NULL,
+        knowledge_version INTEGER,
+        generated_at TEXT NOT NULL,
+        sections_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_report_subject ON report_snapshot(subject_kind, subject_id);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();
