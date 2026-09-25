@@ -23,6 +23,8 @@ import type { TargetService } from "@tiancha/research";
 import type { ResearchNeedService } from "@tiancha/research";
 import type { QuestionTargetFitService } from "@tiancha/research";
 import type { DiligencePreparationService } from "@tiancha/research";
+// ★ C2: current/retired question predicates (single source of truth in the domain).
+import { currentPreparationView, currentQuestions, retiredQuestions } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
@@ -548,7 +550,8 @@ export function buildResearchTools(deps: ResearchToolDeps) {
             `研究对象「${params.target}」尚无调研准备。请先由研究者执行 \`tiancha research diligence ${ind.canonicalName} --target ${params.target}\`；本工具不会自行生成。`,
           );
         }
-        return json(JSON.stringify(preparation, null, 2));
+        // ★ C2 / I-C2-12: only the CURRENT projection is exposed (retired ⇒ counted, not listed).
+        return json(JSON.stringify(currentPreparationView(preparation), null, 2));
       }
       if (preparations.length === 0) {
         return json(
@@ -560,7 +563,8 @@ export function buildResearchTools(deps: ResearchToolDeps) {
         targetRef: p.targetRef,
         targetBrief: p.targetBrief,
         status: p.status,
-        questionCount: p.questions.length,
+        questionCount: currentQuestions(p.questions).length,
+        retiredQuestionCount: retiredQuestions(p.questions).length,
         cautionCount: p.cautions.length,
       }));
       return json(JSON.stringify(view, null, 2));

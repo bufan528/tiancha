@@ -35,19 +35,45 @@ export class QuestionTargetFitService {
     return this.assemble(target, position, requirement);
   }
 
-  /** Fit one target against every question of its industry, most important first. */
-  fitAll(targetRef: string): QuestionTargetFit[] {
+  /**
+   * Fit one target against the industry's questions, most important first.
+   *
+   * ★ C2: by default only the **currently research-needed** requirements are fitted — i.e.
+   * those whose Gap is still open/mitigating, read from the EXISTING Gap semantics (the same
+   * reading `ResearchNeedService` uses). C2 does NOT define a second Gap state machine
+   * (I-C2-2). `{ all: true }` is the explicit audit mode and must never be reached
+   * implicitly when the active set happens to be empty (I-C2-9).
+   */
+  fitAll(targetRef: string, options: { all?: boolean } = {}): QuestionTargetFit[] {
     const repo = new ResearchRepository(this.db);
     const target = repo.getTarget(targetRef);
     if (!target) throw new Error(`unknown target '${targetRef}'`);
 
-    return repo
-      .listRequirements(target.industryId)
+    const requirements = options.all
+      ? repo.listRequirements(target.industryId)
+      : this.activeRequirements(repo, target.industryId);
+
+    return requirements
       .map((r) => this.fit(targetRef, r.requirementId))
       .sort(
         (a, b) =>
           b.priority - a.priority || (a.questionRef < b.questionRef ? -1 : a.questionRef > b.questionRef ? 1 : 0),
       );
+  }
+
+  /**
+   * The requirements that are STILL research-needed, derived from the existing Gap lifecycle
+   * (`status === "open" || "mitigating"`). Whether a Gap is resolved/reopened stays the Gap's
+   * business — this method only CONSUMES it.
+   */
+  private activeRequirements(repo: ResearchRepository, industryId: string): InformationRequirement[] {
+    const needed = new Set(
+      repo
+        .listGaps(industryId)
+        .filter((g) => g.status === "open" || g.status === "mitigating")
+        .flatMap((g) => g.relatedRequirementIds),
+    );
+    return repo.listRequirements(industryId).filter((r) => needed.has(r.requirementId));
   }
 
   /** ★ The fallback NEEDS B3 raises. It reports; it never picks a substitute target. */

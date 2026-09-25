@@ -21,6 +21,8 @@ import type {
   ResearchPriority,
   ResearchTarget,
 } from "@tiancha/research";
+// ★ C2: the current/retired question predicates live in the domain (single source of truth).
+import { currentQuestions, retiredQuestions } from "@tiancha/research";
 
 /** The one and only rendering of the `insufficient_evidence` state. */
 export const EVIDENCE_INSUFFICIENT = "证据不足";
@@ -253,26 +255,31 @@ export function formatTargetWithFitHuman(views: TargetListView[]): string {
   return lines.join("\n");
 }
 
-/** B5: one assembled preparation (outline + cautions). Presentation only. */
+/** B5/C2: one assembled preparation — CURRENT projection only (+ history count). */
 export function formatDiligenceHuman(p: DiligencePreparation): string {
+  const current = currentQuestions(p.questions);
+  const retired = retiredQuestions(p.questions);
+  const history = retired.length > 0 ? ` · 历史问题 ${retired.length}（已收敛）` : "";
   const lines: string[] = [
     `调研准备（${p.status}）：${p.targetBrief}`,
     `  编号 ${p.preparationRef} · 目标 ${p.targetRef} · 方法论 ${p.methodologyVersionRef}`,
     `  目的：${p.purpose}`,
     `  为什么是这个对象：${p.whyThisTarget}`,
-    `  当前理解：认知 ${p.currentUnderstanding.beliefs.length} 条 · 冲突 ${p.currentUnderstanding.conflictCount} 处（知识版本 v${p.currentUnderstanding.knowledgeVersion}）`,
+    `  当前理解：认知 ${p.currentUnderstanding.beliefs.length} 条 · 冲突 ${p.currentUnderstanding.conflictCount} 处 · 已收敛缺口 ${p.currentUnderstanding.convergedGapCount} 处（知识版本 v${p.currentUnderstanding.knowledgeVersion}）`,
     `  需要的数据：${p.requestedData.join("、") || "（无）"}`,
     `  需要的材料：${p.requestedMaterials.join("、") || "（暂无来源，不臆造）"}`,
     `  已知局限：${p.limitations.join("；") || "（无）"}`,
     `  提醒：${p.cautions.join("；") || "（无）"}`,
-    `  问题清单（${p.questions.length}）：`,
+    // ★ C2 / I-C2-12: only `current` questions are shown; retired ones are counted as history.
+    `  问题清单（当前 ${current.length}${history}）：`,
   ];
-  for (const q of p.questions) {
+  for (const q of current) {
     const mark = q.isFallbackSource ? " ⚠需备选对象" : "";
     // A question with no persisted priority shows none — "0" would read as "least important".
     const priority = q.priority > 0 ? `（优先级 ${q.priority}）` : "";
     lines.push(`    · [${q.source}] ${q.text}${mark}${priority}`);
   }
+  if (current.length === 0) lines.push("    （当前无待问问题：相关缺口已收敛）");
   return lines.join("\n");
 }
 
@@ -282,7 +289,11 @@ export function formatDiligenceListHuman(preparations: DiligencePreparation[], i
   }
   const lines: string[] = [`调研准备（${industry}，共 ${preparations.length}）`];
   for (const p of preparations) {
-    lines.push(`  - ${p.preparationRef} · ${p.targetBrief} · ${p.status} · 问题 ${p.questions.length}`);
+    // ★ C2 / I-C2-12: the count is derived from `state === "current"` only.
+    const current = currentQuestions(p.questions).length;
+    const retired = retiredQuestions(p.questions).length;
+    const history = retired > 0 ? `（历史问题 ${retired}）` : "";
+    lines.push(`  - ${p.preparationRef} · ${p.targetBrief} · ${p.status} · 当前问题 ${current}${history}`);
   }
   return lines.join("\n");
 }

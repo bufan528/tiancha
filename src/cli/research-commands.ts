@@ -28,7 +28,8 @@ import type {
   ResearchRepository,
   TargetService,
 } from "@tiancha/research";
-import { MethodologyService } from "@tiancha/research";
+// ★ C2: the current-only preparation view (single source of truth for CLI/Agent output).
+import { currentPreparationView, MethodologyService } from "@tiancha/research";
 import {
   formatChainHuman,
   formatDiligenceHuman,
@@ -405,7 +406,7 @@ export async function runDiligence(
   const industryName = positional[0];
   const targetRef = flags.get("target")?.[0];
   if (!industryName) {
-    deps.err("usage: tiancha research diligence <行业> [--target <targetRef>] [--json]");
+    deps.err("usage: tiancha research diligence <行业> [--target <targetRef>] [--all] [--json]");
     return 1;
   }
   const ind = deps.repo.findIndustryByName(industryName);
@@ -416,7 +417,11 @@ export async function runDiligence(
 
   if (!targetRef) {
     const preparations = deps.diligence.list(ind.industryId);
-    deps.out(options.json ? toJson(preparations) : formatDiligenceListHuman(preparations, ind.canonicalName));
+    deps.out(
+      options.json
+        ? toJson(preparations.map(currentPreparationView))
+        : formatDiligenceListHuman(preparations, ind.canonicalName),
+    );
     return 0;
   }
 
@@ -430,8 +435,12 @@ export async function runDiligence(
     return 1;
   }
   try {
-    const preparation = deps.diligence.prepare(targetRef);
-    deps.out(options.json ? toJson(preparation) : formatDiligenceHuman(preparation));
+    // ★ C2 (I-C2-9): `--all` is an EXPLICIT audit mode ("this target vs ALL requirements").
+    // The default scope is the gaps that are still open — never an implicit fallback.
+    const preparation = deps.diligence.prepare(targetRef, { all: flags.has("all") });
+    deps.out(
+      options.json ? toJson(currentPreparationView(preparation)) : formatDiligenceHuman(preparation),
+    );
     return 0;
   } catch (err) {
     deps.err(`无法生成调研准备：${(err as Error).message}`);
