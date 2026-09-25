@@ -226,7 +226,9 @@ DiligencePreparation {
 }
 
 DiligenceQuestion {
-  questionRef        : string   // 确定性：`dq-<preparationRef>-<n>`
+  questionRef        : string   // 确定性：`dq-<preparationRef>-<n>` —— ★ **已被 C2 修订** 为
+                                 //   `dq-<preparationRef>-<source>-<canonical ref>`（稳定 ref 决定身份，
+                                 //   slug 仅可读）；见 `docs/phaseC/c2-implementation-contract.md` §5
   text               : string   // 由 requirement.description / position 组合（不新造行业长文）
   source             : "common" | "target_specific" | "fit_derived"   // ★ 三者的可测标记
   fromRequirementRef : string | null  // ★ 可溯源（F4 不变量①）
@@ -329,7 +331,7 @@ CREATE INDEX IF NOT EXISTS idx_dp_target ON diligence_preparation(target_ref);
 | ResearchTarget | `tgt-<industryId>-<slug(subjectKey)>` |
 | QuestionTargetFit | `fit-<targetRef>-<questionRef>`（派生） |
 | DiligencePreparation | `dp-<targetRef>` |
-| DiligenceQuestion | `dq-<preparationRef>-<n>` |
+| DiligenceQuestion | `dq-<preparationRef>-<n>` → ★ **已被 C2 修订**：`dq-<preparationRef>-<source>-<canonical ref>`（见 `docs/phaseC/c2-implementation-contract.md` §5） |
 
 > `slug()` 对 `subjectKey` 做规范化（去空白/大小写归一/非法字符替换），**不得**使用随机值或时间戳。
 

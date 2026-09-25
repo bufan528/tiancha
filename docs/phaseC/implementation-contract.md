@@ -1357,26 +1357,16 @@ ProjectionService：
 
 ---
 
-## 21. C2 —— Gap Lifecycle（**重定义：验证 + 补齐，不是从零实现**）
+## 21. C2 —— Gap-driven Research Planning（**已改由专项契约定义**）
 
-C2 专门负责：
-
-> **在 C1 新语义下，验证并（必要时）补齐 Knowledge Evolution → Pool / Requirement / Gap lifecycle。**
-
-重点：
-
-```text
-unknown
-partial
-sufficient
-conflict
-reopened
-resolved
-```
-
-但继续复用既有 Sufficiency Policy。
-
-C2 **不重写 S4.5**；C2 的独立验收对象是"既有链在 C1 语义下的正确性"，不是"新写一条链"。
+> **C2 = `ResearchGap → Requirement → Position → Target → Question → Preparation`**
+> （把 C1 冻结的 Gap 语义**向下**驱动："研究什么 → 研究谁 → 问什么"）
+>
+> 详细实现契约见 **`docs/phaseC/c2-implementation-contract.md`**（语义链 / 字段 / identity / 不变量 I-C2-1…12 / 验收 T-C2-1…25）。
+>
+> **原 §21 的"C1 后 Pool → Gap 传播验证"已并入 C1 回归**（由 C1 的 E2E 与 29 条用例覆盖），不再单独占用一个阶段 —— 依据 Q1 裁决 A。
+>
+> 边界不变：C2 **只消费** C1 已冻结的 Knowledge / Gap 语义，**不得反向修改** Knowledge Projection（见该文 I-C2-1）。
 
 ---
 
@@ -1782,4 +1772,12 @@ D SUPERSEDE B           → 必须【成功】
 |---|---|---|---|
 | **C-FIX-14** | `confirmCandidate()` 未检查 open conflict ⇒ **人工确认路径可绕过 C-FIX-7**（普通候选可直接被确认为 current，而冲突仍 open） | **§7.3** | 该维度仍有 open conflict 时，`NEW` / `SUPPORT` **拒绝确认**（明确报错并提示改用显式 `REVISE` / `SUPERSEDE`）；合法路径只有显式 `REVISE` / `SUPERSEDE`，且**不自动关闭** conflict、**不选** winner；**确认改变 current ⇒ 推进投影版本**，`rejected` 不推进 |
 | **C-FIX-15** | `open conflict + CONFLICT` 会**先执行 dimension-level mutation、再把新 belief 降级为 candidate**（在任何人确认前改动冲突认知） | **§6.4** | 已有 open conflict 时**禁止**再次执行冲突投影 ⇒ `SKIPPED` + `OPEN_CONFLICT_REQUIRES_REVIEW`（**零 mutation**）；**不自创"冲突叠加"生命周期** |
+
+### 28.9 C2 拆分（2026-09-25）
+
+| 变更 | 内容 |
+|---|---|
+| §21 | 原「C2 = Gap Lifecycle（验证 + 补齐）」→ **索引**：`C2 = Gap-driven Research Planning`，实现契约移至 **`docs/phaseC/c2-implementation-contract.md`** |
+| 依据 | **Q1 裁决 A**：C1 的 E2E（`C1-24`）已证明"Knowledge → Pool → Gap 在 C1 语义下正确"，该验证并入 C1 回归，不再单独占阶段 |
+| 范围 | 本次改动**只动"分工与索引"**；C1 已冻结的 Knowledge 语义**一行未改** |
 
