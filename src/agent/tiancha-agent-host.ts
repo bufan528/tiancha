@@ -37,6 +37,7 @@ import {
   ResearchNeedService,
   QuestionTargetFitService,
   DiligencePreparationService,
+  ResearchPlanService,
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 
@@ -58,6 +59,7 @@ const TIANCHA_SYSTEM_PROMPT = `你是「天查」，一个面向一级市场投�
 - research_need_list：列出研究需求（每条缺口为什么需要调研而不只是抓数据）
 - research_target_list：列出已由人确认的研究对象及其只读适配概况
 - research_diligence_show：查看已生成的调研准备（目的、提问清单、提醒）
+- research_plan_show：查看当前研究计划（认知状态、开放缺口、建议位置、已确认对象、行业级对象、下一步动作；只读投影，不会刷新或重算）
 
 重要边界：
 1. 当前连接的是占位数据源（echo/placeholder，非真实外部数据）。绝不能据此给出"值得投资/不值得/打多少分"这类真实价值判断。
@@ -100,6 +102,8 @@ export class TianchaAgentHost {
       needs: new ResearchNeedService(db.db),
       fits: new QuestionTargetFitService(db.db),
       diligence: new DiligencePreparationService(db.db),
+      // ★ C2 Step 2-C: the ONE plan projection/build path (read-only; shared with the CLI).
+      plans: new ResearchPlanService(db.db),
     });
 
     const services = await createAgentSessionServices({

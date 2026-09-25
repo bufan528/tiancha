@@ -18,6 +18,7 @@ import type {
   InvestmentEvaluation,
   PositionProjectionResult,
   ResearchNeed,
+  ResearchPlanView,
   ResearchPriority,
   ResearchTarget,
 } from "@tiancha/research";
@@ -321,6 +322,102 @@ export function formatDiligenceListHuman(preparations: DiligencePreparation[], i
     const retired = retiredQuestions(p.questions).length;
     const history = retired > 0 ? `（历史问题 ${retired}）` : "";
     lines.push(`  - ${p.preparationRef} · ${p.targetBrief} · ${p.status} · 当前问题 ${current}${history}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * ★ C2 Step 2-C: the research plan — the deterministic HUMAN formatter over the ONE
+ * `ResearchPlanView` the CLI and the Agent share. It adds no data and re-orders nothing:
+ * every list below arrives already ordered by §4.3.2.
+ */
+export function formatPlanHuman(view: ResearchPlanView): string {
+  const lines: string[] = [`研究计划（${view.industryName}）`];
+
+  // ① current state — absent is a NORMAL state and is said out loud (never a fabricated 0)
+  if (view.state) {
+    const s = view.state;
+    lines.push(
+      `  当前认知（v${s.version}）：已知 ${s.known} · 确认 ${s.confirmed} · 不确定 ${s.uncertain} · 冲突 ${s.conflicting} · 未知 ${s.unknown} · 关键问题 ${s.keyQuestionCount}`,
+    );
+  } else {
+    lines.push("  当前认知：暂无已落库的研究状态（这是正常状态，不是错误）");
+  }
+
+  // ② active gaps → suggested positions → confirmed targets
+  if (view.gaps.length === 0) {
+    lines.push("  开放缺口：无 —— 相关缺口已收敛（当前无需继续研究）");
+  } else {
+    lines.push(`  开放缺口（${view.gaps.length}，按优先级）：`);
+    view.gaps.forEach((gap, index) => {
+      const priority = gap.priorityPolicyVersionId
+        ? `优先级 ${gap.priorityScore}/100 · 规则 ${gap.priorityPolicyVersionId}`
+        : "暂无已落库优先级";
+      lines.push(`   ${index + 1}. [${priority}] ${gap.dimensionLabel}（${gap.gapType} · ${gap.gapId}）`);
+      lines.push(`      为什么需要调研：${gap.whyStudyNotJustFetch}`);
+      if (gap.positions.length === 0) {
+        lines.push("      建议研究位置：暂无（该缺口尚未匹配到可研究的位置）");
+        return;
+      }
+      lines.push("      建议研究位置：");
+      for (const position of gap.positions) {
+        lines.push(
+          `        · ${position.label}（${position.kind}）· 覆盖 active ${position.activeRequirementRefs.length} / all ${position.allRequirementRefs.length}`,
+        );
+        if (position.targets.length === 0) {
+          lines.push(
+            "          已确认对象 0 —— 下一步：请研究者选择并录入对象（tiancha research target add …）",
+          );
+          continue;
+        }
+        lines.push(`          已确认对象 ${position.targets.length}：`);
+        for (const target of position.targets) {
+          const flag = target.isFallback
+            ? ` [备选→${target.fallbackForTargetRef}：需降低置信度、交叉验证]`
+            : "";
+          const preparation = target.preparation
+            ? ` · 调研准备 ${target.preparation.preparationRef}（当前 ${target.preparation.currentQuestionCount}${
+                target.preparation.retiredQuestionCount > 0
+                  ? ` · 历史 ${target.preparation.retiredQuestionCount}`
+                  : ""
+              }）`
+            : " · 暂无调研准备（tiancha research diligence … --target " + target.targetRef + "）";
+          lines.push(
+            `            · ${target.subjectKey}（${target.targetKind}）${flag} · 适配：强 ${target.fit.strong} / 部分 ${target.fit.partial} / 弱 ${target.fit.weak} / 无 ${target.fit.none}${preparation}`,
+          );
+          if (target.requirementLabels.length > 0) {
+            const labels = target.requirementLabels
+              .map((l) => (l.label && l.label !== l.ref ? `${l.label}（${l.ref}）` : l.ref))
+              .join("、");
+            lines.push(`              用于补充 Requirement：${labels}`);
+          }
+        }
+      }
+    });
+  }
+
+  // ③ industry-level targets — `unlinked ∪ non_currently_mapped`, never hidden
+  lines.push("  行业级对象（不属于任何开放缺口）：");
+  if (view.industryTargets.length === 0) {
+    lines.push("    （无）");
+  } else {
+    for (const target of view.industryTargets) {
+      const why =
+        target.associationStatus === "unlinked"
+          ? "尚未关联任何 Requirement"
+          : "其关联 Requirement 的缺口已收敛";
+      lines.push(`    · ${target.subjectKey}（${target.targetKind}）· ${target.associationStatus}（${why}）`);
+    }
+  }
+
+  // ④ next actions (read as-is: a stale plan is shown as stale, never repaired here)
+  lines.push(`  下一步动作（${view.nextActions.length}）：`);
+  if (view.nextActions.length === 0) {
+    lines.push("    （无）");
+  } else {
+    for (const action of view.nextActions) {
+      lines.push(`    · [${action.priority}] ${action.kind} · ${action.rationale}`);
+    }
   }
   return lines.join("\n");
 }

@@ -104,4 +104,13 @@ export class ChainProjectionService {
       repo.listRequirements(industryId),
     );
   }
+
+  /**
+   * ★ C2 Step 2-C: READ-ONLY access to the ALREADY projected positions, so a read-model consumer
+   * (the research plan) can read a position's `label` / `kind` without touching the storage layer
+   * itself. Unlike `project()` it never projects and never writes.
+   */
+  listProjectedPositions(industryId: string): ResearchPosition[] {
+    return new ResearchRepository(this.db).listPositions(industryId);
+  }
 }

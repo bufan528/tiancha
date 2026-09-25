@@ -7,13 +7,18 @@
  * not free-form prose (which, without a model, would be a pile of hard-coded copy).
  */
 
-import type { GapType } from "./research-gap.js";
+import type { GapStatus, GapType } from "./research-gap.js";
 
 export interface ResearchNeed {
   /** Derived identity: the gap it comes from. */
   needId: string;
   gapId: string;
+  /** ★ C2 Step 2-C: the gap's own lifecycle attributes, carried through VERBATIM (read-only). */
+  gapType: GapType;
+  status: GapStatus;
   requirementId: string;
+  /** ★ C2 Step 2-C: the gap's FULL requirement set, verbatim (`gap.relatedRequirementIds`). */
+  requirementRefs: string[];
   dimension: string;
   /** The question to answer — taken from the requirement, not newly authored. */
   question: string;

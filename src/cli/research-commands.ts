@@ -31,7 +31,15 @@ import type {
 // ★ C2: the current-only preparation view (single source of truth for CLI/Agent output).
 // ★ C2 Step 2-A: the shared active-requirement predicate (never re-written at call sites).
 // ★ C2 Step 2-B: `targetRefFor` locates an EXISTING target for the link-only mode.
-import { ActiveRequirementResolver, currentPreparationView, MethodologyService, targetRefFor } from "@tiancha/research";
+// ★ C2 Step 2-C: `ResearchPlanService` is the ONE plan build path (value import — used to construct
+//   the shared implementation when a call site does not inject it).
+import {
+  ActiveRequirementResolver,
+  currentPreparationView,
+  MethodologyService,
+  ResearchPlanService,
+  targetRefFor,
+} from "@tiancha/research";
 import type { PositionCoverage } from "@tiancha/research";
 import {
   formatChainHuman,
@@ -40,6 +48,7 @@ import {
   formatEvaluationHuman,
   formatMaterialAddHuman,
   formatNeedHuman,
+  formatPlanHuman,
   formatPoolHuman,
   formatPriorityHuman,
   formatReportHuman,
@@ -69,6 +78,10 @@ export interface ResearchCliDeps {
   fits: QuestionTargetFitService;
   /** B5: assembles a preparation for one human-confirmed target (writes its own row). */
   diligence: DiligencePreparationService;
+  /** ★ C2 Step 2-C: the ONE plan projection/build path (READ-ONLY; the CLI and the Agent share it).
+   *  Production composition injects it explicitly; when a read-only call site omits it, `runPlan`
+   *  constructs the SAME implementation from `deps.repo.db` (identical class, never a second view). */
+  plans?: ResearchPlanService;
   /** Materialised-Markdown directory (production: `~/.tiancha/reports`). */
   reportDir: string;
   out: (line: string) => void;
@@ -86,7 +99,8 @@ export type ResearchSubcommand =
   | "report"
   | "chain"
   | "need"
-  | "diligence";
+  | "diligence"
+  | "plan";
 export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
   "evaluate",
   "pool",
@@ -95,6 +109,7 @@ export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
   "chain",
   "need",
   "diligence",
+  "plan",
 ];
 
 /** `--json` is a FORMAT switch only; the positional arg is the industry name. */
@@ -119,6 +134,8 @@ export async function runResearchCommand(sub: string, rest: string[], deps: Rese
       return runNeed(name, options, deps);
     case "diligence":
       return runDiligence(rest, options, deps);
+    case "plan":
+      return runPlan(name, options, deps);
     default:
       deps.err(`unknown research subcommand: ${sub}（可用：${RESEARCH_SUBCOMMANDS.join(" | ")}）`);
       return 1;
@@ -457,6 +474,28 @@ export async function runTargetList(
     }),
   }));
   deps.out(options.json ? toJson(views) : formatTargetWithFitHuman(views));
+  return 0;
+}
+
+/**
+ * `tiancha research plan <行业> [--json]` — C2 Step 2-C: the READ-ONLY research plan.
+ *
+ * ★ It renders what C2 already derives (state / active gaps / position coverage / targets / fit /
+ *   preparation / next actions). Nothing is refreshed, recomputed or written: the ONE build path
+ *   is `ResearchPlanService.build()`, shared verbatim with the Agent tool (`research_plan_show`).
+ */
+export async function runPlan(
+  name: string | undefined,
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  const ind = resolveIndustry(name, options, deps, "plan");
+  if (!ind) return 1;
+  // ★ The ONLY plan build call in the CLI. Production injects `plans`; otherwise we construct the
+  //   SAME `ResearchPlanService` here (one implementation — the Agent calls it too).
+  const plans = deps.plans ?? new ResearchPlanService(deps.repo.db);
+  const view = plans.build(ind.industryId);
+  deps.out(options.json ? toJson(view) : formatPlanHuman(view));
   return 0;
 }
 

@@ -38,7 +38,12 @@ export class ResearchNeedService {
       needs.push({
         needId: gap.gapId,
         gapId: gap.gapId,
+        // ★ C2 Step 2-C: pass the gap's attributes through VERBATIM (read-only carry-through).
+        // The plan read-model consumes them; nothing here recomputes or writes them.
+        gapType: gap.gapType,
+        status: gap.status,
         requirementId: requirement.requirementId,
+        requirementRefs: gap.relatedRequirementIds,
         dimension: requirement.dimension,
         question: requirement.description,
         whyStudyNotJustFetch: whyStudyNotJustFetch(gap.gapType, requiresFirstHand(requirement)),

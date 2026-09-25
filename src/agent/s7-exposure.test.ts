@@ -88,10 +88,12 @@ const countEvals = (db: ResearchDb) =>
   (db.db.prepare("SELECT COUNT(*) AS n FROM investment_evaluation").get() as any).n;
 
 describe("S7 capability exposure", () => {
-  test("T-A12-1 / T-A12-2: exactly 18 uniquely-named tools; the S7 + B5 tools registered", async () => {
+  test("T-A12-1 / T-A12-2: exactly 19 uniquely-named tools; the S7 + B5 + C2 tools registered", async () => {
     const { tools, byName, db } = await setup();
-    assert.equal(tools.length, 18, "exactly 18 tools (14 after C-MVP + 4 B5 read-only)");
-    assert.equal(new Set(tools.map((t) => t.name)).size, 18, "no duplicate registration");
+    // ★ C2 Phase 2 · Step 2-C: 19 = 14 (after C-MVP) + 4 B5 read-only + 1 plan read-only projection.
+    //   This is an EXPORT-LIST change only — no existing tool's semantics changed.
+    assert.equal(tools.length, 19, "exactly 19 tools (14 after C-MVP + 4 B5 + 1 C2 Step 2-C)");
+    assert.equal(new Set(tools.map((t) => t.name)).size, 19, "no duplicate registration");
     for (const n of [...S7_TOOLS, ...B5_TOOLS]) assert.ok(byName.has(n), `missing tool ${n}`);
     db.close();
   });

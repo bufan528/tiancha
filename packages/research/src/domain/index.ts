@@ -39,6 +39,7 @@ export * from "./chain-template.js";
 export * from "./research-position.js";
 export * from "./position-coverage.js";
 export * from "./active-requirement.js";
+export * from "./research-plan.js";
 export * from "./research-need.js";
 export * from "./research-target.js";
 export * from "./question-target-fit.js";

@@ -28,7 +28,9 @@ import { currentPreparationView, currentQuestions, retiredQuestions } from "@tia
 // ★ C2 Step 2-A: the SHARED read-only coverage derivation. The Agent deliberately has no chain
 // projection service injected (B5 governance), so it derives coverage from the repository via the
 // SAME domain function the CLI uses — the two surfaces cannot drift (T-C2-36).
-import { ActiveRequirementResolver, positionCoverages } from "@tiancha/research";
+// ★ C2 Step 2-C: `ResearchPlanService` is the ONE plan build path (value import — the tool
+// constructs the same implementation when it is not injected).
+import { ActiveRequirementResolver, positionCoverages, ResearchPlanService } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
@@ -48,6 +50,9 @@ export interface ResearchToolDeps {
   fits: QuestionTargetFitService;
   /** B5: READ-ONLY access to already-assembled preparations. */
   diligence: DiligencePreparationService;
+  /** ★ C2 Step 2-C: the ONE plan projection/build path (READ-ONLY). Production injects it; the tool
+   *  otherwise constructs the SAME `ResearchPlanService` from `repo.db` (one implementation). */
+  plans?: ResearchPlanService;
   // ★ B5 deliberately injects NO chain-projection service: the Agent reads the projected
   //   chain but never projects it (that stays a human CLI action, `tiancha research chain`).
 }
@@ -585,6 +590,24 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     },
   });
 
+  // ★ C2 Step 2-C: the research plan — a READ-ONLY projection over the SAME build path the CLI
+  //   uses (`ResearchPlanService.build`). There is deliberately NO "not generated yet" branch:
+  //   while the industry exists the plan is always renderable, and nothing is refreshed or written.
+  const research_plan_show = defineTool({
+    name: "research_plan_show",
+    label: "查看研究计划",
+    description:
+      "查看某行业当前的研究计划：当前认知状态、开放缺口（含优先级与「为什么需要调研」）、建议研究位置（含覆盖 active/all）、已确认对象（含适配与调研准备）、不属于任何开放缺口的行业级对象，以及系统建议的下一步动作。它是只读投影：不会刷新研究状态，不会重新计算缺口 / 位置 / 优先级，也不写任何数据；没有对象、没有缺口、没有调研准备都是正常状态。当用户问「现在研究到哪了 / 下一步做什么 / 这个行业还缺什么」时使用。",
+    promptSnippet: "查看研究计划",
+    parameters: NameParam,
+    async execute(_id, params: Static<typeof NameParam>) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。`);
+      const plans = deps.plans ?? new ResearchPlanService(repo.db);
+      return json(JSON.stringify(plans.build(ind.industryId), null, 2));
+    },
+  });
+
   return [
     research_industry_ingest,
     research_industry_show,
@@ -601,6 +624,7 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     research_need_list,
     research_target_list,
     research_diligence_show,
+    research_plan_show,
     research_methodology_show,
     research_methodology_list,
     research_methodology_propose,
