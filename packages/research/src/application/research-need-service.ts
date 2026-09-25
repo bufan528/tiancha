@@ -11,6 +11,7 @@ import { ResearchRepository } from "../storage/research-repository.js";
 import { PriorityService } from "./priority-service.js";
 import { sufficiencyPolicies } from "../domain/sufficiency.js";
 import { whyStudyNotJustFetch } from "../domain/research-need.js";
+import { ActiveRequirementResolver } from "../domain/active-requirement.js";
 import type { InformationRequirement, ResearchNeed } from "../domain/index.js";
 
 export class ResearchNeedService {
@@ -24,7 +25,9 @@ export class ResearchNeedService {
       new PriorityService(this.db).currentPriorities(industryId).map((p) => [p.gapId, p]),
     );
 
-    const gaps = repo.listGaps(industryId).filter((g) => g.status === "open" || g.status === "mitigating");
+    // ★ C2 Step 2-A: the active set comes from the SHARED resolver — never a local predicate.
+    // (I-C2-13: this was one of the duplicated gap-status predicates before Step 2-A.)
+    const gaps = ActiveRequirementResolver.activeGaps(repo.listGaps(industryId));
 
     const needs: ResearchNeed[] = [];
     for (const gap of gaps) {

@@ -16,7 +16,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { ResearchRepository } from "../storage/research-repository.js";
 import { MethodologyService } from "./methodology-service.js";
 import { CHAIN_TEMPLATE_GENERAL_V1, type ChainTemplate } from "../domain/chain-template.js";
-import type { PositionProjectionResult, ResearchPosition } from "../domain/index.js";
+import { positionCoverages } from "../domain/index.js";
+import type { PositionCoverage, PositionProjectionResult, ResearchPosition } from "../domain/index.js";
 
 export class ChainProjectionService {
   constructor(
@@ -82,5 +83,25 @@ export class ChainProjectionService {
     }
 
     return { positions, skipped };
+  }
+
+  /**
+   * ★ C2 Phase 2 · Step 2-A: READ-ONLY coverage of the ALREADY-projected positions.
+   *
+   * `allRequirementRefs` ≡ `satisfiesRequirementRefs` (capability); `activeRequirementRefs` =
+   * all ∩ the industry's active requirements (shared resolver, §4.1). It READS ONLY — it never
+   * projects a chain, never writes, and never mutates a position (I-C2-16: a position never
+   * "converges"; `positionRef` and capability refs stay stable across the Gap lifecycle).
+   *
+   * The derivation itself lives in the domain (`positionCoverages`) so the CLI and the Agent
+   * (which deliberately has no ChainProjectionService injected) share ONE implementation.
+   */
+  positionCoverage(industryId: string): PositionCoverage[] {
+    const repo = new ResearchRepository(this.db);
+    return positionCoverages(
+      repo.listPositions(industryId),
+      repo.listGaps(industryId),
+      repo.listRequirements(industryId),
+    );
   }
 }

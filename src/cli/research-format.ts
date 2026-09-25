@@ -23,6 +23,8 @@ import type {
 } from "@tiancha/research";
 // ★ C2: the current/retired question predicates live in the domain (single source of truth).
 import { currentQuestions, retiredQuestions } from "@tiancha/research";
+// ★ C2 Step 2-A: read-only position coverage (capability vs current research state).
+import type { PositionCoverage } from "@tiancha/research";
 
 /** The one and only rendering of the `insufficient_evidence` state. */
 export const EVIDENCE_INSUFFICIENT = "证据不足";
@@ -181,7 +183,10 @@ export function formatTargetHuman(t: ResearchTarget): string {
 // ---- B5: chain / need / target-with-fit / diligence exposure ----------------
 
 /** One B5 chain view: the projection result (positions + reported empty nodes). */
-export function formatChainHuman(result: PositionProjectionResult): string {
+export function formatChainHuman(
+  result: PositionProjectionResult,
+  coverage: PositionCoverage[] = [],
+): string {
   const head = result.positions[0];
   const version = head ? `${head.chainTemplateId}@${head.chainVersion}` : "（尚未生成）";
   const lines: string[] = [
@@ -191,6 +196,7 @@ export function formatChainHuman(result: PositionProjectionResult): string {
   if (result.positions.length === 0) {
     lines.push("  暂无位置：该行业尚无信息需求（先执行 tiancha industry ingest 建立行业）。");
   }
+  const coverageByRef = new Map(coverage.map((c) => [c.positionRef, c]));
   result.positions.forEach((p, i) => {
     lines.push(`  ${i + 1}. ${p.label}（${p.kind}）· 重要度 ${p.importance.toFixed(2)}`);
     lines.push(`     ${p.positionRef}`);
@@ -200,6 +206,13 @@ export function formatChainHuman(result: PositionProjectionResult): string {
     lines.push(
       `     服务问题数：${p.satisfiesRequirementRefs.length} · 固有局限：${p.limitations.join("；") || "（无）"}`,
     );
+    // ★ C2 Step 2-A: capability (all) vs CURRENT coverage (active) — read-only derivation.
+    const cov = coverageByRef.get(p.positionRef);
+    if (cov) {
+      lines.push(
+        `     服务缺口：active ${cov.activeRequirementRefs.length} / all ${cov.allRequirementRefs.length}`,
+      );
+    }
   });
   for (const s of result.skipped) lines.push(`  （跳过空节点 ${s.positionKey}：${s.reason}）`);
   lines.push(

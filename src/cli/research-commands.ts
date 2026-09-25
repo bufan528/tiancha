@@ -29,7 +29,9 @@ import type {
   TargetService,
 } from "@tiancha/research";
 // ★ C2: the current-only preparation view (single source of truth for CLI/Agent output).
-import { currentPreparationView, MethodologyService } from "@tiancha/research";
+// ★ C2 Step 2-A: the shared active-requirement predicate (never re-written at call sites).
+import { ActiveRequirementResolver, currentPreparationView, MethodologyService } from "@tiancha/research";
+import type { PositionCoverage } from "@tiancha/research";
 import {
   formatChainHuman,
   formatDiligenceHuman,
@@ -195,9 +197,8 @@ export async function runMaterialAdd(
   }
 
   const snapshot = () => ({
-    openGaps: deps.repo
-      .listGaps(ind.industryId)
-      .filter((g) => g.status === "open" || g.status === "mitigating").length,
+    // ★ C2 Step 2-A: the active set comes from the shared resolver (same predicate as Need/Fit).
+    openGaps: ActiveRequirementResolver.activeGaps(deps.repo.listGaps(ind.industryId)).length,
     priorities: deps.priority.currentPriorities(ind.industryId).length,
     slotStatuses: Object.fromEntries(
       deps.repo.listPoolSlots(ind.industryId).map((s) => [s.dimension, s.status]),
@@ -368,7 +369,17 @@ export async function runChain(
   const ind = resolveIndustry(name, options, deps, "chain");
   if (!ind) return 1;
   const result = deps.chain.project(ind.industryId);
-  deps.out(options.json ? toJson(result) : formatChainHuman(result));
+  // ★ C2 Step 2-A: coverage is derived READ-ONLY from the projected positions (no write-back,
+  // no state change on a position); the derivation is shared with the Agent tool below so the
+  // two surfaces can never disagree (T-C2-36).
+  const derived = deps.chain.positionCoverage(ind.industryId);
+  // …and align it to the PROJECTED order, so `positions` and `coverage` line up by index too
+  // (the derivation reads positions from the repository, whose order is not the template order).
+  const coverageByRef = new Map(derived.map((c) => [c.positionRef, c]));
+  const coverage: PositionCoverage[] = result.positions
+    .map((p) => coverageByRef.get(p.positionRef))
+    .filter((c): c is PositionCoverage => c !== undefined);
+  deps.out(options.json ? toJson({ ...result, coverage }) : formatChainHuman(result, coverage));
   return 0;
 }
 

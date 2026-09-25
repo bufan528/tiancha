@@ -11,6 +11,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { ResearchRepository } from "../storage/research-repository.js";
 import { PriorityService } from "./priority-service.js";
 import { canAnswer, evaluateFit, summarizeFits } from "../domain/question-target-fit.js";
+import { ActiveRequirementResolver } from "../domain/active-requirement.js";
 import type {
   FitSummary,
   InformationRequirement,
@@ -49,9 +50,14 @@ export class QuestionTargetFitService {
     const target = repo.getTarget(targetRef);
     if (!target) throw new Error(`unknown target '${targetRef}'`);
 
+    // ★ C2 Step 2-A: the active scope comes from the SHARED resolver (I-C2-13). The private
+    // gap-status predicate that used to live here was REMOVED, so there is exactly one source.
     const requirements = options.all
       ? repo.listRequirements(target.industryId)
-      : this.activeRequirements(repo, target.industryId);
+      : ActiveRequirementResolver.activeRequirements(
+          repo.listGaps(target.industryId),
+          repo.listRequirements(target.industryId),
+        );
 
     return requirements
       .map((r) => this.fit(targetRef, r.requirementId))
@@ -59,21 +65,6 @@ export class QuestionTargetFitService {
         (a, b) =>
           b.priority - a.priority || (a.questionRef < b.questionRef ? -1 : a.questionRef > b.questionRef ? 1 : 0),
       );
-  }
-
-  /**
-   * The requirements that are STILL research-needed, derived from the existing Gap lifecycle
-   * (`status === "open" || "mitigating"`). Whether a Gap is resolved/reopened stays the Gap's
-   * business — this method only CONSUMES it.
-   */
-  private activeRequirements(repo: ResearchRepository, industryId: string): InformationRequirement[] {
-    const needed = new Set(
-      repo
-        .listGaps(industryId)
-        .filter((g) => g.status === "open" || g.status === "mitigating")
-        .flatMap((g) => g.relatedRequirementIds),
-    );
-    return repo.listRequirements(industryId).filter((r) => needed.has(r.requirementId));
   }
 
   /** ★ The fallback NEEDS B3 raises. It reports; it never picks a substitute target. */

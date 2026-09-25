@@ -25,6 +25,10 @@ import type { QuestionTargetFitService } from "@tiancha/research";
 import type { DiligencePreparationService } from "@tiancha/research";
 // ★ C2: current/retired question predicates (single source of truth in the domain).
 import { currentPreparationView, currentQuestions, retiredQuestions } from "@tiancha/research";
+// ★ C2 Step 2-A: the SHARED read-only coverage derivation. The Agent deliberately has no chain
+// projection service injected (B5 governance), so it derives coverage from the repository via the
+// SAME domain function the CLI uses — the two surfaces cannot drift (T-C2-36).
+import { ActiveRequirementResolver, positionCoverages } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
@@ -416,8 +420,8 @@ export function buildResearchTools(deps: ResearchToolDeps) {
       const ind = repo.findIndustryByName(params.name);
       if (!ind) return json(`未找到行业「${params.name}」。请先用 research_industry_ingest 建立该行业。`);
 
-      const openGaps = () =>
-        repo.listGaps(ind.industryId).filter((g) => g.status === "open" || g.status === "mitigating").length;
+      // ★ C2 Step 2-A: shared predicate (same source as Need / Fit / coverage).
+      const openGaps = () => ActiveRequirementResolver.activeGaps(repo.listGaps(ind.industryId)).length;
       const before = { openGaps: openGaps(), priorities: priority.currentPriorities(ind.industryId).length };
 
       const result = await materials.ingest({
@@ -473,6 +477,13 @@ export function buildResearchTools(deps: ResearchToolDeps) {
           `行业「${ind.canonicalName}」尚未生成调研链条（没有已投影的研究位置）。请先由研究者执行 \`tiancha research chain ${ind.canonicalName}\`；本工具不会自行生成研究数据。`,
         );
       }
+      const coverageByRef = new Map(
+        positionCoverages(
+          positions,
+          repo.listGaps(ind.industryId),
+          repo.listRequirements(ind.industryId),
+        ).map((c) => [c.positionRef, c]),
+      );
       const view = positions.map((p) => ({
         positionRef: p.positionRef,
         label: p.label,
@@ -482,7 +493,10 @@ export function buildResearchTools(deps: ResearchToolDeps) {
         suitableEvidenceKinds: p.suitableEvidenceKinds,
         limitations: p.limitations,
         importance: p.importance,
+        // `servesRequirementCount` = all (capability) — kept unchanged for existing callers;
+        // ★ C2 Step 2-A adds the CURRENT coverage (shared derivation, never recomputed here).
         servesRequirementCount: p.satisfiesRequirementRefs.length,
+        activeRequirementCount: coverageByRef.get(p.positionRef)?.activeRequirementRefs.length ?? 0,
         chainTemplateId: p.chainTemplateId,
         chainVersion: p.chainVersion,
       }));
