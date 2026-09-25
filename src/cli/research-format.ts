@@ -252,6 +252,12 @@ export function formatNeedHuman(view: NeedListView, names: Record<string, string
 export interface TargetListView {
   target: ResearchTarget;
   fit: FitSummary;
+  /**
+   * ★ C2 Step 2-B: the requirements this target is used to fill — `{ ref, label }`, where the
+   * label is the requirement's dimension name (deterministically derived from the existing row;
+   * it falls back to the ref when the requirement row is missing). Never rewritten by a model.
+   */
+  requirementLabels?: Array<{ ref: string; label: string }>;
 }
 
 export function formatTargetWithFitHuman(views: TargetListView[]): string {
@@ -264,6 +270,14 @@ export function formatTargetWithFitHuman(views: TargetListView[]): string {
     lines.push(
       `     位置 ${t.positionRef} · 适配：强 ${v.fit.strong} / 部分 ${v.fit.partial} / 弱 ${v.fit.weak} / 无 ${v.fit.none}（共 ${v.fit.questionCount} 问）· 需备选对象 ${v.fit.requiresFallback}`,
     );
+    // ★ C2 Step 2-B: link visibility — dimension summary + ref (a read-only projection).
+    const labels = v.requirementLabels ?? [];
+    if (labels.length > 0) {
+      lines.push("     用于补充 Requirement：");
+      for (const l of labels) {
+        lines.push(`       • ${l.label && l.label !== l.ref ? `${l.label}（${l.ref}）` : l.ref}`);
+      }
+    }
   }
   return lines.join("\n");
 }

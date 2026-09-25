@@ -30,7 +30,8 @@ import type {
 } from "@tiancha/research";
 // ★ C2: the current-only preparation view (single source of truth for CLI/Agent output).
 // ★ C2 Step 2-A: the shared active-requirement predicate (never re-written at call sites).
-import { ActiveRequirementResolver, currentPreparationView, MethodologyService } from "@tiancha/research";
+// ★ C2 Step 2-B: `targetRefFor` locates an EXISTING target for the link-only mode.
+import { ActiveRequirementResolver, currentPreparationView, MethodologyService, targetRefFor } from "@tiancha/research";
 import type { PositionCoverage } from "@tiancha/research";
 import {
   formatChainHuman,
@@ -272,12 +273,19 @@ export async function runTargetAdd(
   const purpose = flags.get("purpose")?.[0];
   const reason = flags.get("reason")?.[0];
   const fallbackFor = flags.get("fallback-for")?.[0] || undefined;
+  // ★ C2 Step 2-B: `--for-gap <gapId>` is repeatable (`parseFlags` accumulates) and is the ONLY
+  //   trigger that writes `relatedRequirementRefs`. A gapId is **never** stored on the Target
+  //   (FINAL LOCK §1.4: the refs hold requirement refs, not gap refs).
+  const forGaps = (flags.get("for-gap") ?? []).filter((value) => value !== "");
 
-  if (!industryName || !name || !kind || !positionRef || !purpose || !reason) {
+  // Q7a: the industry + `--name` are always required. The four CREATE args may be omitted ONLY in
+  // link-only mode — which needs an EXISTING target — so that check runs after the target lookup.
+  if (!industryName || !name) {
     deps.err(
-      "usage: tiancha research target add <行业> --kind <k> --name <主体> --position <posRef> " +
+      "usage: tiancha research target add <行业> --name <主体> --kind <k> --position <posRef> " +
         "--purpose <...> --reason <...> [--fallback-for <ref>] [--limitation <...>]... " +
-        "[--accessibility <contactable|likely|unlikely|unknown>] [--value <0..1>] [--json]",
+        "[--accessibility <contactable|likely|unlikely|unknown>] [--value <0..1>] [--for-gap <gapId>]... [--json]\n" +
+        "       把既有对象关联到研究缺口：tiancha research target add <行业> --name <主体> --for-gap <gapId>...",
     );
     return 1;
   }
@@ -285,6 +293,21 @@ export async function runTargetAdd(
   const ind = deps.repo.findIndustryByName(industryName);
   if (!ind) {
     deps.err(`未找到行业「${industryName}」。请先用 tiancha industry ingest 建立该行业。`);
+    return 1;
+  }
+
+  // ★ C′ / Q7a: an EXISTING target + at least one `--for-gap` = link-only mode (create args may
+  // be omitted there); a NEW target always needs them.
+  const subjectKey = name.trim();
+  const existing = deps.targets.get(targetRefFor(ind.industryId, subjectKey));
+  const linkOnly = existing !== undefined && forGaps.length > 0;
+  const createArgsProvided = Boolean(kind && positionRef && purpose && reason);
+  if (!linkOnly && !createArgsProvided) {
+    deps.err(
+      "usage: tiancha research target add <行业> --name <主体> --kind <k> --position <posRef> " +
+        "--purpose <...> --reason <...> [--for-gap <gapId>]... [--json]\n" +
+        "       只有已存在的对象才可用 --for-gap 关联（此时可省略创建参数）。",
+    );
     return 1;
   }
 
@@ -301,20 +324,101 @@ export async function runTargetAdd(
     return 1;
   }
 
+  // ---- ★ Step 2-B · atomicity step ①: validate EVERY --for-gap BEFORE any write -----------
+  // (a rejected gap must leave the database completely untouched — T-C2-40①)
+  const gapsById = new Map(deps.repo.listGaps(ind.industryId).map((gap) => [gap.gapId, gap]));
+  for (const gapId of forGaps) {
+    if (gapsById.has(gapId)) continue;
+    // distinguish "unknown gap" from "gap of another industry" (Q6 ruling)
+    const foreign = deps.repo
+      .listIndustries()
+      .filter((i) => i.industryId !== ind.industryId)
+      .some((i) => deps.repo.listGaps(i.industryId).some((gap) => gap.gapId === gapId));
+    deps.err(
+      foreign ? `研究缺口「${gapId}」不属于行业「${ind.canonicalName}」。` : `未找到研究缺口「${gapId}」。`,
+    );
+    return 1; // ★ zero mutation: `targets.add()` is never reached
+  }
+
+  // ---- ★ C′ (link-only): `relatedRequirementRefs` is the ONLY field allowed to change -----
+  // An explicitly provided non-refs argument that WOULD change a field is an ERROR — user input
+  // is never silently swallowed (contract §4.2 / gate Q1).
+  if (linkOnly && existing) {
+    const conflicts: string[] = [];
+    if (kind !== undefined && kind !== existing.targetKind) conflicts.push("--kind");
+    if (positionRef !== undefined && positionRef !== existing.positionRef) conflicts.push("--position");
+    if (purpose !== undefined && purpose.trim() !== existing.researchPurpose) conflicts.push("--purpose");
+    if (reason !== undefined && reason.trim() !== existing.selectionReason) conflicts.push("--reason");
+    if (flags.has("limitation") && JSON.stringify(flags.get("limitation") ?? []) !== JSON.stringify(existing.limitations)) {
+      conflicts.push("--limitation");
+    }
+    if (accessibility !== undefined && accessibility !== existing.accessibility) conflicts.push("--accessibility");
+    if (expectedInformationValue !== undefined && expectedInformationValue !== existing.expectedInformationValue) {
+      conflicts.push("--value");
+    }
+    if ((flags.has("fallback-for") || fallbackFor !== undefined) && (!existing.isFallback || existing.fallbackForTargetRef !== (fallbackFor ?? null))) {
+      conflicts.push("--fallback-for");
+    }
+    if (conflicts.length > 0) {
+      deps.err(
+        `关联模式（既有对象 + --for-gap）只允许改变 relatedRequirementRefs，不能修改其它字段：` +
+          `${conflicts.join("、")}。请去掉这些参数；如需修改对象本身，请单独执行一次 target add。`,
+      );
+      return 1; // ★ zero mutation
+    }
+  }
+
+  // ---- ★ Step 2-B · atomicity step ②: derive the refs (FINAL LOCK §4.2 order) -------------
+  // start point = the EXISTING refs (or [] for a new target); then, for every <gapId> in CLI
+  // order, append `gap.relatedRequirementIds` in their own order; first occurrence wins.
+  const merged: string[] = [...(existing?.relatedRequirementRefs ?? [])];
+  const seen = new Set(merged);
+  for (const gapId of forGaps) {
+    for (const ref of gapsById.get(gapId)!.relatedRequirementIds) {
+      if (seen.has(ref)) continue; // de-dupes repeated --for-gap too (Q5)
+      seen.add(ref);
+      merged.push(ref);
+    }
+  }
+
+  // ---- ★ Step 2-B · atomicity step ③: exactly ONE persistence ----------------------------
   try {
-    const target = deps.targets.add({
-      industryId: ind.industryId,
-      subjectKey: name,
-      targetKind: kind,
-      positionRef,
-      researchPurpose: purpose,
-      selectionReason: reason,
-      limitations: flags.get("limitation") ?? [],
-      accessibility,
-      expectedInformationValue,
-      isFallback: fallbackFor !== undefined,
-      fallbackForTargetRef: fallbackFor ?? null,
-    });
+    const target = deps.targets.add(
+      linkOnly && existing
+        ? {
+            // C′: every non-refs field is taken from the EXISTING row, so this single upsert can
+            // only ever change `relatedRequirementRefs`. `TargetService.add()` is untouched.
+            industryId: ind.industryId,
+            subjectKey: existing.subjectKey,
+            targetKind: existing.targetKind,
+            positionRef: existing.positionRef,
+            researchPurpose: existing.researchPurpose,
+            selectionReason: existing.selectionReason,
+            expectedInformationValue: existing.expectedInformationValue,
+            accessibility: existing.accessibility,
+            limitations: existing.limitations,
+            isFallback: existing.isFallback,
+            fallbackForTargetRef: existing.fallbackForTargetRef,
+            kindSubject: existing.kindSubject,
+            relatedQuestionRefs: existing.relatedQuestionRefs,
+            relatedRequirementRefs: merged,
+          }
+        : {
+            industryId: ind.industryId,
+            subjectKey,
+            targetKind: kind!,
+            positionRef: positionRef!,
+            researchPurpose: purpose!,
+            selectionReason: reason!,
+            limitations: flags.get("limitation") ?? [],
+            accessibility,
+            expectedInformationValue,
+            isFallback: fallbackFor !== undefined,
+            fallbackForTargetRef: fallbackFor ?? null,
+            // FINAL LOCK §4.2: without `--for-gap` the existing refs are PRESERVED ([] for new).
+            relatedRequirementRefs: merged,
+          },
+    );
     deps.out(options.json ? toJson(target) : formatTargetHuman(target));
     return 0;
   } catch (err) {
@@ -340,9 +444,18 @@ export async function runTargetList(
   }
   // B5: each target is listed together with its READ-ONLY fit counts (B3 aggregation over
   // the same `QuestionTargetFit`s the outline uses) — no target is written or chosen here.
-  const views: TargetListView[] = deps.targets
-    .list(ind.industryId)
-    .map((target) => ({ target, fit: deps.fits.summarize(target.targetRef) }));
+  // ★ C2 Step 2-B: also show which requirements the target is used to fill ("用于补充 Requirement").
+  // The label is the requirement's dimension name — deterministically derived from the row, no LLM.
+  const requirementsById = new Map(deps.repo.listRequirements(ind.industryId).map((r) => [r.requirementId, r]));
+  const names = dimensionNames(deps);
+  const views: TargetListView[] = deps.targets.list(ind.industryId).map((target) => ({
+    target,
+    fit: deps.fits.summarize(target.targetRef),
+    requirementLabels: target.relatedRequirementRefs.map((ref) => {
+      const requirement = requirementsById.get(ref);
+      return { ref, label: requirement ? (names[requirement.dimension] ?? requirement.dimension) : ref };
+    }),
+  }));
   deps.out(options.json ? toJson(views) : formatTargetWithFitHuman(views));
   return 0;
 }
