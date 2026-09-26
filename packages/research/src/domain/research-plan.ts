@@ -63,6 +63,46 @@ export interface ResearchPlanTarget {
   requirementLabels: Array<{ ref: string; label: string }>;
 }
 
+/**
+ * C5-C: the plan's read-only view of ONE persisted decision record (§20.4 / §20.5).
+ * Never inferred from `status` — the DTO mirrors the stored row verbatim.
+ */
+export interface ResearchPlanDecision {
+  kind: "confirmed" | "rejected";
+  operator: string;
+  comment?: string;
+  decidedAt: string;
+}
+
+/**
+ * C5-C: the plan's read-only view of ONE proposal (§20.3 / §20.4).
+ * NOT a Proposal SoT; no identity of its own; `proposedAt` (never `createdAt`);
+ * `decision === null` means "no decision yet"; `targetRef` is non-null only if the Target exists.
+ */
+export interface ResearchPlanProposal {
+  proposalRef: string;
+  industryRef: string;
+  gapRef: string;
+  positionRef: string;
+  companyRef: string;
+  /** D5 display field (read-only). Never used to recompute eligibility / score /
+   *  selectionReason / proposalRef or any other persisted Proposal semantic. */
+  companyName: string;
+  matchedTargetKinds: string[];
+  positionImportance: number;
+  coveredRequirementRefs: string[];
+  unresolvedRequirementRefs: string[];
+  score: number;
+  scoreVersion: string;
+  kindVocabularyVersion: string;
+  recommendationRevision: string;
+  selectionReason: string;
+  status: "proposed" | "confirmed" | "rejected";
+  proposedAt: string;
+  decision: ResearchPlanDecision | null;
+  targetRef: string | null;
+}
+
 export interface ResearchPlanPosition {
   positionRef: string;
   label: string;
@@ -73,6 +113,8 @@ export interface ResearchPlanPosition {
   activeRequirementRefs: string[];
   /** The `mapped` targets that sit at this position and belong to this gap. */
   targets: ResearchPlanTarget[];
+  /** ★ C5-C: proposals attachable to THIS (gap, position) — ordered per §20.4, never re-sorted. */
+  proposals: ResearchPlanProposal[];
 }
 
 export interface ResearchPlanGap {
@@ -109,6 +151,8 @@ export interface ResearchPlanView {
   industryTargets: ResearchPlanTarget[];
   /** Next actions, ordered (§4.3.2: priority desc → actionId asc). */
   nextActions: ResearchPlanNextAction[];
+  /** ★ C5-C: proposals that cannot attach to any emitted gap→position — NEVER hidden (§20.3.1). */
+  orphanProposals: ResearchPlanProposal[];
 }
 
 // ---- pure derivations ---------------------------------------------------------
@@ -169,4 +213,20 @@ export function compareTargets(
 /** Next actions: priority desc → actionId asc. */
 export function compareNextActions(a: ResearchPlanNextAction, b: ResearchPlanNextAction): number {
   return b.priority - a.priority || (a.actionId < b.actionId ? -1 : a.actionId > b.actionId ? 1 : 0);
+}
+
+/**
+ * ★ C5-C §20.4: proposals — score DESC → proposalRef ASC.
+ *
+ * A deterministic PRESENTATION order over already-persisted fields (it reads `score` / `proposalRef`
+ * verbatim; it is not a ranking decision and adds no new metric). Both `positions[].proposals` and
+ * `orphanProposals` share this ONE comparator, so a second render is byte-identical (I-C2-17).
+ */
+export function compareProposals(
+  a: Pick<ResearchPlanProposal, "score" | "proposalRef">,
+  b: Pick<ResearchPlanProposal, "score" | "proposalRef">,
+): number {
+  return (
+    b.score - a.score || (a.proposalRef < b.proposalRef ? -1 : a.proposalRef > b.proposalRef ? 1 : 0)
+  );
 }

@@ -19,6 +19,7 @@ import type {
   PositionProjectionResult,
   ResearchNeed,
   ResearchPlanView,
+  ResearchPlanProposal,
   ResearchPriority,
   ResearchTarget,
   Company,
@@ -446,6 +447,28 @@ export function formatDiligenceListHuman(preparations: DiligencePreparation[], i
  * `ResearchPlanView` the CLI and the Agent share. It adds no data and re-orders nothing:
  * every list below arrives already ordered by §4.3.2.
  */
+/**
+ * ★ C5-C §20.6: one proposal line — status, the read-only decision and the target relation.
+ * `decision === null` is rendered as 「尚无决策」 (never fabricated); a `confirmed` proposal whose
+ * target cannot be found says so out loud instead of implying materialisation.
+ */
+function formatProposalLine(p: ResearchPlanProposal): string {
+  const state =
+    p.status === "confirmed"
+      ? p.targetRef
+        ? `已确认 → 研究对象 ${p.targetRef}`
+        : "已确认（未找到对应研究对象）"
+      : p.status === "rejected"
+        ? "已拒绝"
+        : "待人工决策";
+  const decision = p.decision
+    ? ` · 决策${p.decision.kind === "confirmed" ? "确认" : "拒绝"} by ${p.decision.operator}（${p.decision.decidedAt}）${
+        p.decision.comment ? `：${p.decision.comment}` : ""
+      }`
+    : " · 尚无决策";
+  return `            · ${p.companyName}（${p.matchedTargetKinds.join("/")}）· ${state} · 评分 ${p.score} · ${p.proposalRef}${decision}`;
+}
+
 export function formatPlanHuman(view: ResearchPlanView): string {
   const lines: string[] = [`研究计划（${view.industryName}）`];
 
@@ -479,6 +502,14 @@ export function formatPlanHuman(view: ResearchPlanView): string {
         lines.push(
           `        · ${position.label}（${position.kind}）· 覆盖 active ${position.activeRequirementRefs.length} / all ${position.allRequirementRefs.length}`,
         );
+        // ★ C5-C: research proposals (READ-ONLY) — shown before the confirmed targets, and shown
+        //   even when there are none confirmable yet. Never implies materialisation (§20.6).
+        if (position.proposals.length > 0) {
+          lines.push(
+            `          研究建议 ${position.proposals.length}（只读：未确认的建议尚未成为研究对象）：`,
+          );
+          for (const proposal of position.proposals) lines.push(formatProposalLine(proposal));
+        }
         if (position.targets.length === 0) {
           lines.push(
             "          已确认对象 0 —— 下一步：请研究者选择并录入对象（tiancha research target add …）",
@@ -523,6 +554,14 @@ export function formatPlanHuman(view: ResearchPlanView): string {
           : "其关联 Requirement 的缺口已收敛";
       lines.push(`    · ${target.subjectKey}（${target.targetKind}）· ${target.associationStatus}（${why}）`);
     }
+  }
+
+  // ③′ ★ C5-C: proposals that could NOT attach to any emitted gap→position — NEVER hidden.
+  lines.push("  悬空研究建议（不属于任何当前开放缺口/位置）：");
+  if (view.orphanProposals.length === 0) {
+    lines.push("    （无）");
+  } else {
+    for (const proposal of view.orphanProposals) lines.push(formatProposalLine(proposal));
   }
 
   // ④ next actions (read as-is: a stale plan is shown as stale, never repaired here)

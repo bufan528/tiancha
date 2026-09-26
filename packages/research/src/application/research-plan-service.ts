@@ -5,7 +5,7 @@
  * "current research plan" view. It is NOT a planner: it never re-judges, never re-computes an
  * existing derivation and never writes.
  *
- * ★ READ-ONLY sources — the call-chain audit (not merely a grep):
+ * ★ Its sources (all READ-ONLY) — the call-chain audit (not merely a grep):
  *   repo.getIndustry(industryId)                        — pure read of industry
  *   repo.getStateBySubject("industry", industryId)      — pure read of research_state (never refreshed)
  *   repo.listNextActions(industryId)                    — pure read of next_action (never refreshed)
@@ -14,8 +14,12 @@
  *   ChainProjectionService.positionCoverage(industryId) — Step 2-A read-only coverage derivation
  *   ChainProjectionService.listProjectedPositions(...)  — pure read of research_position
  *   TargetService.list(industryId)                      — pure read of research_target
+ *   ★ C5-C: TargetService.get(targetRef)                — pure EXISTENCE check (never a write)
  *   QuestionTargetFitService.summarize(targetRef)       — pure read aggregation (FitSummary)
  *   DiligencePreparationService.list(industryId)        — pure read of diligence_preparation
+ *   ★ C5-C: TargetProposalService.list(industryId)      — pure read of target_proposal
+ *   ★ C5-C: repo.getTargetProposalDecision(proposalRef) — pure read of target_proposal_decision
+ *   ★ C5-C: CompanyService.list(industryId)             — pure read (companyName display only)
  *   repo.getActiveMethodology()                         — pure read (dimension labels only)
  *
  * ★ It does NOT re-compute anything the contract freezes (I-C2-24 / I-C2-25):
@@ -50,7 +54,15 @@ import {
   type ResearchPlanState,
   type ResearchPlanTarget,
   type ResearchPlanView,
+  type ResearchPlanProposal,
+  compareProposals,
+  subjectKeyForCompany,
+  targetRefFor,
 } from "../domain/index.js";
+import type { TargetProposal } from "../domain/index.js";
+// ★ C5-C: the ONLY Proposal reader / Decision reader (§20.5 red line 2 — never our own SQL).
+import { TargetProposalService } from "./target-proposal-service.js";
+import { CompanyService } from "./company-service.js";
 import type { ResearchTarget } from "../domain/index.js";
 
 export class ResearchPlanService {
@@ -109,6 +121,58 @@ export class ResearchPlanService {
     });
     const targetViews = new Map(targets.map((t) => [t.targetRef, targetView(t)]));
 
+    // ---- C5-C: proposals (READ-ONLY; §20.5 red line 2 — we never query the tables ourselves) --
+    const targetSvc = new TargetService(this.db);
+    const companyById = new Map(new CompanyService(this.db).list(industryId).map((c) => [c.companyId, c]));
+
+    /**
+     * ★ Explicit field-by-field map — deliberately NOT `{ ...proposal }` (§20.4 / attention A):
+     *   `TargetProposal.createdAt` becomes `proposedAt`, so the Plan DTO never carries
+     *   `createdAt` / `updatedAt`. `decision` is read from the persisted row (never inferred from
+     *   `status`); `targetRef` is emitted ONLY after the target's existence is verified (§20.5).
+     */
+    const proposalView = (p: TargetProposal): ResearchPlanProposal => {
+      const company = companyById.get(p.companyRef);
+      const decision = repo.getTargetProposalDecision(p.proposalRef);
+      // identity may be COMPUTED for a confirmed proposal, but existence must be VERIFIED.
+      const candidateRef =
+        p.status === "confirmed" && company
+          ? targetRefFor(p.industryRef, subjectKeyForCompany(company))
+          : null;
+      return {
+        proposalRef: p.proposalRef,
+        industryRef: p.industryRef,
+        gapRef: p.gapRef,
+        positionRef: p.positionRef,
+        companyRef: p.companyRef,
+        companyName: companyById.get(p.companyRef)?.canonicalName ?? p.companyRef,
+        matchedTargetKinds: p.matchedTargetKinds,
+        positionImportance: p.positionImportance,
+        coveredRequirementRefs: p.coveredRequirementRefs,
+        unresolvedRequirementRefs: p.unresolvedRequirementRefs,
+        score: p.score,
+        scoreVersion: p.scoreVersion,
+        kindVocabularyVersion: p.kindVocabularyVersion,
+        recommendationRevision: p.recommendationRevision,
+        selectionReason: p.selectionReason,
+        status: p.status,
+        proposedAt: p.createdAt,
+        decision: decision
+          ? {
+              kind: decision.kind,
+              operator: decision.operator,
+              comment: decision.comment,
+              decidedAt: decision.decidedAt,
+            }
+          : null,
+        // ★ Plan never creates / repairs a target: it only REPORTS one that already exists.
+        targetRef: candidateRef !== null && targetSvc.get(candidateRef) ? candidateRef : null,
+      };
+    };
+    const proposalViews = new TargetProposalService(this.db)
+      .list(industryId)
+      .map(proposalView);
+
     // ---- per-gap assembly (positions come from `suggestedPositionRefs` — never recomputed) ----
     const gaps: ResearchPlanGap[] = needs
       .map((need) => {
@@ -131,6 +195,7 @@ export class ResearchPlanService {
             targets: gapTargets
               .filter((tv) => tv.positionRef === position.positionRef)
               .sort(compareTargets),
+            proposals: [], // ★ C5-C: filled below from the EMITTED structure (never here)
           });
         }
 
@@ -178,13 +243,42 @@ export class ResearchPlanService {
       }))
       .sort(compareNextActions);
 
+    // ---- C5-C: attachability — pure, in-memory, ONLY over the EMITTED structure (§20.3.1) ----
+    //   attachable ⟺ gapRef matches an emitted gap AND positionRef matches an emitted position
+    //   WITHIN that gap. Anything else (gap not emitted / position not emitted / cross-gap /
+    //   unresolvable) ⇒ `orphanProposals` — a persisted recommendation is NEVER hidden.
+    const keyOf = (gapId: string, positionRef: string) => `${gapId}\u0000${positionRef}`;
+    const emittedKeys = new Set<string>();
+    for (const g of gaps) for (const pos of g.positions) emittedKeys.add(keyOf(g.gapId, pos.positionRef));
+    const byKey = new Map<string, ResearchPlanProposal[]>();
+    const orphans: ResearchPlanProposal[] = [];
+    for (const p of proposalViews) {
+      const key = keyOf(p.gapRef, p.positionRef);
+      if (!emittedKeys.has(key)) {
+        orphans.push(p);
+        continue;
+      }
+      const bucket = byKey.get(key);
+      if (bucket) bucket.push(p);
+      else byKey.set(key, [p]);
+    }
+    const gapsWithProposals: ResearchPlanGap[] = gaps.map((g) => ({
+      ...g,
+      positions: g.positions.map((pos) => ({
+        ...pos,
+        proposals: (byKey.get(keyOf(g.gapId, pos.positionRef)) ?? []).sort(compareProposals),
+      })),
+    }));
+    const orphanProposals = orphans.sort(compareProposals);
+
     return {
       industryRef: industry.industryId,
       industryName: industry.canonicalName,
       state: planState,
-      gaps,
+      gaps: gapsWithProposals,
       industryTargets,
       nextActions,
+      orphanProposals,
     };
   }
 }
