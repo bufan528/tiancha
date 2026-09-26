@@ -1060,18 +1060,24 @@ companyName 是 Company Universe 的「展示字段」：
 
 ---
 
-# §21 rev1 — C5-D Implementation Contract（Diligence Preparation Boundary Freeze + ResearchPlan 只读衔接）
+# §21 rev2 — C5-D Implementation Contract（Diligence Preparation Boundary Freeze + ResearchPlan 只读衔接）
 
-> 状态：**rev1 — CONTRACT DRAFT（已过 Scope Review；待 Final Lock）.** 父基线：`8b822f4`（C5-C 已发布）。
+> 状态：**rev2 — CONTRACT DRAFT（Final Lock 审查通过；补 4 处措辞闭合后待 LOCK）.** 父基线：`8b822f4`（C5-C 已发布）。
 > **C5-D Implementation / Commit / Push 均未授权。**
-> 来源：Scope Audit v2 = 🟢 PASS；Scope Review 定案 4 项 + rev1 纳入 4 处必改 + 2 处建议改。
+> 来源：Scope Audit v2 = 🟢 PASS；Scope Review 定案 4 项 + rev1 纳入 4 处必改 + 2 处建议改；
+> Final Lock Review（六层）通过并追加 rev2 = MUST FIX-1/2 + SHOULD FIX-1/2。
+
+> **编号约定（SHOULD FIX-2）**：本 §21 的修订号为 **rev2**；`c5-implementation-contract.md` 的**文档全局** contract revision 为 **rev8**
+> （rev1 落盘时全局为 rev7，本次 §21 内修订递增全局号）。
+> **Section revision ≠ document revision** —— 审计 Git diff 时请以此区分。
 
 ## §21.0 修订历史
 
 | 版本 | 变更 |
 |---|---|
 | （Draft） | 首版 §21：D1–D4 + R1–R10 + T-D-1…T-D-10 |
-| **rev1** | ① `preparationRef` 改为「复用既有 SoT」而非 C5-D 自定义 ID；② SQL 禁令改为「不得建立独立 Preparation SQL/SoT」；③ **T-D-4 前置明确为 Target 已存在 + Preparation 不存在**，并新增**状态表**；④ 新增 **T-D-11**（confirmed 但 Target 不存在不得伪造 Preparation）；⑤ **T-D-9 行为化**（spy/content fingerprint，静态仅辅助）；⑥ formatter 只消费 Plan projection，不得二次查库 |
+| rev1 | ① `preparationRef` 改为「复用既有 SoT」而非 C5-D 自定义 ID；② SQL 禁令改为「不得建立独立 Preparation SQL/SoT」；③ **T-D-4 前置明确为 Target 已存在 + Preparation 不存在**，并新增**状态表**；④ 新增 **T-D-11**（confirmed 但 Target 不存在不得伪造 Preparation）；⑤ **T-D-9 行为化**（spy/content fingerprint，静态仅辅助）；⑥ formatter 只消费 Plan projection，不得二次查库 |
+| **rev2** | Final Lock 审查修订：**MUST FIX-1**（Target 存在但 Preparation 不存在 ⇒ `null` 语义闭合）/ **MUST FIX-2**（正式映射链 + 禁令）/ **SHOULD FIX-1**（Plan 不得自行构造 `preparationRef`）/ **SHOULD FIX-2**（编号约定）。**不改变 scope、不新增能力/表/CLI** |
 
 ## §21.1 C5-D 定位
 
@@ -1159,6 +1165,10 @@ preparation:
 必须直接取自 DiligencePreparationService.get(...) 返回的 preparation.preparationRef。
 当前既有实现中其值为 dp-<targetRef>；
 C5-D 不重新定义、生成或重构该标识规则。
+
+★ **`ResearchPlanService` 不得自行构造 `preparationRef`**（SHOULD FIX-1）：
+即使当前实现可由 `targetRef` 推导出 `dp-<targetRef>`，
+该推导也**不得成为 Plan 的 SoT**，`preparationRef` 一律以既有 Preparation SoT 的返回值为准。
 ```
 
 **`questionCount` 定义**：`preparation.questions.filter(q => q.state === "current").length`（**不含 `retired`**）。
@@ -1187,6 +1197,44 @@ ResearchPlanService 必须通过既有 DiligencePreparationService.get() 所定�
 不得调用 prepare()。
 不得因为 Preparation 不存在而创建 Preparation。
 ```
+
+### 不存在时的语义（rev2 · MUST FIX-1）
+
+当 **`ResearchTarget` 存在但对应 `DiligencePreparation` 不存在**时：
+
+- `Plan.preparation` **必须为 `null`**；
+- **不得**将「Preparation 不存在」视为异常（不作为 error、不抛错、不降级为其它值）；
+- **不得**调用 `prepare()` 补建；
+- **不得**构造 fake preparation（含任何占位对象）；
+
+C5-D **不改变** `DiligencePreparationService.get()` 的既有异常/空值契约
+（现状 `get()` 返回 `DiligencePreparation | undefined`；Plan 侧只负责把「不存在」投影为 `null`，
+判空必须宽松（`== null`）以同时覆盖 `undefined` 与 `null`）。
+本条对应 **T-D-4**。
+
+### 映射链（rev2 · MUST FIX-2）
+
+已确认 Proposal 的 `preparation` **只能**沿下面这条链获得：
+
+```
+Proposal.status === "confirmed"
+  → 读取该 Proposal 已验证存在的 targetRef      （复用 C5-C 已建立的 targetSvc.get() 存在性校验）
+  → TargetService.get(targetRef) 确认 Target 存在
+      ├─ 否 → preparation = null                 （禁止继续推导，见 T-D-11）
+      └─ 是 → 查询该 Target 对应的 Preparation SoT
+                  ├─ 否 → preparation = null      （见 MUST FIX-1）
+                  └─ 是 → { preparationRef, status, questionCount }
+```
+
+**禁令**：
+
+- **不得**仅依据 `proposal.status === "confirmed"` 推导 Preparation 是否存在；
+- **不得**依据 `companyRef` / `companyName` / `proposalRef` / `selectionReason` / `positionRef`
+  或任何其它字段**猜测、模糊匹配或反推** Preparation；
+- **不得**绕过 `TargetService.get(targetRef)` 这一步直接查询 Preparation。
+
+> 注：该映射链在 C5-C 中**已经存在**（`research-plan-service.ts` 内 `targetSvc.get(candidateRef)`）；
+> 本修订只是把它**显式写进契约**，实现时**复用**即可，**无新实现**。
 
 ### 状态表（rev1 变更 ④ — **T-D-4 必须使用第 3 行**）
 
@@ -1299,4 +1347,4 @@ R10  ★ ResearchPlan.build() 不得触发 prepare() 或任何写操作
 
 **测试契约提示**：断言模式**不得**把被扫描的代码字面写进被扫描文件（自命中禁令，C5-A / C5-C 均已踩坑）。
 
-**End of contract（rev7）.**
+**End of contract（rev8）.**
