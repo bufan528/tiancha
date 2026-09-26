@@ -415,10 +415,11 @@ describe("C5-A · I static audits (boundaries)", () => {
     assert.ok(!engineSrc.includes("TargetService.add"), "engine must not add targets");
   });
 
-  test("I3: no decision table and no state-change path exist in C5-A", () => {
+  test("I3: C5-A itself has no decision table and no state-change implementation", () => {
+    // C5-B (contract §19) now builds `transition()` on top of this service. C5-A's OWN scope —
+    // "no decision table, no confirm/reject implementation" — is what these assertions keep.
     for (const forbidden of [
       "target_proposal_decision",
-      "transition(",
       "function confirm",
       "function reject",
     ]) {
