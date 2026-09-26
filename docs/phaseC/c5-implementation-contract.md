@@ -1348,3 +1348,63 @@ R10  ★ ResearchPlan.build() 不得触发 prepare() 或任何写操作
 **测试契约提示**：断言模式**不得**把被扫描的代码字面写进被扫描文件（自命中禁令，C5-A / C5-C 均已踩坑）。
 
 **End of contract（rev8）.**
+
+---
+
+# §21.11 rev9 — C5-D 实现与验收闭环记录（2026-09-26）
+
+> ⚠️ 本节是**追加记录**。§21.0 – §21.10 的原文（含 "C5-D Implementation / Commit / Push 均未授权" 的历史裁决）
+> **一字未改**；rev8 的 LOCK 文本与当时的授权状态按原样保留为历史。本节只记录授权之后**实际发生**的事。
+
+## §21.11.1 授权 → 提交 → 发布
+
+| 步骤 | commit | 内容 |
+|---|---|---|
+| 契约 LOCK | `7672a49` | §21 rev2（Final Lock 后的 4 处措辞闭合） |
+| 文档同步 | `5a1d698` | HANDOFF + README 记录"C5-D 仅契约 LOCK、实现未授权"（**当时为真**） |
+| **实现授权** | — | 用户批准 C5-D 实现（**C6 仍未授权**） |
+| 实现 | `dc64c33` | `feat: implement Phase C5-D preparation summary projection`（3 文件，+49/−2） |
+| 测试 | `aa4dc95` | `test: add Phase C5-D preparation projection coverage`（2 文件，+465） |
+| 发布 | `aa4dc95` = `origin/main` | ahead/behind 0/0；worktree CLEAN |
+
+## §21.11.2 实现与 §21.5 / §21.10 的逐条对照
+
+| 契约要求 | 实际实现 | 判定 |
+|---|---|---|
+| §21.5 DTO **只有三个字段** | `ResearchPlanProposalPreparation = { preparationRef, status, questionCount }`（`domain/research-plan.ts`） | ✅ |
+| §21.5 SoT-first：`preparationRef` **取自 SoT**，Plan 不得自行构造（SHOULD FIX-1） | `prepRef` 取自 `preparationByTargetRef.get(verifiedRef)?.preparationRef`，该 Map 由 `DiligencePreparationService.list(industryId)` 构建 | ✅ |
+| §21.5 只读：**绝不**触发 `prepare()` | 只调 `DiligencePreparationService.get(prepRef)`；`prepare()` 在 Plan 路径**无调用点** | ✅ |
+| §21.5 映射链（MUST FIX-2）：只有经 **verified targetRef** 才能到达 Preparation | `verifiedRef = candidateRef !== null && targetSvc.get(candidateRef) ? candidateRef : null`；`preparation` 只由 `verifiedRef` 派生 | ✅ |
+| §21.5 MUST FIX-1：Target 存在但 Preparation 不存在 ⇒ 合法 `null`（非错误、不伪造、不回填） | `preparation: preparation ? { … } : null` | ✅ |
+| `questionCount` 只计 `state === "current"` | `preparation.questions.filter((q) => q.state === "current").length` | ✅ |
+| §21.5 formatter 只消费 Plan projection，不得二次查库 | `formatProposalLine()` 只读 `p.preparation`；`null` 时**整段省略**后缀 | ✅ |
+| §21.10 预估文件清单 | 实际改 3 个文件：`domain/research-plan.ts` · `application/research-plan-service.ts` · `src/cli/research-format.ts`；**`src/cli/tiancha.ts` 未改**（无需新增注入：`ResearchPlanService` 内部已构造 `DiligencePreparationService`） | ⚠️ 偏差 1 处（预估冗余，非越界） |
+| §21.10 无新表 / 无 migration | 表集合不变（26 张）；无 `PRAGMA` 变更 | ✅ |
+
+## §21.11.3 验收矩阵覆盖（T-D-1 … T-D-11）
+
+| Test | 落地位置 | 备注 |
+|---|---|---|
+| T-D-1 / T-D-2 / T-D-3 | `packages/research/src/phase-c5-d.test.ts`（`D1 Target Gate §21.2`） | — |
+| T-D-4 | 同上（`D4 Plan → Preparation summary §21.5`） | 断言 `=== null`，未构造伪对象 |
+| **T-D-5 / T-D-6** | **合并为一条测试**：`T-D-5/6: the three fields mirror the SoT exactly; questionCount counts CURRENT only` | 一条测试同时满足 T-D-5（三字段映射）与 T-D-6（与 SoT `get()` 一致）：`deepEqual(p.preparation, { …从 SoT 重读… })`；并**真插入一条 retired 问题**后断言 `questionCount !== questions.length`（使 `current` 过滤可被 mutation 打红） |
+| T-D-7 / T-D-8 / T-D-9 / T-D-10 / T-D-11 | 同上 | T-D-7 = 整库**内容指纹**零写；T-D-9 = **行为**证据（不写 target/不决策/不 prepare） |
+| CLI 一致性 | `src/cli/phase-c5-d-cli.test.ts`（T-D-12 / T-D-13） | human 省略后缀；`--json` 显式 `null` |
+
+> **合并说明**：T-D-5 与 T-D-6 在矩阵里是两条独立条目，实现时合并成**一条断言更严**的测试（既镜像三字段，又与 SoT `get()` 结果 `deepEqual`）。
+> **判定：覆盖等价，不是遗漏。** 若将来要逐条对应，可拆分该测试，**不改契约语义**。
+
+## §21.11.4 实施后独立复核（2026-09-26）
+
+| 项 | 结果 |
+|---|---|
+| `npx tsc --noEmit`（root） | ❌ → **发现并修复 1 处**：`src/cli/phase-c5-d-cli.test.ts:86` `TS18048: 't.deps.proposals' is possibly 'undefined'`（仓库既有对照写法：`src/cli/phase-c5-b-cli.test.ts:99` 用 `t.deps.proposals!`）。修复后 **exit 0** |
+| `packages/research` typecheck | exit 0 |
+| 全量测试 | **383 tests / 383 pass / 0 fail**（100 suites，~27s） |
+| `research smoke` | PASS（child-session=real） |
+| 契约偏离 | 除 §21.11.2 的 1 处预估冗余外，无 scope / 表 / CLI 新增 |
+
+> **收口教训（需继承）**：C5-D 的**测试提交引入了 1 个 root 类型错误**，说明该步交付**未完整执行 §0.2 第 5 条**（`tsc` 两处 + 全量测试 + smoke）。
+> `npx tsc --noEmit`（root）覆盖 `src/**` 的**测试文件**——**新增 CLI 测试必须跑 root tsc**，不能只跑 `packages/research` 的 typecheck。
+
+**End of contract（rev9: §21.11 实现与验收闭环追加）.**
