@@ -9,6 +9,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { PARSER_VERSION, parseClaims } from "../domain/material-parser.js";
 import { SUFFICIENCY_POLICY_V1 } from "../domain/sufficiency.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 
@@ -19,6 +20,17 @@ export interface ResearchDbOptions {
 export class ResearchDb {
   readonly db: DatabaseSync;
   readonly path: string;
+
+  /**
+   * ★ C-MVP-R1 (§29.2): result of the ONE-SHOT historical-material triage performed by THIS
+   * process (all zeros when nothing needed it). The CLI prints it — a migration must not be
+   * silent. Read-only for callers.
+   */
+  materialMigrationSummary: {
+    completedWithRefs: number;
+    completedWithoutClaims: number;
+    legacyFailed: number;
+  } = { completedWithRefs: 0, completedWithoutClaims: 0, legacyFailed: 0 };
 
   constructor(options: ResearchDbOptions) {
     this.path = options.path;
@@ -313,7 +325,19 @@ export class ResearchDb {
         locator TEXT,
         claim_refs_json TEXT NOT NULL,
         received_at TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        -- ★ C-MVP-R1 (§29.2): ingest state machine + ownership + per-block ledger.
+        ingest_status TEXT NOT NULL DEFAULT 'received',
+        ingest_stage TEXT,
+        ingest_error TEXT,
+        -- NULL = legacy row NOT yet judged by C-MVP-R1; the one-shot triage keys off exactly this.
+        parser_version TEXT,
+        -- Reserved for the future model-candidate layer; ALWAYS NULL under C-MVP-R1.
+        model_version TEXT,
+        ingest_attempts INTEGER NOT NULL DEFAULT 0,
+        ingest_owner TEXT,
+        ingest_lease_until TEXT,
+        ingest_blocks_json TEXT NOT NULL DEFAULT '[]'
       );
       CREATE INDEX IF NOT EXISTS idx_material_subject ON material(subject_kind, subject_id);
       CREATE INDEX IF NOT EXISTS idx_material_hash ON material(subject_kind, subject_id, content_hash);
@@ -428,6 +452,10 @@ export class ResearchDb {
     this.backfillRequirementSufficiencyRef();
     this.migratePoolEntriesToSlots();
     this.repairLegacyMethodologyV1();
+    // ★ C-MVP-R1 (§29.2): columns → content uniqueness (FAILS FAST on legacy duplicates) → triage.
+    this.ensureMaterialIngestColumns();
+    this.ensureMaterialContentUniqueness();
+    this.migrateMaterialIngestState();
     // ★ C5-B last: it may FAIL FAST on legacy duplicate active proposals (see the method).
     this.ensureProposalActiveUniqueness();
   }
@@ -572,6 +600,106 @@ export class ResearchDb {
       const after = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
       if (!after.some((c) => c.name === column)) throw err;
     }
+  }
+
+  /**
+   * ★ C-MVP-R1 (§29.2): add the ingest-state columns to pre-existing databases, with the same
+   * PRAGMA pre-check as every other migration. `parser_version` is deliberately NULLable: NULL
+   * is the marker of "legacy row, not yet judged by C-MVP-R1" (new rows write it on INSERT).
+   */
+  private ensureMaterialIngestColumns(): void {
+    this.addColumnIfMissing("material", "ingest_status", "ALTER TABLE material ADD COLUMN ingest_status TEXT NOT NULL DEFAULT 'received'");
+    this.addColumnIfMissing("material", "ingest_stage", "ALTER TABLE material ADD COLUMN ingest_stage TEXT");
+    this.addColumnIfMissing("material", "ingest_error", "ALTER TABLE material ADD COLUMN ingest_error TEXT");
+    this.addColumnIfMissing("material", "parser_version", "ALTER TABLE material ADD COLUMN parser_version TEXT");
+    this.addColumnIfMissing("material", "model_version", "ALTER TABLE material ADD COLUMN model_version TEXT");
+    this.addColumnIfMissing("material", "ingest_attempts", "ALTER TABLE material ADD COLUMN ingest_attempts INTEGER NOT NULL DEFAULT 0");
+    this.addColumnIfMissing("material", "ingest_owner", "ALTER TABLE material ADD COLUMN ingest_owner TEXT");
+    this.addColumnIfMissing("material", "ingest_lease_until", "ALTER TABLE material ADD COLUMN ingest_lease_until TEXT");
+    this.addColumnIfMissing("material", "ingest_blocks_json", "ALTER TABLE material ADD COLUMN ingest_blocks_json TEXT NOT NULL DEFAULT '[]'");
+  }
+
+  /**
+   * ★ C-MVP-R1 (§29.2): one row per (subject, content) is the PREMISE of the atomic ingest
+   * claim. Same pre-check-then-index pattern as C5-B: legacy duplicates make us FAIL FAST with a
+   * precise diagnosis instead of a bare SQLite constraint error — and we NEVER silently dedupe
+   * (those rows are persisted research material).
+   */
+  private ensureMaterialContentUniqueness(): void {
+    const duplicates = this.db
+      .prepare(
+        `SELECT subject_kind, subject_id, content_hash, COUNT(*) AS n
+           FROM material
+          GROUP BY subject_kind, subject_id, content_hash
+         HAVING COUNT(*) > 1
+          ORDER BY subject_kind ASC, subject_id ASC, content_hash ASC`,
+      )
+      .all() as Array<{ subject_kind: string; subject_id: string; content_hash: string; n: number }>;
+    if (duplicates.length > 0) {
+      const detail = duplicates
+        .map((d) => `${d.subject_kind}/${d.subject_id}/${d.content_hash.slice(0, 12)} (${d.n} rows)`)
+        .join("; ");
+      throw new Error(
+        `material contains ${duplicates.length} duplicate (subject, content-hash) group(s): ${detail}. ` +
+          "C-MVP-R1 needs UNIQUE(subject_kind, subject_id, content_hash) for its atomic ingest claim, " +
+          "and it will NOT delete or rewrite persisted material. Resolve them manually, then restart.",
+      );
+    }
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_material_content_unique " +
+        "ON material(subject_kind, subject_id, content_hash)",
+    );
+  }
+
+  /**
+   * ★ C-MVP-R1 (§29.2): ONE-SHOT triage of historical rows (`parser_version IS NULL`), exactly
+   * three outcomes — never a guess, never a delete:
+   *
+   *   (a) claim_refs non-empty                   ⇒ completed
+   *   (b) refs empty AND 0 valid [CLAIM] blocks   ⇒ completed   (the import really did finish)
+   *   (c) refs empty AND >=1 valid block          ⇒ legacy_failed (possible残骸: it may already
+   *       have written Claims into artifacts.sqlite, so it needs HUMAN review, not an auto-resume)
+   *
+   * It never changes material_id / claim_refs_json / the row count, and the per-process summary
+   * is exposed so the CLI can print it.
+   */
+  private migrateMaterialIngestState(): void {
+    const rows = this.db
+      .prepare("SELECT material_id, raw_text, claim_refs_json FROM material WHERE parser_version IS NULL")
+      .all() as Array<{ material_id: string; raw_text: string; claim_refs_json: string }>;
+    if (rows.length === 0) return;
+
+    const summary = { completedWithRefs: 0, completedWithoutClaims: 0, legacyFailed: 0 };
+    const update = this.db.prepare(
+      `UPDATE material
+          SET ingest_status = ?, ingest_stage = ?, ingest_error = ?, parser_version = ?,
+              ingest_blocks_json = '[]', ingest_attempts = 0, ingest_owner = NULL,
+              ingest_lease_until = NULL
+        WHERE material_id = ?`,
+    );
+    for (const row of rows) {
+      let refs: unknown[] = [];
+      try {
+        const parsedRefs: unknown = JSON.parse(row.claim_refs_json);
+        if (Array.isArray(parsedRefs)) refs = parsedRefs;
+      } catch {
+        refs = [];
+      }
+      if (refs.length > 0) {
+        summary.completedWithRefs += 1;
+        update.run("completed", null, null, PARSER_VERSION, row.material_id);
+        continue;
+      }
+      const { claims } = parseClaims(row.raw_text);
+      if (claims.length === 0) {
+        summary.completedWithoutClaims += 1;
+        update.run("completed", null, null, PARSER_VERSION, row.material_id);
+      } else {
+        summary.legacyFailed += 1;
+        update.run("legacy_failed", "parsed", "LEGACY_PARTIAL_IMPORT", PARSER_VERSION, row.material_id);
+      }
+    }
+    this.materialMigrationSummary = summary;
   }
 
   /**

@@ -410,6 +410,50 @@ export function buildResearchTools(deps: ResearchToolDeps) {
   // The Agent may now WRITE exactly one kind of thing: a user-supplied Material.
   // It cannot write an Evaluation (that stays CLI-only) and it never recomputes
   // priorities. The claims are read from explicit [CLAIM] blocks — no model involved.
+/** ★ C-MVP-R1 §29.4: one honest sentence per outcome — the model must not call a half-done
+ * import "done" (D-R1-5 5a). */
+const MATERIAL_OUTCOME_NOTE: Record<
+  "created" | "duplicate" | "resumed" | "failed" | "in_progress",
+  string
+> = {
+  created: "材料已入库，并已驱动研究状态更新。",
+  duplicate: "相同材料已完整入库，本次未重复写入。",
+  resumed: "此前的导入未完成，本次已续跑补齐。",
+  failed: "材料导入仍未完成（见 stage / error）。请由研究者执行 `tiancha research material retry <materialId>`。",
+  in_progress: "材料正在被另一个进程导入，本次未写入。",
+};
+
+  // ---- ★ C-MVP-R1 (§29.6.1): the READ-ONLY material status surface -------------
+  // D-R1-5 (5a) requires the Agent to be able to SHOW a material's real state, including
+  // "unfinished: K/N blocks projected". It writes nothing; `retry` stays CLI-only.
+  const research_material_list = defineTool({
+    name: "research_material_list",
+    label: "查看行业已入库材料及其导入状态",
+    description:
+      "列出某个行业已经入库的研究材料，以及每份材料的导入状态（已完成 / 未完成 / 需人工复核）、已投影块数与错误信息。当用户问“这个行业有哪些材料 / 材料处理完了吗”时使用。只读，不改变任何研究状态。",
+    promptSnippet: "查看行业材料与导入状态",
+    parameters: Type.Object({
+      name: Type.String({ description: "行业标准名（canonical name），如：人形机器人" }),
+    }),
+    async execute(_id, params: { name: string }) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。请先用 research_industry_ingest 建立该行业。`);
+      const materials = repo.listMaterials(ind.industryId).map((m) => ({
+        materialId: m.materialId,
+        title: m.title,
+        ingestStatus: m.ingestStatus,
+        complete: m.ingestStatus === "completed",
+        projectedBlocks: m.ingestBlocks.filter((b) => b.state === "projected").length,
+        totalBlocks: m.ingestBlocks.length,
+        claimRefs: m.claimRefs.length,
+        attempts: m.ingestAttempts,
+        error: m.ingestError,
+        receivedAt: m.receivedAt,
+      }));
+      return json(JSON.stringify({ industry: ind.canonicalName, materials }, null, 2));
+    },
+  });
+
   const research_material_add = defineTool({
     name: "research_material_add",
     label: "把研究材料加入行业",
@@ -437,19 +481,23 @@ export function buildResearchTools(deps: ResearchToolDeps) {
       });
 
       const after = { openGaps: openGaps(), priorities: priority.currentPriorities(ind.industryId).length };
+      const blocks = result.material.ingestBlocks;
       return json(
         JSON.stringify(
           {
             industry: ind.canonicalName,
             materialId: result.material.materialId,
-            created: result.created,
-            parsedClaims: result.parsedClaims,
-            parseErrors: result.parseErrors,
+            // ★ C-MVP-R1 §29.4: five outcomes — never a bare boolean.
+            outcome: result.outcome,
+            ingestStatus: result.material.ingestStatus,
+            stage: result.outcome === "failed" ? result.stage : undefined,
+            error: result.outcome === "failed" ? result.error : undefined,
+            parsedClaims: blocks.length,
+            projectedBlocks: blocks.filter((b) => b.state === "projected").length,
+            totalBlocks: blocks.length,
             before,
             after,
-            note: result.created
-              ? "材料已入库，并已驱动研究状态更新。"
-              : "相同材料已存在，本次未重复写入。",
+            note: MATERIAL_OUTCOME_NOTE[result.outcome],
           },
           null,
           2,
@@ -620,6 +668,7 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     research_priority,
     research_report,
     research_material_add,
+    research_material_list,
     research_chain_show,
     research_need_list,
     research_target_list,

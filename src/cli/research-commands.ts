@@ -16,6 +16,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { parseClaims as parseMaterialClaims } from "@tiancha/research";
 import type {
   ChainProjectionService,
   DiligencePreparationService,
@@ -60,6 +61,9 @@ import {
   formatDiligenceListHuman,
   formatEvaluationHuman,
   formatMaterialAddHuman,
+  formatMaterialListHuman,
+  type MaterialAddView,
+  type MaterialListView,
   formatNeedHuman,
   formatPlanHuman,
   formatPoolHuman,
@@ -83,6 +87,12 @@ export interface ResearchCliDeps {
   reports: ReportService;
   /** C-MVP: the material input pipe (writes a Material, then the existing claim pipeline). */
   materials: MaterialIngestService;
+  /**
+   * ★ C-MVP-R1 (§29.2): the ONE-SHOT historical-material triage summary of the DB this run
+   * opened (all zeros when nothing needed it). Printed by the material commands — a migration
+   * must never be silent.
+   */
+  materialMigration?: { completedWithRefs: number; completedWithoutClaims: number; legacyFailed: number };
   /** B2: the ONLY writer of ResearchTarget — human-confirmed subjects. */
   targets: TargetService;
   /** B5: projects the chain template into `research_position` (idempotent, system-side). */
@@ -586,16 +596,129 @@ export async function runMaterialAdd(
   });
   const after = snapshot();
 
-  const view = {
+  const blocks = result.material.ingestBlocks;
+  const view: MaterialAddView = {
     industry: ind.canonicalName,
     title,
     materialId: result.material.materialId,
-    created: result.created,
-    parsedClaims: result.parsedClaims,
-    parseErrors: result.parseErrors,
+    // ★ C-MVP-R1 §29.4: five outcomes. There is no boolean any more, on purpose.
+    outcome: result.outcome,
+    ingestStatus: result.material.ingestStatus,
+    stage: result.outcome === "failed" ? result.stage : undefined,
+    error: result.outcome === "failed" ? result.error : undefined,
+    parsedClaims: blocks.length,
+    projectedBlocks: blocks.filter((b) => b.state === "projected").length,
+    totalBlocks: blocks.length,
+    // Parsing is a pure function, so the CLI re-derives the SAME errors without touching state.
+    parseErrors: parseMaterialClaims(text).errors,
     before,
     after,
   };
+  printMaterialMigration(deps);
+  deps.out(options.json ? toJson(view) : formatMaterialAddHuman(view));
+  return 0;
+}
+
+/** ★ §29.2: surface the one-shot triage so a migration can never pass unnoticed. */
+function printMaterialMigration(deps: ResearchCliDeps): void {
+  const m = deps.materialMigration;
+  if (!m) return;
+  const total = m.completedWithRefs + m.completedWithoutClaims + m.legacyFailed;
+  if (total === 0) return;
+  deps.out(
+    `迁移（C-MVP-R1 历史材料三分判定）：completed(有 claim 引用) ${m.completedWithRefs} · ` +
+      `completed(无 [CLAIM] 块) ${m.completedWithoutClaims} · legacy_failed(需人工复核) ${m.legacyFailed}`,
+  );
+  if (m.legacyFailed > 0) {
+    deps.out(
+      "  ⚠ legacy_failed 的行不会被自动续跑。请人工检查后用 `tiancha research material retry <materialId> --accept-orphans`。",
+    );
+  }
+}
+
+/** `tiancha research material list <行业>` — READ-ONLY status of every material of one industry. */
+export async function runMaterialList(
+  industryName: string | undefined,
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (!industryName) {
+    deps.err("usage: tiancha research material list <行业> [--json]");
+    return 1;
+  }
+  const ind = deps.repo.findIndustryByName(industryName);
+  if (!ind) {
+    deps.err(`未找到行业「${industryName}」。`);
+    return 1;
+  }
+  const view: MaterialListView = {
+    industry: ind.canonicalName,
+    materials: deps.repo.listMaterials(ind.industryId).map((m) => ({
+      materialId: m.materialId,
+      title: m.title,
+      ingestStatus: m.ingestStatus,
+      attempts: m.ingestAttempts,
+      projectedBlocks: m.ingestBlocks.filter((b) => b.state === "projected").length,
+      totalBlocks: m.ingestBlocks.length,
+      claimRefs: m.claimRefs.length,
+      error: m.ingestError,
+      receivedAt: m.receivedAt,
+    })),
+  };
+  printMaterialMigration(deps);
+  deps.out(options.json ? toJson(view) : formatMaterialListHuman(view));
+  return 0;
+}
+
+/**
+ * `tiancha research material retry <materialId> [--force] [--accept-orphans]` — the EXPLICIT
+ * human repair path (§29.5). Agent tools deliberately do not expose it.
+ */
+export async function runMaterialRetry(
+  materialId: string | undefined,
+  options: { json: boolean; force: boolean; acceptOrphanRisk: boolean },
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (!materialId) {
+    deps.err("usage: tiancha research material retry <materialId> [--force] [--accept-orphans]");
+    return 1;
+  }
+  const material = deps.repo.getMaterial(materialId);
+  if (!material) {
+    deps.err(`未找到材料「${materialId}」。`);
+    return 1;
+  }
+  const ind = deps.repo.getIndustry(material.subjectId);
+  const snapshot = () => ({
+    openGaps: ind ? ActiveRequirementResolver.activeGaps(deps.repo.listGaps(material.subjectId)).length : 0,
+    priorities: ind ? deps.priority.currentPriorities(material.subjectId).length : 0,
+    slotStatuses: Object.fromEntries(
+      deps.repo.listPoolSlots(material.subjectId).map((s) => [s.dimension, s.status]),
+    ),
+  });
+  const before = snapshot();
+  const result = await deps.materials.retry(materialId, {
+    force: options.force,
+    acceptOrphanRisk: options.acceptOrphanRisk,
+  });
+  const after = snapshot();
+  const blocks = result.material.ingestBlocks;
+  const view: MaterialAddView = {
+    industry: ind?.canonicalName ?? material.subjectId,
+    title: result.material.title,
+    materialId: result.material.materialId,
+    outcome: result.outcome,
+    ingestStatus: result.material.ingestStatus,
+    stage: result.outcome === "failed" ? result.stage : undefined,
+    error: result.outcome === "failed" ? result.error : undefined,
+    parsedClaims: blocks.length,
+    projectedBlocks: blocks.filter((b) => b.state === "projected").length,
+    totalBlocks: blocks.length,
+    parseErrors: parseMaterialClaims(result.material.rawText).errors,
+    before,
+    after,
+  };
+  printMaterialMigration(deps);
   deps.out(options.json ? toJson(view) : formatMaterialAddHuman(view));
   return 0;
 }

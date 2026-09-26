@@ -276,13 +276,35 @@ export class OpportunityDiscoveryService {
     }>;
     sourceType?: ResearchSource["type"];
     sourceTitle?: string;
+    /**
+     * ★ C-MVP-R1 (§29.5b) — OPTIONAL inputs that make this method reusable by the resumable
+     * material pipeline. Omitted (every historical call site) the behaviour is unchanged:
+     *  - `sourceId`  reuse a STABLE source row, so a resume never creates a second Source;
+     *  - `claimIds`  claim ids pre-allocated in the P1 ledger — a resume REUSES them, which is
+     *                what makes "retry never produces a second Claim" true across two DBs;
+     *  - `runId`     stable artifact run id, for the same reason;
+     *  - `skipBlocks` block indexes already `projected` (skipped ⇒ no re-write at all);
+     *  - `onBlockCommitted` per-block progress callback: the ledger writer.
+     */
+    sourceId?: string;
+    claimIds?: string[];
+    runId?: string;
+    skipBlocks?: ReadonlySet<number> | number[];
+    onBlockCommitted?: (
+      blockIndex: number,
+      claimId: string,
+      phase: "artifact_written" | "projected",
+    ) => void;
   }): Promise<{ claimIds: string[]; state: ResearchState | undefined }> {
     const nowIso = new Date().toISOString();
     const claimIds: string[] = [];
+    const skip =
+      input.skipBlocks instanceof Set ? input.skipBlocks : new Set<number>(input.skipBlocks ?? []);
+    const runId = input.runId ?? `backfill-${randomUUID()}`;
 
     // Field-research material provenance (Invariant 7: belief -> source -> document).
     const source: ResearchSource = {
-      sourceId: `src-${randomUUID()}`,
+      sourceId: input.sourceId ?? `src-${randomUUID()}`,
       type: input.sourceType ?? "customer_expert",
       title: input.sourceTitle ?? "field research material",
       isRealExternalData: true,
@@ -290,9 +312,10 @@ export class OpportunityDiscoveryService {
     };
     this.repo.upsertSource(source);
 
-    for (const c of input.claims) {
+    for (let index = 0; index < input.claims.length; index += 1) {
+      const c = input.claims[index]!;
       const claim: Claim = {
-        claimId: `claim-${randomUUID()}`,
+        claimId: input.claimIds?.[index] ?? `claim-${randomUUID()}`,
         statement: c.statement,
         claimType: "descriptive",
         provenance: c.provenance ?? "user",
@@ -304,6 +327,11 @@ export class OpportunityDiscoveryService {
         temporalRelation: "current",
         isRealExternalData: true,
       };
+      if (skip.has(index)) {
+        // Already projected in an earlier attempt: report it, write NOTHING (§29.5b P3).
+        claimIds.push(claim.claimId);
+        continue;
+      }
       await this.artifactStore.put({
         artifact: {
           artifactId: claim.claimId,
@@ -313,10 +341,13 @@ export class OpportunityDiscoveryService {
           createdAt: nowIso,
           taskId: "field-research-ingest",
           attemptId: "ingest-claims",
-          runId: `backfill-${randomUUID()}`,
+          runId,
         },
         blob: claim,
       });
+      // P2 done for this block (the put is idempotent by artifactId) — record BEFORE projecting
+      // so a crash in the projection step resumes from `artifact_written`, not from scratch.
+      input.onBlockCommitted?.(index, claim.claimId, "artifact_written");
       claimIds.push(claim.claimId);
       this.knowledge.projectFromClaim({
         claim,
@@ -326,6 +357,7 @@ export class OpportunityDiscoveryService {
         confidence: c.confidence ?? 0.5,
         relationHint: c.relationHint,
       });
+      input.onBlockCommitted?.(index, claim.claimId, "projected");
     }
 
     this.knowledge.refreshSubject(input.subjectId, input.subjectKind);

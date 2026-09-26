@@ -250,12 +250,48 @@ export function formatReportHuman(d: IndustryDossier, markdownPath: string): str
   ].join("\n");
 }
 
-/** C-MVP: the before/after view of one material ingestion (so a user SEES the effect). */export interface MaterialAddView {
+/** ★ C-MVP-R1 §29.4: the FIVE ingest outcomes — the old boolean `created` is gone. */
+export type MaterialIngestOutcomeKind =
+  | "created"
+  | "duplicate"
+  | "resumed"
+  | "failed"
+  | "in_progress";
+
+const MATERIAL_OUTCOME_HEAD: Record<MaterialIngestOutcomeKind, string> = {
+  created: "材料入库完成",
+  duplicate: "相同材料已完整入库（本次不重复写入）",
+  resumed: "材料续跑完成（此前未完成，本次补齐）",
+  failed: "材料导入未完成",
+  in_progress: "材料正在被另一个进程导入",
+};
+
+/**
+ * ★ D-R1-5 (5a): ONLY these outcomes mean "the material is fully in the system". Everything else
+ * must be rendered as explicitly unfinished — never as "已处理".
+ */
+const MATERIAL_OUTCOME_COMPLETE: Record<MaterialIngestOutcomeKind, boolean> = {
+  created: true,
+  duplicate: true,
+  resumed: true,
+  failed: false,
+  in_progress: false,
+};
+
+/** C-MVP / C-MVP-R1: the before/after view of one material ingestion (so a user SEES the effect). */
+export interface MaterialAddView {
   industry: string;
   title: string;
   materialId: string;
-  created: boolean;
+  outcome: MaterialIngestOutcomeKind;
+  ingestStatus: string;
+  /** Set only when the ingest is not finished. */
+  stage?: string;
+  error?: string;
   parsedClaims: number;
+  /** How far a NOT-yet-complete material actually got (D-R1-5 5a). */
+  projectedBlocks: number;
+  totalBlocks: number;
   parseErrors: string[];
   before: { openGaps: number; priorities: number; slotStatuses: Record<string, string> };
   after: { openGaps: number; priorities: number; slotStatuses: Record<string, string> };
@@ -266,9 +302,18 @@ export function formatMaterialAddHuman(v: MaterialAddView): string {
     (k) => v.before.slotStatuses[k] !== v.after.slotStatuses[k],
   );
   const lines: string[] = [
-    `材料入库${v.created ? "" : "（相同材料已存在，本次跳过）"}：${v.title}`,
-    `  行业：${v.industry} · material ${v.materialId} · 解析出 ${v.parsedClaims} 条 claim`,
+    `${MATERIAL_OUTCOME_HEAD[v.outcome]}：${v.title}`,
+    `  行业：${v.industry} · material ${v.materialId} · 状态 ${v.ingestStatus} · 解析出 ${v.parsedClaims} 条 claim`,
   ];
+  // ★ D-R1-5 (5a): a material that is NOT complete must SAY SO — with its real progress.
+  if (!MATERIAL_OUTCOME_COMPLETE[v.outcome]) {
+    lines.push(
+      `  ⚠ 材料未完成：已投影 ${v.projectedBlocks}/${v.totalBlocks} 块` +
+        `${v.stage ? `，停在 ${v.stage}` : ""}（状态 ${v.ingestStatus}）`,
+    );
+    if (v.error) lines.push(`  错误：${v.error}`);
+    lines.push(`  修复：tiancha research material retry ${v.materialId}`);
+  }
   if (v.parseErrors.length > 0) lines.push(`  解析提示：${v.parseErrors.join("；")}`);
   lines.push(`  开放缺口：${v.before.openGaps} → ${v.after.openGaps}`);
   lines.push(`  优先级条目：${v.before.priorities} → ${v.after.priorities}`);
@@ -607,5 +652,36 @@ export function formatReportHistoryHuman(rows: ReportHistoryRow[], industry: str
     );
   }
   lines.push("（只读历史：以上仅为已持久化的快照元数据，不会重新生成报告）");
+  return lines.join("\n");
+}
+
+/** ★ §29.6.1 (D-R1-5 5a): one row per material, with its REAL progress — never "已处理". */
+export interface MaterialListView {
+  industry: string;
+  materials: Array<{
+    materialId: string;
+    title: string;
+    ingestStatus: string;
+    attempts: number;
+    projectedBlocks: number;
+    totalBlocks: number;
+    claimRefs: number;
+    error?: string;
+    receivedAt: string;
+  }>;
+}
+
+export function formatMaterialListHuman(v: MaterialListView): string {
+  if (v.materials.length === 0) return `行业「${v.industry}」暂无材料。`;
+  const lines: string[] = [`行业「${v.industry}」的材料（${v.materials.length}）：`];
+  for (const m of v.materials) {
+    const complete = m.ingestStatus === "completed";
+    lines.push(
+      `  · ${m.title} · ${m.materialId} · ${m.ingestStatus}` +
+        `${complete ? "" : `（未完成：已投影 ${m.projectedBlocks}/${m.totalBlocks} 块）`}` +
+        ` · claims ${m.claimRefs} · 尝试 ${m.attempts} · ${m.receivedAt}`,
+    );
+    if (m.error) lines.push(`      ⚠ ${m.error}`);
+  }
   return lines.join("\n");
 }

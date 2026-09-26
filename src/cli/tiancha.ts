@@ -58,7 +58,7 @@ import {
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
-import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runResearchCommand, runTargetAdd, runTargetList, type ResearchCliDeps } from "./research-commands.js";
+import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runMaterialList, runMaterialRetry, runResearchCommand, runTargetAdd, runTargetList, type ResearchCliDeps } from "./research-commands.js";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -460,10 +460,12 @@ async function run(): Promise<void> {
   // only `evaluate` and `material add` may write, and each only to its own artifact.
   const isResearchSub =
     args[0] === "research" && (RESEARCH_SUBCOMMANDS as readonly string[]).includes(args[1] ?? "");
-  const isMaterialAdd = args[0] === "research" && args[1] === "material" && args[2] === "add";
+  // ★ C-MVP-R1: `material` is its own sub-tree (add / list / retry) because it is the ONLY
+  // writable research entry point; `retry` / `--force` stay CLI-only.
+  const isMaterialCmd = args[0] === "research" && args[1] === "material";
   const isTargetCmd =
     args[0] === "research" && args[1] === "target" && (args[2] === "add" || args[2] === "list");
-  if (tianchaBrand && (isResearchSub || isMaterialAdd || isTargetCmd)) {
+  if (tianchaBrand && (isResearchSub || isMaterialCmd || isTargetCmd)) {
     const { dbPath, artifactDbPath } = foundationPaths();
     const db = new ResearchDb({ path: dbPath });
     const artifacts = new SqliteArtifactStore({ path: artifactDbPath });
@@ -487,13 +489,29 @@ async function run(): Promise<void> {
         proposals: new TargetProposalService(db.db),
         // ★ C5-B: the HUMAN Gate orchestrator (confirm / reject → Target materialisation).
         decisions: new ProposalDecisionService(db.db),
+        // ★ C-MVP-R1 (§29.2): the one-shot historical-material triage summary of THIS run.
+        materialMigration: db.materialMigrationSummary,
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),
         err: (line) => console.error(line),
       };
       const json = args.includes("--json");
-      if (isMaterialAdd) {
-        process.exitCode = await runMaterialAdd(args[3], args[4], { json }, deps);
+      if (isMaterialCmd) {
+        const sub = args[2];
+        if (sub === "add") {
+          process.exitCode = await runMaterialAdd(args[3], args[4], { json }, deps);
+        } else if (sub === "list") {
+          process.exitCode = await runMaterialList(args[3], { json }, deps);
+        } else if (sub === "retry") {
+          process.exitCode = await runMaterialRetry(
+            args[3],
+            { json, force: args.includes("--force"), acceptOrphanRisk: args.includes("--accept-orphans") },
+            deps,
+          );
+        } else {
+          deps.err("usage: tiancha research material add|list|retry …");
+          process.exitCode = 1;
+        }
       } else if (isTargetCmd) {
         process.exitCode =
           args[2] === "add"

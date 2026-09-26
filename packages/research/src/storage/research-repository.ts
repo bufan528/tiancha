@@ -23,6 +23,7 @@ import type {
   InvestmentEvaluation,
   GapType,
   Material,
+  MaterialIngestStage,
   ResearchPosition,
   ResearchTarget,
   DiligencePreparation,
@@ -562,12 +563,36 @@ export class ResearchRepository {
    * always be attributed, listed and cleaned safely — unlike pre-existing Source rows.
    */
   upsertMaterial(m: Material): void {
+    // ★ C-MVP-R1: a plain UPSERT (NOT `INSERT OR REPLACE`) — REPLACE deletes the row first, which
+    // would silently reset columns this call does not pass (e.g. the ingest ledger).
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO material
+        `INSERT INTO material
          (material_id, subject_kind, subject_id, kind, title, filename, content_hash,
-          raw_text, locator, claim_refs_json, received_at, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          raw_text, locator, claim_refs_json, received_at, created_at,
+          ingest_status, ingest_stage, ingest_error, parser_version, model_version,
+          ingest_attempts, ingest_owner, ingest_lease_until, ingest_blocks_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(material_id) DO UPDATE SET
+           subject_kind       = excluded.subject_kind,
+           subject_id         = excluded.subject_id,
+           kind               = excluded.kind,
+           title              = excluded.title,
+           filename           = excluded.filename,
+           content_hash       = excluded.content_hash,
+           raw_text           = excluded.raw_text,
+           locator            = excluded.locator,
+           claim_refs_json    = excluded.claim_refs_json,
+           received_at        = excluded.received_at,
+           ingest_status      = excluded.ingest_status,
+           ingest_stage       = excluded.ingest_stage,
+           ingest_error       = excluded.ingest_error,
+           parser_version     = excluded.parser_version,
+           model_version      = excluded.model_version,
+           ingest_attempts    = excluded.ingest_attempts,
+           ingest_owner       = excluded.ingest_owner,
+           ingest_lease_until = excluded.ingest_lease_until,
+           ingest_blocks_json = excluded.ingest_blocks_json`,
       )
       .run(
         m.materialId,
@@ -582,6 +607,15 @@ export class ResearchRepository {
         JSON.stringify(m.claimRefs),
         m.receivedAt,
         m.createdAt,
+        m.ingestStatus,
+        m.ingestStage ?? null,
+        m.ingestError ?? null,
+        m.parserVersion ?? null,
+        m.modelVersion ?? null,
+        m.ingestAttempts,
+        m.ingestOwner ?? null,
+        m.ingestLeaseUntil ?? null,
+        JSON.stringify(m.ingestBlocks),
       );
   }
 
@@ -605,6 +639,93 @@ export class ResearchRepository {
       .prepare("SELECT * FROM material WHERE subject_id = ? ORDER BY received_at ASC, material_id ASC")
       .all(subjectId) as any[];
     return rows.map(rowToMaterial);
+  }
+
+  /**
+   * ★ C-MVP-R1 (§29.3): EVERY row for one (subject, content) — the dedupe gate looks at their
+   * `ingestStatus`, not at their mere existence (that was the C-MVP defect).
+   */
+  listMaterialsByContent(subjectKind: string, subjectId: string, contentHash: string): Material[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM material
+          WHERE subject_kind = ? AND subject_id = ? AND content_hash = ?
+          ORDER BY created_at ASC, material_id ASC`,
+      )
+      .all(subjectKind, subjectId, contentHash) as any[];
+    return rows.map(rowToMaterial);
+  }
+
+  /**
+   * ★ C-MVP-R1 (§29.5a): the ATOMIC ownership claim. The lease is the ONLY admission condition
+   * (`NULL` or expired) and the status is advanced to `projecting` in the SAME statement, so a
+   * second caller can never also see `changes() = 1`.
+   * Returns false when somebody else holds a LIVE lease ⇒ the caller reports `in_progress`.
+   */
+  claimMaterialIngest(
+    materialId: string,
+    owner: string,
+    leaseUntil: string,
+    resumeStage: string,
+    now: string,
+  ): boolean {
+    const res = this.db
+      .prepare(
+        `UPDATE material
+            SET ingest_status      = 'projecting',
+                ingest_stage       = ?,
+                ingest_owner       = ?,
+                ingest_lease_until = ?,
+                ingest_attempts    = ingest_attempts + 1
+          WHERE material_id = ?
+            AND (ingest_lease_until IS NULL OR ingest_lease_until < ?)
+            AND ingest_status IN ('received','parsed','failed','projecting')`,
+      )
+      .run(resumeStage, owner, leaseUntil, materialId, now);
+    return Number(res.changes) === 1;
+  }
+
+  /** ★ C-MVP-R1 (§29.5a): renew the lease — only its current holder may do this. */
+  renewMaterialLease(materialId: string, owner: string, leaseUntil: string): boolean {
+    const res = this.db
+      .prepare("UPDATE material SET ingest_lease_until = ? WHERE material_id = ? AND ingest_owner = ?")
+      .run(leaseUntil, materialId, owner);
+    return Number(res.changes) === 1;
+  }
+
+  /**
+   * ★ C-MVP-R1 (§29.5b): persist the per-block ledger + status/stage/error/lease for one material.
+   * The caller always passes the COMPLETE ingest state, so a partial write cannot half-update it.
+   */
+  updateMaterialProgress(
+    materialId: string,
+    patch: {
+      ingestStatus: Material["ingestStatus"];
+      ingestStage: MaterialIngestStage | null;
+      ingestError: string | null;
+      ingestBlocks: Material["ingestBlocks"];
+      claimRefs: string[];
+      ingestOwner: string | null;
+      ingestLeaseUntil: string | null;
+    },
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE material
+            SET ingest_status = ?, ingest_stage = ?, ingest_error = ?, ingest_blocks_json = ?,
+                claim_refs_json = ?, ingest_owner = ?, ingest_lease_until = ?
+          WHERE material_id = ?`,
+      )
+      .run(
+        patch.ingestStatus,
+        patch.ingestStage,
+        patch.ingestError,
+        JSON.stringify(patch.ingestBlocks),
+        JSON.stringify(patch.claimRefs),
+        patch.ingestOwner,
+        patch.ingestLeaseUntil,
+        materialId,
+      );
   }
 
   // ---- ResearchPosition (Phase B v1) ----
@@ -1264,6 +1385,16 @@ function rowToMaterial(row: any): Material {
     claimRefs: JSON.parse(row.claim_refs_json),
     receivedAt: row.received_at,
     createdAt: row.created_at,
+    // ★ C-MVP-R1 (§29): ingest state (defensive defaults keep hand-built fixtures readable).
+    ingestStatus: row.ingest_status ?? "received",
+    ingestStage: row.ingest_stage ?? undefined,
+    ingestError: row.ingest_error ?? undefined,
+    parserVersion: row.parser_version ?? undefined,
+    modelVersion: row.model_version ?? undefined,
+    ingestAttempts: row.ingest_attempts ?? 0,
+    ingestOwner: row.ingest_owner ?? undefined,
+    ingestLeaseUntil: row.ingest_lease_until ?? undefined,
+    ingestBlocks: row.ingest_blocks_json ? JSON.parse(row.ingest_blocks_json) : [],
   };
 }
 

@@ -20,6 +20,12 @@
 
 import type { ParsedClaim, ParsedRelationHint } from "./material.js";
 
+/**
+ * ★ §29.2 (C-MVP-R1): recorded on every material row, so a resume / audit knows exactly which
+ * rule version produced the blocks. Bump it whenever the block grammar changes.
+ */
+export const PARSER_VERSION = "material-parser/v1";
+
 export interface ParseResult {
   claims: ParsedClaim[];
   errors: string[];
