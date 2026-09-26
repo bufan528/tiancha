@@ -5,8 +5,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
-[![Status](https://img.shields.io/badge/Phase%20B%20v1%20B5%20exposure%20-%20done-green.svg)](#开发路线)
-[![Tests](https://img.shields.io/badge/tests-196%20passing-brightgreen.svg)](#开发)
+[![Status](https://img.shields.io/badge/Phase%20C%20C5--D%20done-green.svg)](#开发路线)
+[![Tests](https://img.shields.io/badge/tests-383%20passing-brightgreen.svg)](#开发)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -133,13 +133,13 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
   - `C5-A` **研究建议**：`research company add/list/get` + `research proposal generate/list/get`（`proposalRef` 确定性 + 同 `(gap, position, subject)` 仅一条 active）；
   - `C5-B` **人工决定**：`research confirm|reject <proposalRef> --operator <名>` —— **`confirm` 是产出 `research_target` 的唯一路径**，**Agent 无该写权限**；
   - `C5-C` **Plan 只读消费 Proposal/Decision**：`research plan` 展示 `positions[].proposals` + `orphanProposals`（悬空建议）；Agent 新增 `research_plan_show`（18 → 19，仍**只读**）；
-  - `C5-D` **Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影**：**契约已 FINAL LOCK（`7672a49`），实现在本 README 写作时尚未授权**（无新表、无 migration）。
+  - `C5-D` **Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影**：**已实现并发布**（`dc64c33` 实现 + `aa4dc95` 测试；无新表、无 migration）；`research plan` 的 proposal 行显示 `· 调研准备 <status>（N 问）`，无准备时**整段省略**（`--json` 为显式 `null`）。
 
 **能力边界：**
 - 当前数据源是 **Echo 占位 Provider**，所有 Evidence 标记 `isRealExternalData=false` / `sourceType=echo_placeholder`。**不能据此做真实投资判断、不给"值得/不值得"结论**；真实 Wind/Web/上传文档在 Phase E 接入。
 - 默认评分规则是**证据强度分**（确定性、可解释），**不是投资锚点评分**；真实锚点评分属 Methodology 的 Evaluation Policy。
 - **尚未实现**：Field Research 全链（Material→Fragment→Evidence→Claim）、真实数据源与自动发现行业、Research Experience（外环）、提纲中的 `requestedMaterials`/`risks`（无真实来源时不臆造）—— 见「开发路线」。
-- **C5-D 状态说明**：C5-D（Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影）**只完成了契约 FINAL LOCK**；本条 README 描述的 `research plan` 输出**不含** `preparation` 摘要字段，该字段属**尚未实现**的能力。
+- **C5-D 状态说明**：C5-D **已实现、已测试、已发布**（`dc64c33` + `aa4dc95`）；`research plan` 输出**含** `preparation` 摘要字段（`{preparationRef, status, questionCount}` 或 `null`）。实现与验收闭环见 `docs/phaseC/c5-implementation-contract.md` §21.11。**尚未授权**的是 **C6 / Phase C 完整版（Material → Fragment → Evidence）** 与 **C-MVP-R1（材料导入可靠性，契约已落 `§29`、`D-R1-3` 待裁决）**。
 
 ---
 
@@ -158,7 +158,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
                               │
    ┌──────────────────────────┴───────────────────────────┐
  TianchaAgentHost (交互 REPL / askOneShot，共享装配)   Pi Runtime（复用，不重写 Loop/Session）
-   └─ 9 个研究 customTools ──► Application Service ──► Domain / Repository
+   └─ 19 个研究 customTools ──► Application Service ──► Domain / Repository
    └─ Research Core (packages/research) 仅依赖 Port，不 import coding-agent
 ```
 
@@ -175,7 +175,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 npx tsc --noEmit                                  # 根类型检查
 npm --prefix packages/research run typecheck      # 研究包类型检查
 npm run build:cli                                 # esbuild 产出 dist/cli/tiancha.js
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 154 tests
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 383 tests
 node --import tsx src/cli/tiancha.ts research smoke
 ```
 
