@@ -18,7 +18,7 @@
 | HEAD / 远端 | **`aa4dc95`**（`test: add Phase C5-D preparation projection coverage`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **383 tests**（2026-09-26 四次运行：3 次全绿 / 1 次 flaky `C1-29`，见 §2.5）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 契约已落盘并修订到 rev2**（`docs/phaseC/implementation-contract.md` **§29**，DESIGN ONLY）；**实现未授权**；**两项待裁决：`D-R1-3`（幂等身份 A/B）· `D-R1-5`（未完成材料可见性 5a/5b）** |
+| 下一步 | **C-MVP-R1 契约已全部 LOCKED**（`docs/phaseC/implementation-contract.md` **§29** rev3：`D-R1-3 = B` 块级账本 · `D-R1-5 = 5a` 部分可见 + 显式标注）；**实现未授权（需显式授权）** |
 | 之后 | C6：Material → Claim → Knowledge Evolution（未授权）；Phase C 完整版（Fragment / Evidence 链）需另立契约 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
@@ -698,7 +698,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | C1–C4（Knowledge 语义 / Planning / Priority 验证 / Report） | ✅ | ✅ | ✅ | ❌ | — |
 | C5-A / C5-B（推荐 / 人工决定） | ✅ | ✅ | ✅ | ❌ | **真实库尚无 `target_proposal*` 两张表** |
 | C5-C / C5-D（Plan 只读消费 / Preparation 摘要） | ✅ | ✅ | ✅ | ❌ | — |
-| **C-MVP-R1**（材料导入可靠性） | 📝 契约 rev1（§29） | ❌ | ❌ | ❌ | **`D-R1-3` 待裁决；实现未授权** |
+| **C-MVP-R1**（材料导入可靠性） | 📝 契约 rev3（§29，**全部 LOCKED**） | ❌ | ❌ | ❌ | **实现未授权**（`D-R1-3 = B` · `D-R1-5 = 5a`） |
 | C6 / Phase C 完整版（Material → Fragment → Evidence → Claim） | ⛔ 未授权 | ❌ | ❌ | ❌ | `DocumentFragment` 仅类型；`evidence/evidence-engine.ts` 返回 `[]` |
 | Phase D（外环：Experience → Pattern → 方法论候选） | ⛔ 未授权 | ❌ | ❌ | ❌ | 红线 9：不预造空壳表 |
 | Phase E（Wind / 自动发现行业） | ⛔ 未授权 | ❌ | ❌ | ❌ | `echo-data-provider.ts` 仍是占位（`isRealExternalData=false`） |

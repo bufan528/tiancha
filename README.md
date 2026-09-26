@@ -139,7 +139,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 - 当前数据源是 **Echo 占位 Provider**，所有 Evidence 标记 `isRealExternalData=false` / `sourceType=echo_placeholder`。**不能据此做真实投资判断、不给"值得/不值得"结论**；真实 Wind/Web/上传文档在 Phase E 接入。
 - 默认评分规则是**证据强度分**（确定性、可解释），**不是投资锚点评分**；真实锚点评分属 Methodology 的 Evaluation Policy。
 - **尚未实现**：Field Research 全链（Material→Fragment→Evidence→Claim）、真实数据源与自动发现行业、Research Experience（外环）、提纲中的 `requestedMaterials`/`risks`（无真实来源时不臆造）—— 见「开发路线」。
-- **C5-D 状态说明**：C5-D **已实现、已测试、已发布**（`dc64c33` + `aa4dc95`）；`research plan` 输出**含** `preparation` 摘要字段（`{preparationRef, status, questionCount}` 或 `null`）。实现与验收闭环见 `docs/phaseC/c5-implementation-contract.md` §21.11。**尚未授权**的是 **C6 / Phase C 完整版（Material → Fragment → Evidence）** 与 **C-MVP-R1（材料导入可靠性，契约已落 `§29`、`D-R1-3` 待裁决）**。
+- **C5-D 状态说明**：C5-D **已实现、已测试、已发布**（`dc64c33` + `aa4dc95`）；`research plan` 输出**含** `preparation` 摘要字段（`{preparationRef, status, questionCount}` 或 `null`）。实现与验收闭环见 `docs/phaseC/c5-implementation-contract.md` §21.11。**尚未授权**的是 **C6 / Phase C 完整版（Material → Fragment → Evidence）** 与 **C-MVP-R1（材料导入可靠性；契约 `§29` rev3 已**全部 LOCKED**，`D-R1-3 = B` · `D-R1-5 = 5a`，实现未授权）**。
 
 ---
 

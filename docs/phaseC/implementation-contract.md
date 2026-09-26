@@ -1797,6 +1797,7 @@ D SUPERSEDE B           → 必须【成功】
 |---|---|
 | **rev1** | 首版：as-built 失败机制（逐行核对）+ 状态机 + 查重规则 + 返回语义 + 跨库恢复 + 幂等身份（含 **1 项待裁决**）+ OUT + 失败注入验收 T-R1-1…T-R1-9 |
 | **rev2** | 验收者复核后的 5 处闭合（**不改 scope**）：① **§29.2 历史行迁移三分判定**（空引用旧行不再一律落 `received`，新增 `legacy_failed` + 迁移汇总）；② **§29.5a 并发所有权认领**（唯一索引 + 原子 `UPDATE` 租约；T-R1-10 用**两个独立进程**验收）；③ **§29.5b 逐块可恢复协议**（`claimId` 在 P1 预留并持久化；`ArtifactStore.put` 幂等复用；`ingestClaims` 向后兼容扩展）；④ **§29.6.1 未完成材料的可见性**（**D-R1-5 待裁决**）；⑤ **§29.8 T-R1-2 计数口径**（限定为**有效解析**的块；格式错误块只进 `parseErrors`）。新增 T-R1-10 / T-R1-11 / T-R1-12 |
+| **rev3** | **裁决锁定**（用户 2026-09-26）：`D-R1-3 = B`（块级进度账本）· `D-R1-5 = 5a`（接受部分可见 + 显式标注）。两项写入 **§29.11 裁定记录**；本契约**无剩余待裁决项**。**实现仍未被授权** |
 
 ## §29.1 现状（as-built 失败机制，逐行核对）
 
@@ -1987,7 +1988,7 @@ P4 收口（全部块 state='projected'）
 | `ArtifactStore.put` | 已有幂等语义（`INSERT OR REPLACE`）——**契约依赖它**，实现时**不得**改成追加式 |
 | `material.claim_blocks_json` | 账本只能由**持租约者**写；块只能沿 `reserved → artifact_written → projected` **单向**推进，**禁止**回退 |
 
-## §29.6 幂等身份（D-R1-3，**⚠️ 待裁决** —— 与 §29.6.1 的 D-R1-5 并列的两项待裁决之一）
+## §29.6 幂等身份（D-R1-3，**✅ LOCKED = 路线 B**）
 
 现状矛盾：`claimId = claim-<uuid>`（`:295`）、`sourceId/documentId = src/doc-<uuid>`（`:84` / `:92` / `:285`）均为**随机身份**。
 因此"续跑不重复"必须在下列两条路线中**选一条**：
@@ -1997,10 +1998,12 @@ P4 收口（全部块 state='projected'）
 | **A. 内容寻址身份** | `claimId = claim-<sha256(subjectKind\|subjectId\|dimension\|content)>`；`sourceId` / `documentId` 由 `ingestId = mat-<sha256(subjectKind+subjectId+contentHash)>` 派生 | 天然幂等；续跑即 no-op；belief 的 `claimRef` 稳定 | **改变 Claim 身份语义**：同内容来自**两个不同来源**的 Claim 会被合并 ⇒ 可能削弱 `sufficiency.independentSources` 口径（S4-FOLLOWUP 未修完） |
 | **B. 块级进度账本**（★ 建议） | 保留随机 Claim id；`material` 增记录 `claim_blocks_json = [{blockIndex, blockHash, claimId}]`；续跑只处理**未记账**的块；`Source` / `Document` 由 `ingestId` 派生以避免重复 | **不动 Claim 身份 / 不动 sufficiency 口径**；与 C-MVP"复用既有 `ingestClaims`"一致 | 状态更多；整份材料完成前存在"部分可见"的 Claim |
 
-**建议 B**。A 触及 `independentSources` 语义，属 S4.5 / S4-FOLLOWUP 领域，应另立裁决。
+**裁决（2026-09-26，用户）：路线 B —— 块级进度账本。**
+- **A 不采纳**：它会改变 Claim 身份语义（同内容跨来源被合并），直接触及 `sufficiency.independentSources` 口径（S4.5 / S4-FOLLOWUP 领域）。将来若要用 A，必须**另立契约**并先给出 `independentSources` 的新口径与对既有 Evaluation 的影响评估。
+- **B 落地要求（实现时不得缩水）**：`claimId` 在 §29.5b 的 **P1 预留**阶段生成并持久化；账本 `claim_blocks_json` 逐块单向推进；`Source` / `Document` 由 `ingestId` 派生（仅在 C-MVP-R1 路径）。
 > 若选 A，须同时重新定义 `independentSources` 的口径（谁代表"独立来源"），并评估对既有 Evaluation 结果的影响。
 
-### §29.6.1 未完成材料的可见性（rev2 · D-R1-5，**⚠️ 待裁决**）
+### §29.6.1 未完成材料的可见性（rev2 · D-R1-5，**✅ LOCKED = 5a**）
 
 **事实**：协议是**逐块投影**（P3），因此一份**未完成**的材料，其已 `projected` 的块**会立即影响** `Knowledge` / `PoolItem` / `Gap`（既有的 `ingestClaims()` 今天就是这个行为：`put` 后立刻 `projectFromClaim`）。这不是新增的语义，而是**现状的延续**。
 
@@ -2010,7 +2013,8 @@ P4 收口（全部块 state='projected'）
 | 5b 推迟投影（暂存 / 隔离） | P3 整段推迟到**所有块** `artifact_written` 之后才开始 | 未完成时下游**零变化**，窗口更小 | 需要把 `put` 与 `projectFromClaim` 彻底分离（改动更大）；**P3 中途失败仍会部分可见** —— 只能缩小窗口，**不能消除** |
 
 - 两条路线都**不能**把"部分可见"降为零（投影是主库操作、逐块提交、跨库无事务）。
-- **5a 是推荐值**；若选 **5b**，须同时写明"暂存层"的存放位置与失败展示口径，否则未完成材料会变成"看不见的 Claim"。
+- **裁决（2026-09-26，用户）：5a —— 接受部分可见 + 强制显式标注。** ⇒ **5b 的"暂存 / 隔离层"不实现。**
+- 但 5a 的**强制标注条款是硬要求，必须有测试守护**：① `research material list`（与 Agent 侧等价工具）必须显示 `ingest_status` + **已投影块数 / 总块数** + `ingest_error`；② 材料处于 `projecting` / `failed` / `legacy_failed` 时，其 Claim **不得计入任何"已确认材料证据"汇总口径**（含报告 / 评价的叙述），且**不得**显示为"已处理"。
 - **无论选哪条**，`research material list` 都必须暴露真实状态（`ingest_status` + 已投影块数 + `ingest_error`），**不得**把未完成材料显示为"已处理"。
 
 ## §29.7 OUT（明确禁止）
@@ -2074,15 +2078,29 @@ P4 收口（全部块 state='projected'）
 | `packages/research/src/application/opportunity-discovery-service.ts` | 生产（**向后兼容扩展**：可选指定 `claimId` / `sourceId`；缺省路径行为不变 + 回归） |
 | `packages/research/src/domain/material-parser.ts` | 生产（导出 `PARSER_VERSION`；**解析行为不变**） |
 | `src/cli/research-commands.ts` · `src/cli/research-format.ts` | 生产（五种 outcome 的打印 + `retry` / `--force`） |
-| `packages/research/src/c-mvp-r1.test.ts`（新） | 测试 T-R1-1 … T-R1-9 |
+| `packages/research/src/c-mvp-r1.test.ts`（新） | 测试 T-R1-1 … T-R1-12 |
 | `src/cli/c-mvp-r1-cli.test.ts`（新） | 测试 CLI 对五种 outcome 的区分 |
 
 ---
 
-> **授权声明：§29 为 DESIGN ONLY。实现 / commit / push 均未授权。**
-> **待裁决项（2 项）**：`D-R1-3`（幂等身份 A / B —— 建议 B）· `D-R1-5`（未完成材料可见性 5a / 5b —— 建议 5a）。
-> **已随 rev2 锁定**：`D-R1-1`（状态机 + 查重）· `D-R1-2`（返回枚举）· `D-R1-4`（跨库恢复 + 逐块协议）· `D-R1-6`（并发认领）。
-> 裁决后才进入 Implementation Authorization；届时先补"预计文件清单确认"与"失败场景可测性复核"。
+## §29.11 裁定记录（**已关闭**）
 
-**End of §29（rev2）.**
+| # | 议题 | 结论 | 来源 / 日期 |
+|---|---|---|---|
+| **D-R1-1** | 恢复方案（状态机 vs 顺序反转 vs 弱化查重） | **(a) 状态机 + 续跑**；(c)「只有 `completed` 才算导入完成」并入查重规则；(b) 仅作前置校验优化 | 用户裁决 2026-09-26 |
+| **D-R1-2** | 返回语义 | **五种 outcome 枚举**（`created` / `duplicate` / `resumed` / `failed` / `in_progress`），废弃布尔 `created` | 用户裁决 2026-09-26 |
+| **D-R1-3** | 幂等身份 | **B —— 块级进度账本**（`claimId` 在 P1 预留并持久化）；A 内容寻址**不采纳** | 用户裁决 2026-09-26（§29.6） |
+| **D-R1-4** | 跨库恢复 | **状态标记 + 逐块幂等重跑**；不使用跨库事务；依赖 `ArtifactStore.put` 的幂等语义 | 用户裁决 2026-09-26（§29.5b） |
+| **D-R1-5** | 未完成材料可见性 | **5a —— 接受部分可见 + 强制显式标注**；5b 暂存层**不实现** | 用户裁决 2026-09-26（§29.6.1） |
+| **D-R1-6** | 并发所有权 | **唯一约束 + 原子 `UPDATE` 租约 + `changes()`**；**不使用**跨进程文件锁 | 用户裁决 2026-09-26（§29.5a） |
+
+> 本表是 §29 的**唯一裁定入口**；任何后续修改必须在本表追加新行（`D-R1-7…`），**不得**回改既有结论。
+
+---
+
+> **授权声明：§29 为 DESIGN ONLY。*实现* 仍未授权。**
+> **裁决状态：全部 LOCKED**（`D-R1-1` … `D-R1-6`，见 §29.11）；本契约**无剩余待裁决项**。
+> 进入实现需用户**显式授权**；授权后先补"预计文件清单确认"（补 `c-mvp-r1.test.ts` 的 T-R1-1…T-R1-12 落点）与"失败场景可测性复核"。
+
+**End of §29（rev3）.**
 
