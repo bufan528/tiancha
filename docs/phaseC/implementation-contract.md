@@ -1783,10 +1783,10 @@ D SUPERSEDE B           → 必须【成功】
 
 ---
 
-# §29 rev1 — C-MVP-R1 Implementation Contract（Material 导入可靠性：状态机 + 续跑）
+# §29 rev2 — C-MVP-R1 Implementation Contract（Material 导入可靠性：状态机 + 续跑）
 
-> 状态：**rev1 — DESIGN ONLY。Implementation / Commit / Push 均未授权。**
-> 父基线：`aa4dc95`（= `origin/main`，C5-D 已发布；root `tsc` 已归零）。
+> 状态：**rev2 — DESIGN ONLY（实现仍未授权）。** rev1 已发布（`b7233e6`）；rev2 = **验收者复核后的"恢复 / 迁移契约"补齐**（5 处，见 §29.0）—— 补的是**契约文本**，**不含任何实现代码**。
+> 父基线：`aa4dc95` → `6a14942`（= `origin/main`；C5-D 已发布、基线已校准、root `tsc` 已归零）。
 > 依据：用户 2026-09-26 裁决 —— **(a) 状态机 + 续跑** 为方案；**(c)「只有 `completed` 才算导入完成」并入查重规则**；
 > (b)「先解析再保存」只作**前置校验优化**，**不单独解决完整性问题**（解析成功后 Claim 写入 / 跨库更新 / 知识投影仍可能失败）。
 > 定位：本契约是 **C-MVP 的可靠性修订**，**不改动** C-MVP 已发布的规则解析语义（`[CLAIM]` 规则、无 LLM、不臆测）。
@@ -1796,6 +1796,7 @@ D SUPERSEDE B           → 必须【成功】
 | 版本 | 变更 |
 |---|---|
 | **rev1** | 首版：as-built 失败机制（逐行核对）+ 状态机 + 查重规则 + 返回语义 + 跨库恢复 + 幂等身份（含 **1 项待裁决**）+ OUT + 失败注入验收 T-R1-1…T-R1-9 |
+| **rev2** | 验收者复核后的 5 处闭合（**不改 scope**）：① **§29.2 历史行迁移三分判定**（空引用旧行不再一律落 `received`，新增 `legacy_failed` + 迁移汇总）；② **§29.5a 并发所有权认领**（唯一索引 + 原子 `UPDATE` 租约；T-R1-10 用**两个独立进程**验收）；③ **§29.5b 逐块可恢复协议**（`claimId` 在 P1 预留并持久化；`ArtifactStore.put` 幂等复用；`ingestClaims` 向后兼容扩展）；④ **§29.6.1 未完成材料的可见性**（**D-R1-5 待裁决**）；⑤ **§29.8 T-R1-2 计数口径**（限定为**有效解析**的块；格式错误块只进 `parseErrors`）。新增 T-R1-10 / T-R1-11 / T-R1-12 |
 
 ## §29.1 现状（as-built 失败机制，逐行核对）
 
@@ -1832,15 +1833,32 @@ D SUPERSEDE B           → 必须【成功】
 
 | 列 | 类型 | 含义 |
 |---|---|---|
-| `ingest_status` | TEXT NOT NULL DEFAULT `'received'` | `received` / `parsed` / `projecting` / `completed` / `failed` |
+| `ingest_status` | TEXT NOT NULL DEFAULT `'received'` | `received` / `parsed` / `projecting` / `completed` / `failed` / **`legacy_failed`**（rev2：**仅由迁移产生**，见下） |
 | `ingest_stage` | TEXT NULL | `failed` 时记录失败阶段（取值同上，标明停在哪一步） |
 | `ingest_error` | TEXT NULL | `failed` 时的错误摘要（message 截断；**不得**写入密钥/凭据） |
 | `parser_version` | TEXT NOT NULL | 解析器版本（当前 `material-parser/v1`） |
 | `model_version` | TEXT NULL | 模型版本；C-MVP-R1 **恒 `null`**（规则解析无模型）。字段为**未来"模型候选层"预留**，**不表示**已引入 LLM |
 | `ingest_attempts` | INTEGER NOT NULL DEFAULT `0` | 续跑计数（审计用） |
+| `ingest_owner` | TEXT NULL | **rev2**：当前持租约者的不透明标识（进程 / 会话 id；不写用户名等 PII） |
+| `ingest_lease_until` | TEXT NULL | **rev2**：租约到期时间（ISO）；到期后可被其他进程原子认领（见 §29.5a） |
 
-历史行回填：**已完成投影的行**（`claim_refs_json` 非空）一律置 `completed`；`parser_version` 回填 `material-parser/v1`。
-回填是**一次性 + 幂等**（`PRAGMA` 预检查驱动），**不改身份、不新建行、不删历史**。
+**rev2 唯一约束（并发的前提）**：`material` 上需要 `UNIQUE(subject_kind, subject_id, content_hash)`。
+落地前**必须**先检查历史重复（沿用 §16.5 的硬条件精神）：**若发现重复，停止加约束**，改为在 C-MVP-R1 内单独提出"历史去重"请求；**绝不为加约束而静默清洗历史数据**。
+
+**历史行回填（rev2 修订：三分判定，不得只凭 `claim_refs_json` 判断）**：
+
+| 类别 | 判定条件（迁移时离线执行**纯函数** `parseClaims(rawText)`） | 回填结果 |
+|---|---|---|
+| (a) 已完成 | `claim_refs_json` **非空** | `completed` |
+| (b) 已完成（无 Claim 产出） | `claim_refs_json` **为空** 且 `parseClaims(rawText).claims.length === 0` | `completed`（导入确实走完，只是材料里没有有效 `[CLAIM]` 块） |
+| (c) **可能残骸** | `claim_refs_json` **为空** 且 `parseClaims(rawText).claims.length > 0` | **`legacy_failed`**（`ingest_stage = 'parsed'`，`ingest_error = 'LEGACY_PARTIAL_IMPORT'`） |
+
+- (c) 之所以**不能**直接落 `received`：`received` 是"可被自动续跑"的状态，而这些行**可能**已在 `artifacts.sqlite` 留下部分 Claim（旧流程逐块 `put` + 投影，无状态记录）。因此 (c) **必须要求人工复核**后才能 `retry`。
+- (c) 的 `retry` 前置：先跑**孤儿 Claim 检测**（§29.5b P2 的幂等路径；比对该材料的块 hash 与既有 artifact 内容），把已存在的 Claim **复用**而非重建。
+- 迁移**只做判定与回填**，不删除、不修改 `materialId` / `claim_refs_json` / 行数；`parser_version` 一律回填 `'material-parser/v1'`，`model_version` 回填 `NULL`。
+- 迁移必须输出**汇总报告**（`completed(a)=N · completed(b)=M · legacy_failed(c)=K`）并进入 CLI 输出；**不得**静默。
+- 判定使用**当前**解析器版本 ⇒ 报告里必须写明"判定依据 `parser_version='material-parser/v1'`"；解析器升级后**不得**重跑该判定（历史行已有状态）。
+- 回填是**一次性 + 幂等**（`PRAGMA` 预检查驱动），**不改身份、不新建行、不删历史**。
 
 状态迁移（**唯一合法图**）：
 
@@ -1863,7 +1881,8 @@ completed ──默认终态──► 仅 `--force`（人工显式）可重跑�
 |---|---|
 | 同内容、`completed` | `duplicate`（完整重复，不重跑） |
 | 同内容、`received` / `parsed` / `projecting` / `failed` | **不是重复** ⇒ 走续跑，或**明确报错**（见 §29.4） |
-| 无同内容行 | 新建，走状态机 |
+| 无同内容行 | 新建（`INSERT` 受 §29.2 唯一约束保护）→ 走状态机 |
+| 同内容、`legacy_failed` | **不是重复** ⇒ 明确报错并要求人工复核（见 §29.2 (c)），**不允许**自动续跑 |
 
 ## §29.4 返回语义（D-R1-2，**LOCKED**）
 
@@ -1881,16 +1900,94 @@ type MaterialIngestOutcome =
 - CLI **必须区分打印**这五种（**禁止**把 `resumed` 显示成 `duplicate`）。
 - 只有 `created` / `resumed` 携带 `claimIds`。
 - 未完成记录**必须**续跑或**明确报错**；**禁止**静默当作完整重复跳过。
+- `legacy_failed`（迁移产生的残骸）**不得**自动续跑：返回 `failed`（`stage = 'migration'`、`error = 'LEGACY_PARTIAL_IMPORT'`），并要求人工执行 `retry`（须先经 §29.2 (c) 的孤儿 Claim 检测）。
 
 ## §29.5 跨库恢复（D-R1-4，**LOCKED**）
 
 - **不使用**跨库事务（两库两连接，§15 CR-10）。恢复依靠 **状态标记 + 幂等重跑**。
-- 阶段推进顺序固定为：**先写阶段标记 → 执行该阶段 → 成功后推进状态**；崩溃点永远停在**可重入**的阶段标记上。
-- `artifacts.sqlite` 的 Claim 写入必须**内容可辨**（见 §29.6），使"续跑"不会产生第二份 Claim。
 - `completed` 是终态。人工显式 `--force` 重跑：记入 `ingest_attempts`，**保留**原 `claim_refs_json` 的审计轨迹（**不静默删除历史**）。
 - 失败后保留的材料**允许且只允许**通过**显式人工动作**重新处理（CLI `retry` / `--force`）；系统**不得**自动重跑 `failed` 行。
 
-## §29.6 幂等身份（D-R1-3，**⚠️ 待裁决 — 本契约唯一未锁定项**）
+### §29.5a 并发所有权认领（rev2 · D-R1-6，**LOCKED**）
+
+**问题**：光有状态字段挡不住两个进程"同时查到没有记录 / 同时看到 `failed`，各自开始导入"。
+
+**机制（唯一）**：**数据库唯一约束 + 原子状态认领（租约）**，不使用跨进程文件锁。
+理由：SQLite 已经是唯一的共享状态；Windows 上的跨进程文件锁语义弱且难测；原子 `UPDATE` + `changes()` 已足够。
+
+```text
+① 新建路径：INSERT material(... ingest_status='received' ...)
+             由 UNIQUE(subject_kind, subject_id, content_hash) 裁决
+             冲突者 ⇒ 回读既有行，转 ②（不抛异常给用户）
+
+② 认领路径（对 received / parsed / failed，或已过期的 projecting）：
+   UPDATE material
+      SET ingest_owner = :me,
+          ingest_lease_until = :now_plus_lease,
+          ingest_attempts = ingest_attempts + 1
+    WHERE material_id = :id
+      AND ( ingest_status IN ('received','parsed','failed')
+            OR (ingest_status = 'projecting'
+                AND (ingest_lease_until IS NULL OR ingest_lease_until < :now)) )
+   检查 changes()：
+
+   · changes() = 1  ⇒ 认领成功，进入 §29.5b 的逐块协议（该进程是唯一写入者）
+   · changes() = 0  ⇒ 别人在跑 ⇒ 返回 outcome = "in_progress"（附对方 status / owner / lease_until，不等待、不自旋）
+```
+
+- **持租约者必须续租**：每完成一个块就刷新 `ingest_lease_until`（避免长材料把租约耗尽被别人抢走）。
+- 租约时长是**契约参数**（默认值在实现时定稿，必须 ≥ 单块最坏处理时间的数倍）；**不得**用租约做"自动重跑"——它只用于**判定能否认领**。
+- 崩溃后：租约到期 ⇒ 下一个 `retry` 可原子认领 ⇒ 按 §29.5b 从账本续做。
+- **验收必须用两个独立进程**（T-R1-10），不是同一进程内的两次调用。
+
+### §29.5b 逐块可恢复协议（rev2 · D-R1-4，**LOCKED**）
+
+> 前提事实（已核对）：`ArtifactStore.put` 是 `INSERT OR REPLACE` 按 `artifactId` **幂等**；
+> `ingestClaims()` 目前**逐块**执行 `put` + `projectFromClaim()`，且 `sourceId` / `runId` / `claimId` 均为 `randomUUID()`。
+
+**协议（每一步都可重入；`claimId` 在 P1 就固定下来）**：
+
+```text
+P1 预留（主库，单事务）
+   material.ingest_status = 'projecting'
+   material.claim_blocks_json = [ { blockIndex, blockHash, claimId, state: 'reserved' }, ... ]
+   ★ claimId 在此生成并持久化 —— 跨库恢复时才有稳定的锚点
+   提交；之后任何崩溃都从账本恢复
+
+P2 写 artifacts（逐块；对 state='reserved' 的块）
+   artifactStore.put({ artifact: { artifactId: claimId, kind: 'claim', ... } })   ← 幂等复用
+   material.claim_blocks_json[i].state = 'artifact_written'
+
+P3 投影（逐块；对 state='artifact_written' 的块）
+   knowledge.projectFromClaim({ claim, dimension, ... })      ← 用 P1 的 claimId，绝不新生成
+   material.claim_blocks_json[i].state = 'projected'
+   （state='projected' 的块在续跑时直接跳过 ⇒ 旧形 §16.1 的确定性 beliefId 保证 no-op）
+
+P4 收口（全部块 state='projected'）
+   material.claim_refs_json = [ ...按 blockIndex 的 claimId... ]
+   material.ingest_status = 'completed'；清空 ingest_stage / ingest_error / 租约
+```
+
+崩溃点 → 恢复动作：
+
+| 崩溃在 | 重跑时的行为 |
+|---|---|
+| P1 之后、P2 之前 | 按账本重跑 P2（全部 `reserved`）；`claimId` 已固定，不会产生第二份 Claim |
+| P2 写 artifacts 中途 | `put` 幂等 ⇒ 重放该块无副作用；未写的块继续 |
+| P2 完成、状态未回写 | 同上（重放 + 推进状态） |
+| P3 投影中途 | 已 `projected` 的块跳过；其余继续（beliefId 确定性 ⇒ 重复投影为 no-op，§16.1） |
+| P4 回写之前 | 全部块已 `projected` ⇒ 直接收口 |
+
+**对既有代码的扩展要求（向后兼容，缺省行为不变）**：
+
+| 组件 | 要求 |
+|---|---|
+| `OpportunityDiscoveryService.ingestClaims()` | 新增**可选**入参（如 `claimIds?: string[]` 或逐块回调），使调用方可**指定** `claimId`；**不传时行为与今天逐字节一致**（既有调用点必须原样通过回归） |
+| `Source` / `Document` | 由 `ingestId`（= `mat-<sha256(subjectKind+subjectId+contentHash)>` 派生）而非 `randomUUID()` 生成，使续跑不新增 Source / Document。**该改动仅在 C-MVP-R1 路径生效**；`ingestMaterial()` / `ingestClaims()` 的既有调用点是否一并切换**属 D-R1-3 裁决范围** |
+| `ArtifactStore.put` | 已有幂等语义（`INSERT OR REPLACE`）——**契约依赖它**，实现时**不得**改成追加式 |
+| `material.claim_blocks_json` | 账本只能由**持租约者**写；块只能沿 `reserved → artifact_written → projected` **单向**推进，**禁止**回退 |
+
+## §29.6 幂等身份（D-R1-3，**⚠️ 待裁决** —— 与 §29.6.1 的 D-R1-5 并列的两项待裁决之一）
 
 现状矛盾：`claimId = claim-<uuid>`（`:295`）、`sourceId/documentId = src/doc-<uuid>`（`:84` / `:92` / `:285`）均为**随机身份**。
 因此"续跑不重复"必须在下列两条路线中**选一条**：
@@ -1902,6 +1999,19 @@ type MaterialIngestOutcome =
 
 **建议 B**。A 触及 `independentSources` 语义，属 S4.5 / S4-FOLLOWUP 领域，应另立裁决。
 > 若选 A，须同时重新定义 `independentSources` 的口径（谁代表"独立来源"），并评估对既有 Evaluation 结果的影响。
+
+### §29.6.1 未完成材料的可见性（rev2 · D-R1-5，**⚠️ 待裁决**）
+
+**事实**：协议是**逐块投影**（P3），因此一份**未完成**的材料，其已 `projected` 的块**会立即影响** `Knowledge` / `PoolItem` / `Gap`（既有的 `ingestClaims()` 今天就是这个行为：`put` 后立刻 `projectFromClaim`）。这不是新增的语义，而是**现状的延续**。
+
+| 路线 | 做法 | 优点 | 代价 |
+|---|---|---|---|
+| **5a（★ 建议）接受部分可见 + 显式标注** | 保持逐块投影；但材料处于 `projecting` / `failed` / `legacy_failed` 时，**CLI 与 Agent 必须显式展示"材料未完成：已投影 K/N 块"**，且**禁止**把该材料的 Claim 计入"已确认材料证据"的任何汇总口径 | 贴合既有投影时序、改动小；续跑后自然收敛 | 未完成期间下游**已部分变化**；必须靠"显式标注"避免误读 |
+| 5b 推迟投影（暂存 / 隔离） | P3 整段推迟到**所有块** `artifact_written` 之后才开始 | 未完成时下游**零变化**，窗口更小 | 需要把 `put` 与 `projectFromClaim` 彻底分离（改动更大）；**P3 中途失败仍会部分可见** —— 只能缩小窗口，**不能消除** |
+
+- 两条路线都**不能**把"部分可见"降为零（投影是主库操作、逐块提交、跨库无事务）。
+- **5a 是推荐值**；若选 **5b**，须同时写明"暂存层"的存放位置与失败展示口径，否则未完成材料会变成"看不见的 Claim"。
+- **无论选哪条**，`research material list` 都必须暴露真实状态（`ingest_status` + 已投影块数 + `ingest_error`），**不得**把未完成材料显示为"已处理"。
 
 ## §29.7 OUT（明确禁止）
 
@@ -1916,14 +2026,17 @@ type MaterialIngestOutcome =
 | # | 场景（失败注入点） | 期望 |
 |---|---|---|
 | **T-R1-1** | `:86` 之后、解析之前抛错 | 材料行留存为 `failed/received`；**再次提交同内容 ⇒ `resumed` 并最终 `completed`**（不是 `duplicate`） |
-| **T-R1-2** | Claim 写入 `artifacts.sqlite` 中途抛错 | `failed/projecting`；续跑后 Claim 数 = 解析块数（**不翻倍**） |
+| **T-R1-2** | Claim 写入 `artifacts.sqlite` 中途抛错 | `failed/projecting`；续跑后 **`state='projected'` 的块数 = `parseClaims(rawText).claims.length`**（**有效解析**的 `[CLAIM]` 块；格式错误块**不进入账本**，且必须原样出现在 `parseErrors` 里 —— 与"格式错误不臆测"一致；断言同时覆盖：`claim_blocks_json` 条数 = 有效块数，`parseErrors` 与首次解析一致） |
 | **T-R1-3** | Knowledge 投影中途抛错 | 同上；续跑后 `belief` / PoolItem / Gap **不重复** |
 | **T-R1-4** | 回写 `claim_refs_json` 之前抛错 | 续跑后 `material.claim_refs_json` 与 Claim 实际**一致**（双向引用完整） |
-| **T-R1-5** | 同材料并发两次提交 | 第二次得到 `in_progress` 或 `duplicate`，**绝不双写** |
+| **T-R1-5** | 同材料两次提交（同进程顺序） | 第二次得到 `duplicate`；零新行 |
 | **T-R1-6** | `completed` 的同材料再次提交 | `duplicate`；**零**新行（整库内容指纹不变） |
 | **T-R1-7** | 对外 API 不再有布尔 `created` | 编译期 + 行为各一条断言 |
 | **T-R1-8** | 历史行（C-MVP 已导入）迁移 | 回填 `completed`；**不改** `materialId` / `claim_refs_json` / 行数 |
 | **T-R1-9** | 解析器版本变更后重跑 | `parser_version` 变化被记录；`completed` 行**不**自动重跑 |
+| **T-R1-10** | **两个独立进程**并发提交同一份材料（★ rev2 新增） | 恰好一个得到 `created` / `resumed`；另一个得到 `in_progress`（带对方 owner / lease）或 `duplicate`；最终 `Source` / `Document` / `Claim` **各只有一份**；断言方式是**行为**（进程退出码 + 两库行数），不是日志文案 |
+| **T-R1-11** | 迁移三分判定（★ rev2 新增） | 构造 (a)(b)(c) 三类历史行 ⇒ 分别得到 `completed` / `completed` / **`legacy_failed`**；迁移汇总打印 `a/b/c` 三个数；`materialId` / `claim_refs_json` / 行数不变；**(c) 不被自动续跑** |
+| **T-R1-12** | 跨库崩溃窗口（★ rev2 新增） | 在 P2 的 `put` 之后、状态回写之前打断 ⇒ 重跑**复用 P1 的 `claimId`**（`artifacts.sqlite` 里该 `claimId` 仍只有一行；不产生第二个 Claim），且账本不出现重复 `blockIndex` |
 
 **mutation（必须能打红）**：
 
@@ -1932,6 +2045,10 @@ type MaterialIngestOutcome =
 · 续跑时重建 Source / Document（随机 id）         ⇒ T-R1-2 必须转红
 · 把 `resumed` 归并成 `duplicate`                 ⇒ T-R1-1 / T-R1-7 必须转红
 · 迁移清空历史行或改 id                           ⇒ T-R1-8 必须转红
+· 去掉 `changes() = 1` 的原子认领（改成"先查后写"）⇒ T-R1-10 必须转红
+· P1 不持久化 `claimId`（改到 P2 才生成）          ⇒ T-R1-12 必须转红
+· 迁移把 `claim_refs_json` 空的旧行一律置 `received` ⇒ T-R1-11 必须转红
+· 把格式错误的 `[CLAIM]` 块也计入账本              ⇒ T-R1-2 必须转红
 ```
 
 ## §29.9 与已冻结面的冲突检查
@@ -1952,7 +2069,9 @@ type MaterialIngestOutcome =
 | `packages/research/src/domain/material.ts` | 生产（状态枚举 + 账本类型） |
 | `packages/research/src/application/material-ingest-service.ts` | 生产（状态机 + 续跑 + 返回枚举） |
 | `packages/research/src/storage/research-db.ts` | 生产（加列 + 历史回填，`PRAGMA` 预检查） |
-| `packages/research/src/storage/research-repository.ts` | 生产（按状态查重 / 记进度） |
+| `packages/research/src/storage/research-repository.ts` | 生产（按状态查重 / 记进度 / **原子认领 `UPDATE` + `changes()`**） |
+| `packages/research/src/storage/artifact-store.ts` | 生产（**不改**：其 `INSERT OR REPLACE` 幂等语义是本协议的前提，实现时不得改成追加式） |
+| `packages/research/src/application/opportunity-discovery-service.ts` | 生产（**向后兼容扩展**：可选指定 `claimId` / `sourceId`；缺省路径行为不变 + 回归） |
 | `packages/research/src/domain/material-parser.ts` | 生产（导出 `PARSER_VERSION`；**解析行为不变**） |
 | `src/cli/research-commands.ts` · `src/cli/research-format.ts` | 生产（五种 outcome 的打印 + `retry` / `--force`） |
 | `packages/research/src/c-mvp-r1.test.ts`（新） | 测试 T-R1-1 … T-R1-9 |
@@ -1960,8 +2079,10 @@ type MaterialIngestOutcome =
 
 ---
 
-> **授权声明：§29 为 DESIGN ONLY。实现 / commit / push 均未授权；`D-R1-3`（幂等身份 A/B）待裁决。**
+> **授权声明：§29 为 DESIGN ONLY。实现 / commit / push 均未授权。**
+> **待裁决项（2 项）**：`D-R1-3`（幂等身份 A / B —— 建议 B）· `D-R1-5`（未完成材料可见性 5a / 5b —— 建议 5a）。
+> **已随 rev2 锁定**：`D-R1-1`（状态机 + 查重）· `D-R1-2`（返回枚举）· `D-R1-4`（跨库恢复 + 逐块协议）· `D-R1-6`（并发认领）。
 > 裁决后才进入 Implementation Authorization；届时先补"预计文件清单确认"与"失败场景可测性复核"。
 
-**End of §29（rev1）.**
+**End of §29（rev2）.**
 

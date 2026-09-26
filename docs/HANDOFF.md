@@ -18,7 +18,7 @@
 | HEAD / 远端 | **`aa4dc95`**（`test: add Phase C5-D preparation projection coverage`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **383 tests**（2026-09-26 四次运行：3 次全绿 / 1 次 flaky `C1-29`，见 §2.5）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 契约已落盘**（`docs/phaseC/implementation-contract.md` **§29**，DESIGN ONLY）；**实现未授权**，其中 **`D-R1-3`（幂等身份 A/B 路线）待裁决** |
+| 下一步 | **C-MVP-R1 契约已落盘并修订到 rev2**（`docs/phaseC/implementation-contract.md` **§29**，DESIGN ONLY）；**实现未授权**；**两项待裁决：`D-R1-3`（幂等身份 A/B）· `D-R1-5`（未完成材料可见性 5a/5b）** |
 | 之后 | C6：Material → Claim → Knowledge Evolution（未授权）；Phase C 完整版（Fragment / Evidence 链）需另立契约 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
