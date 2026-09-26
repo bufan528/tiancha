@@ -1056,4 +1056,247 @@ companyName 是 Company Universe 的「展示字段」：
   - ★ 不是 Proposal 的新 SoT
 ```
 
-**End of contract（rev6.1）.**
+**End of §20（rev6.1）.**
+
+---
+
+# §21 rev1 — C5-D Implementation Contract（Diligence Preparation Boundary Freeze + ResearchPlan 只读衔接）
+
+> 状态：**rev1 — CONTRACT DRAFT（已过 Scope Review；待 Final Lock）.** 父基线：`8b822f4`（C5-C 已发布）。
+> **C5-D Implementation / Commit / Push 均未授权。**
+> 来源：Scope Audit v2 = 🟢 PASS；Scope Review 定案 4 项 + rev1 纳入 4 处必改 + 2 处建议改。
+
+## §21.0 修订历史
+
+| 版本 | 变更 |
+|---|---|
+| （Draft） | 首版 §21：D1–D4 + R1–R10 + T-D-1…T-D-10 |
+| **rev1** | ① `preparationRef` 改为「复用既有 SoT」而非 C5-D 自定义 ID；② SQL 禁令改为「不得建立独立 Preparation SQL/SoT」；③ **T-D-4 前置明确为 Target 已存在 + Preparation 不存在**，并新增**状态表**；④ 新增 **T-D-11**（confirmed 但 Target 不存在不得伪造 Preparation）；⑤ **T-D-9 行为化**（spy/content fingerprint，静态仅辅助）；⑥ formatter 只消费 Plan projection，不得二次查库 |
+
+## §21.1 C5-D 定位
+
+```
+C5-A  推荐谁                              （已发布 f4e48b2 / e921147）
+C5-B  人工决定                            （已发布 dd07538 / 4c5db64）
+C5-C  Plan 展示 Proposal / Target         （已发布 50075f2 / 735be57 / 8b822f4）
+C5-D  Target → DiligencePreparation 衔接  （本 §21）
+C6    Research Material → Claim → Knowledge Evolution（未授权）
+```
+
+**定位声明（原文锁定）**：C5-D **不是新领域能力建设**。`DiligencePreparation` 的表 / 领域对象 / Service / CLI **均已存在且基本正确**（Scope Audit v2 已证明）。C5-D = **边界冻结** + **唯一一项**新的只读生产能力。
+
+```
+新增生产能力：1     （ResearchPlanProposal.preparation 摘要投影）
+新增数据库：  0     · 新增 migration：0
+新增 CLI：    0     · 新增 Knowledge subject：0
+新增 Target 决策能力：0 · 新增 Material / Claim / LLM / Report：0
+```
+
+## §21.2 D1 — Target Gate 语义冻结（LOCKED）
+
+**规则**：Preparation 的**进入资格由 `ResearchTarget` 的存在性决定，而非由 `TargetStatus` 决定。**
+
+```
+prepare(targetRef)
+  → repo.getTarget(targetRef)
+      ├─ 不存在 ⇒ throw new Error("unknown target '<ref>'")   ★ 确定性错误，不是降级
+      └─ 存在   ⇒ 生成 / 重新生成 preparation
+```
+
+推论（原文冻结）：
+
+- `proposed` / `rejected` Proposal **不产生 `ResearchTarget`** ⇒ **无 `targetRef` 可传** ⇒ **结构上无法进入 `prepare()`** ⇒ **C5-B 人工决策门不可能被绕过**。
+- `ResearchTarget.createdBy` **硬编码 `"user"`**（T-B8）⇒ 所有 Target 均经人确认。
+- **`dropped` Target 仍可有 Preparation**：C5-D **不改变**既有历史研究语义，**不把 `dropped` 解释为「Target 从数据库中消失」**。
+- **不要求改动 `prepare()`**（现状已满足）⇒ 仅**冻结语义** + 补断言。
+
+## §21.3 D2 — 三个访问层次必须分开（LOCKED）
+
+```
+DiligencePreparationService.prepare()   =  MATERIALIZATION / WRITE PATH
+DiligencePreparationService.get()       =  READ PATH
+DiligencePreparationService.list()      =  READ PATH
+ResearchPlanService.build()             =  READ-ONLY PROJECTION
+```
+
+**措辞禁令（原文冻结）**：**禁止**写「DiligencePreparation 是只读的」。
+准确表述：**Preparation 的读取是只读的；`prepare()` 是其自身持久化的 materialization / write path。**
+
+**唯一写权**：`prepare()` **只能**写 `diligence_preparation`（现状 `:175 repo.upsertPreparation()`），**不得**借此写 `research_target` / `target_proposal` / `target_proposal_decision` / Knowledge / Gap / Question / Requirement。
+
+## §21.4 D3 — `currentUnderstanding` 语义冻结（LOCKED）
+
+**原文锁定**：
+
+> `DiligencePreparation.currentUnderstanding` 当前代表 **Industry-level Knowledge projection**，**不代表** company-level Knowledge subject。
+
+```
+Target（某家公司） → Preparation → currentUnderstanding → Industry Knowledge（subjectKind = "industry"）
+```
+
+- 证据：`diligence-preparation-service.ts:191 findKnowledgeBySubject("industry", industryId)`。
+- **不得**新建 company-level Knowledge subject（会让 SoT 分叉；留给 C6+ 评估）。
+- **字段名保持 `currentUnderstanding` 不变**（**不**重命名为 `industryUnderstanding`）⇒ 仅由本契约注释解释语义；**无 migration / 无 compatibility 成本**。
+- `beliefs[].claimRef` 必须**真实来自 `knowledge_belief`**（R8）；subject 缺失 ⇒ `beliefs: []` + `version: 0`（**诚实降级，禁止编造**）。
+
+## §21.5 D4 — `ResearchPlan → Preparation` 摘要投影（C5-D 唯一新增能力）
+
+### DTO（**只此三个字段**，原文冻结）
+
+```ts
+preparation:
+  | {
+      preparationRef: string;      // ★ 取自 DiligencePreparationService.get() 的返回值
+      status: PreparationStatus;   // "draft" | "ready" | "used"
+      questionCount: number;       // ★ 仅计 state === "current" 的 question
+    }
+  | null;
+```
+
+**`preparationRef`（rev1 变更 ①）**：
+
+```
+必须直接取自 DiligencePreparationService.get(...) 返回的 preparation.preparationRef。
+当前既有实现中其值为 dp-<targetRef>；
+C5-D 不重新定义、生成或重构该标识规则。
+```
+
+**`questionCount` 定义**：`preparation.questions.filter(q => q.state === "current").length`（**不含 `retired`**）。
+
+**挂载位置（原文冻结）**：`positions[].proposals[].preparation` —— C5-C 提案链上的**唯一**位置。
+
+- **`industryTargets[]` 不改动**（C2 冻结面；避免出现第二个 Preparation 展示出口）。
+- **明确不加入**：`purpose` / `targetBrief` / `currentUnderstanding` / `questions[]` / `requestedMaterials[]` / `requestedData[]` / `risks[]` / `cautions[]`。Plan 是 overview；完整 Preparation 由 `research diligence <行业> --target <targetRef>` 负责。
+
+### SoT-first（rev1 变更 ②）
+
+```
+ResearchPlanService 不得直接查询 diligence_preparation 表；
+不得在 ResearchPlanService 中新增针对 Preparation 的 SQL / Repository 读取路径。
+必须复用既有 DiligencePreparationService.get() 作为 Preparation SoT。
+```
+
+### 实现方式（rev1 变更 ③）
+
+```
+ResearchPlanService 必须通过既有 DiligencePreparationService.get() 所定义的读取语义
+获得 Preparation SoT。实现可以复用已有 service / repository 读取能力
+（逐个 get 或批量读取后映射均属实现细节），
+但不得在 ResearchPlanService 内建立独立的 Preparation SQL / SoT。
+
+不得调用 prepare()。
+不得因为 Preparation 不存在而创建 Preparation。
+```
+
+### 状态表（rev1 变更 ④ — **T-D-4 必须使用第 3 行**）
+
+| Proposal | Target | Preparation | `Plan.preparation` |
+|---|---|---|---|
+| proposed | 无 | 无 | `null`（语义：尚无 Target） |
+| rejected | 无 | 无 | `null`（语义：尚无 Target） |
+| **confirmed** | **有** | **无** | **`null`（语义：Target 已存在，Preparation 尚未物化）** |
+| confirmed | 有（`dropped` 亦同） | 有 | `{preparationRef, status, questionCount}` |
+| confirmed | **不存在** | 有/无 | `null`（**禁止由 `status` 推导**，见 T-D-11） |
+
+**`null` 是合法且重要的状态**；表示「Target 已存在，但目前没有已物化的 Preparation」。
+
+### formatter 约束（rev1 变更 ⑥）
+
+```
+human formatter 只能消费 Plan 已经给出的 projection，
+不得自行重新读取 Preparation（禁止 formatter 二次查库）。
+human 侧：有 Preparation ⇒ 行尾附 `· 调研准备 <status>（N 问）`；
+          无（null）⇒ 整段省略，不输出「调研准备：无」。
+```
+
+## §21.6 R1–R10 Red Lines（全部可测）
+
+```
+R1   Plan 不得创建 ResearchTarget
+R2   Plan 不得 Confirm / Reject TargetProposal
+R3   Plan 不得修改 Knowledge
+R4   Plan 不得修改 ResearchGap
+R5   Plan 不得修改 ResearchQuestion
+R6   Plan 不得修改 InformationRequirement
+R7   Preparation 不得凭空创造 Company facts
+       —— 属既有 Preparation provenance / factuality 边界的回归约束；
+          C5-D 不新增 Company factual enrichment 能力。
+R8   currentUnderstanding 中的每个 belief 必须保留 claimRef provenance
+R9   不存在 ResearchTarget 的 Proposal 不得生成正式 Preparation
+R10  ★ ResearchPlan.build() 不得触发 prepare() 或任何写操作
+         —— 特别禁止 `if (!preparation) preparationService.prepare(targetRef);`
+```
+
+## §21.7 OUT — 明确禁止实现（原文冻结）
+
+```
+❌ 新建 ResearchPreparation 实体 / research_preparation 表 / target_research_preparation / research_outline / company_knowledge
+❌ migration（New tables = 0，Migration = 0）
+❌ 重命名 / 删除 DiligencePreparation；重命名 currentUnderstanding
+❌ 重做 QuestionSource / TargetRecommendation / TargetProposal / Human Decision
+❌ 把 prepare() 改成纯函数
+❌ 扩展 Company 为「大而全企业档案」
+❌ company-level Knowledge subject
+❌ LLM / Report / Material ingestion / Claim extraction / Knowledge write-back
+❌ 新 CLI verb（保持 `research plan` + `research diligence` 两个出口）
+```
+
+**表集合不变**（继续使用既有 `research_target` / `diligence_preparation` / `diligence_question` / `knowledge_belief` / `research_gap` / `information_requirement` / `research_question`）⇒ `phase-c3-b.test.ts` 的 `TABLES_24` 与 C5-C `T-C5-C-11` **必须保持通过**。
+
+## §21.8 验收矩阵（T-D-1 … T-D-11 + 回归保留）
+
+| Test | 目的 | 断言要点 |
+|---|---|---|
+| **T-D-1** | unknown Target → 确定性 throw | `assert.throws(() => prepare("tgt-nope"), /unknown target/)` |
+| **T-D-2** | `dropped` Target → preparation 仍可 materialize | 先置 status=`dropped`，再 `prepare()` 成功 |
+| **T-D-3** | `dropped` Target 状态不被改变 | `prepare()` 前后 `getTarget(ref).status === "dropped"` |
+| **T-D-4** | Plan 无 Preparation → `null`（★ 前置必须完整） | 构造 **confirmed + Target 存在 + Preparation 不存在** ⇒ `plan.preparation === null`；**禁用**「proposed + targetRef null」代替 |
+| **T-D-5** | Plan 有 Preparation → 三字段准确映射 | `preparationRef` / `status` / `questionCount` 与 SoT 一致；去掉 `current` 过滤须转红 |
+| **T-D-6** | Plan summary 与 `get()` 一致 | `deepEqual(plan.preparation, expectedFromGet)` |
+| **T-D-7** | Plan build **内容指纹** zero-write | `dbFingerprint` 用 `JSON.stringify(rows)`；两次 `build()` 前后一致 |
+| **T-D-8** | 两次 `build()` `deepEqual` | 含 `preparation` 字段与数组顺序 |
+| **T-D-9** | Plan 无写入 / 决策 / Target 创建路径（★ **行为与边界证明**） | 证明 `build()`：不调 Preparation write path；不调 confirm/reject；不调 Target creation；不执行 Knowledge / Gap / Question / Requirement 写入；不执行 Proposal / Decision 写入。**优先**行为测试 / DI spy / call counter / SQLite content fingerprint；静态检查仅辅助，**不得**把生产代码字面量硬编码进被扫描文件（自命中禁令） |
+| **T-D-10** | `belief.claimRef` 真实存在于 Knowledge SoT | 断言 `claimRef` ∈ `knowledge_belief` 现有行 |
+| **T-D-11** | confirmed 但 Target 不存在 ⇒ 不得伪造 Preparation（★ 新增） | 构造 `status=confirmed` 且 `ResearchTarget` 不存在 ⇒ `plan.preparation === null`；未调 `prepare()`；未创建 Target；Proposal / Decision / Knowledge / Gap 不变。**禁令**：不得由 `proposal.status === "confirmed"` 推导 Preparation 存在 |
+
+**mutation（每条须有「故意破坏 ⇒ 转红」证据）**：
+
+```
+· build() 内自动 prepare() / 构造 fake preparation ⇒ T-D-7 + T-D-9 + T-D-11 必须转红
+· 由 proposal.status === "confirmed" 直接推导 preparation ⇒ T-D-11 必须转红
+· 去掉 state === "current" 过滤（retired 也计数）      ⇒ T-D-5 必须转红
+· 把 null 改为构造 fake preparation                     ⇒ T-D-4 必须转红
+```
+
+**回归保留**：`phase-c2-diligence.test.ts`（A–I-C2-9）、`phase-b-step-b4.test.ts`（T-B20）、`phase-b-b5-cli.test.ts`（T-B27）、`phase-b-b5-exposure.test.ts`（T-B28-4）、C5-C 的 zero-write / idempotency / 表集合。
+
+## §21.9 与既有冻结面的冲突检查
+
+| 冻结面 | 约束 | C5-D 影响 |
+|---|---|---|
+| C2 `phase-c2-step2c.test.ts:525` | Plan DTO 禁列 `planId`/`createdAt`/`updatedAt`/`versionId`/`save(`/`upsert(` | ✅ 只**新增**只读字段 `preparation`，不触碰禁列 |
+| C2 `phase-c3-b.test.ts:322 T-C3-22b` | `build()` 前后表集合不变 | ✅ **无新表** |
+| C2 `:432` | 两次 `build()` `deepEqual` | ✅ 保持（T-D-8） |
+| C5-A 冻结 | `rank()` 调用面 / Priority Policy 不变 | ✅ 不涉及 |
+| C5-B 冻结 | `confirm` 是产生 `research_target` 的唯一路径 | ✅ **加强**（R9 / R10） |
+| C5-C 冻结 | Plan 零写（内容指纹） | ✅ 扩展到 `preparation`（T-D-7） |
+| C4 Report 冻结面 | 不触碰 | ✅ 不冲突 |
+| `§2.4` Position→Target 红线 | Plan 不新增该路径（只**读**已有 targetRef） | ✅ 不冲突 |
+| **formatter 语义** | human 只消费 Plan projection（rev1 变更 ⑥） | ✅ 新增约束 |
+
+**结论：无冲突、无 BLOCKER；C5-D 是纯增量只读扩展 + 既有能力边界冻结。**
+
+## §21.10 预计文件清单（**待 Implementation Authorization 时确认**）
+
+| 文件 | 性质 | 预估 |
+|---|---|---|
+| `packages/research/src/domain/research-plan.ts` | 生产（**扩展只读 DTO**） | 新增 Preparation 摘要类型 + 在 `ResearchPlanProposal` 加 `preparation` |
+| `packages/research/src/application/research-plan-service.ts` | 生产（**只读**） | 复用 `DiligencePreparationService.get()`；不新增 Preparation SQL |
+| `src/cli/research-format.ts` | 生产（展示） | human 行尾附 `· 调研准备 <status>（N 问）` / `null` 时省略 |
+| `src/cli/tiancha.ts` | 生产（组合根） | 如需，注入 `DiligencePreparationService` 依赖 |
+| `packages/research/src/phase-c5-d.test.ts` | 测试（新） | T-D-1 … T-D-11 |
+| `src/cli/phase-c5-d-cli.test.ts` | 测试（新） | Plan 展示（human / `--json`）一致 |
+
+**测试契约提示**：断言模式**不得**把被扫描的代码字面写进被扫描文件（自命中禁令，C5-A / C5-C 均已踩坑）。
+
+**End of contract（rev7）.**
