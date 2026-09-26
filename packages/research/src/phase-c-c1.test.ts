@@ -541,7 +541,12 @@ describe("Phase C · C1 · Knowledge Projection Semantic Alignment", () => {
     const afterConfirm = repo.findKnowledgeBySubject("industry", subject)!;
     assert.equal(afterConfirm.version, 2, "confirming changed current cognition ⇒ the version moves");
     assert.deepEqual(afterConfirm.beliefs.map((x) => x.beliefId), [result.beliefId]);
-    assert.notEqual(afterConfirm.updatedAt, beforeConfirm.updatedAt);
+    // ★ flaky fix (C1-29): two wall-clock strings can be IDENTICAL within one millisecond, so
+    // `notEqual` was a coin flip. Monotonicity + the version move above are the real invariant.
+    assert.ok(
+      afterConfirm.updatedAt >= beforeConfirm.updatedAt,
+      "updatedAt never goes backwards when confirming moves CURRENT cognition",
+    );
 
     // A rejected candidate was never current ⇒ it must NOT move the version.
     const other = project(svc, subject, "supply", { requiresHumanGate: true }).result;
