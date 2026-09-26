@@ -124,6 +124,8 @@ export class ResearchPlanService {
     // ---- C5-C: proposals (READ-ONLY; §20.5 red line 2 — we never query the tables ourselves) --
     const targetSvc = new TargetService(this.db);
     const companyById = new Map(new CompanyService(this.db).list(industryId).map((c) => [c.companyId, c]));
+    // ★ C5-D §21.5 SoT-first: the Preparation READ path — get() only, never prepare().
+    const prepSvc = new DiligencePreparationService(this.db);
 
     /**
      * ★ Explicit field-by-field map — deliberately NOT `{ ...proposal }` (§20.4 / attention A):
@@ -139,6 +141,18 @@ export class ResearchPlanService {
         p.status === "confirmed" && company
           ? targetRefFor(p.industryRef, subjectKeyForCompany(company))
           : null;
+      // ★ C5-D §21.5 mapping chain (MUST FIX-2): a proposal reaches a preparation ONLY through its
+      //   VERIFIED targetRef — status, companyRef, companyName, proposalRef, selectionReason and
+      //   positionRef are never used to guess one, and the target existence check is never bypassed.
+      //   `preparationRef` comes FROM the Preparation SoT (SHOULD FIX-1: the plan must not build
+      //   it); a missing preparation is a legal `null` — not an error, no back-fill, no fake object
+      //   (MUST FIX-1).
+      const verifiedRef =
+        candidateRef !== null && targetSvc.get(candidateRef) ? candidateRef : null;
+      const prepRef = verifiedRef
+        ? preparationByTargetRef.get(verifiedRef)?.preparationRef
+        : undefined;
+      const preparation = prepRef ? prepSvc.get(prepRef) : undefined;
       return {
         proposalRef: p.proposalRef,
         industryRef: p.industryRef,
@@ -166,7 +180,15 @@ export class ResearchPlanService {
             }
           : null,
         // ★ Plan never creates / repairs a target: it only REPORTS one that already exists.
-        targetRef: candidateRef !== null && targetSvc.get(candidateRef) ? candidateRef : null,
+        targetRef: verifiedRef,
+        // ★ C5-D §21.5: read-only summary of the existing Preparation SoT (or the legal `null`).
+        preparation: preparation
+          ? {
+              preparationRef: preparation.preparationRef,
+              status: preparation.status,
+              questionCount: preparation.questions.filter((q) => q.state === "current").length,
+            }
+          : null,
       };
     };
     const proposalViews = new TargetProposalService(this.db)

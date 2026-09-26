@@ -47,6 +47,20 @@ export interface ResearchPlanPreparation {
   status: string;
 }
 
+/**
+ * ★ C5-D §21.5: the ONE new capability — a read-only Preparation summary attached to a
+ * confirmed proposal (never to an industry target). Three fields only; `questionCount` counts
+ * CURRENT questions only. `null` is a legal and meaningful state (see §21.5 status table).
+ */
+export interface ResearchPlanProposalPreparation {
+  /** Taken FROM the Preparation SoT — the plan never constructs this identifier (§21.5). */
+  preparationRef: string;
+  /** The preparation's own status — `draft` | `ready` | `used`. */
+  status: string;
+  /** CURRENT (`state === "current"`) questions only — retired ones are excluded. */
+  questionCount: number;
+}
+
 export interface ResearchPlanTarget {
   targetRef: string;
   subjectKey: string;
@@ -101,6 +115,12 @@ export interface ResearchPlanProposal {
   proposedAt: string;
   decision: ResearchPlanDecision | null;
   targetRef: string | null;
+  /**
+   * ★ C5-D §21.5: the read-only Preparation summary for `targetRef`, or `null` when the verified
+   * target has no materialised preparation yet. NEVER inferred from `status`, NEVER fabricated,
+   * and `prepare()` is never triggered to fill it in.
+   */
+  preparation: ResearchPlanProposalPreparation | null;
 }
 
 export interface ResearchPlanPosition {

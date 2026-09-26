@@ -466,7 +466,12 @@ function formatProposalLine(p: ResearchPlanProposal): string {
         p.decision.comment ? `：${p.decision.comment}` : ""
       }`
     : " · 尚无决策";
-  return `            · ${p.companyName}（${p.matchedTargetKinds.join("/")}）· ${state} · 评分 ${p.score} · ${p.proposalRef}${decision}`;
+  // ★ C5-D §21.5: the summary is consumed STRAIGHT from the plan projection — the formatter never
+  //   re-reads the Preparation SoT. `null` omits the suffix entirely (no "调研准备：无" noise).
+  const preparation = p.preparation
+    ? ` · 调研准备 ${p.preparation.status}（${p.preparation.questionCount} 问）`
+    : "";
+  return `            · ${p.companyName}（${p.matchedTargetKinds.join("/")}）· ${state} · 评分 ${p.score} · ${p.proposalRef}${decision}${preparation}`;
 }
 
 export function formatPlanHuman(view: ResearchPlanView): string {
