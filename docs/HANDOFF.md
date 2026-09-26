@@ -18,7 +18,7 @@
 | HEAD / 远端 | **`aa4dc95`**（`test: add Phase C5-D preparation projection coverage`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **383 tests**（2026-09-26 四次运行：3 次全绿 / 1 次 flaky `C1-29`，见 §2.5）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 契约已全部 LOCKED**（`docs/phaseC/implementation-contract.md` **§29** rev3：`D-R1-3 = B` 块级账本 · `D-R1-5 = 5a` 部分可见 + 显式标注）；**实现未授权（需显式授权）** |
+| 下一步 | **C-MVP-R1 契约已全部 LOCKED**（`docs/phaseC/implementation-contract.md` **§29** rev4：`D-R1-3 = B` 块级账本 · `D-R1-5 = 5a` 部分可见 + 显式标注 · **rev4 修正并发认领**）；**实现未授权（需显式授权）** |
 | 之后 | C6：Material → Claim → Knowledge Evolution（未授权）；Phase C 完整版（Fragment / Evidence 链）需另立契约 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
@@ -518,7 +518,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **C5-B** | **Human-Gated Decision**：`research confirm\|reject <proposalRef> --operator <name>`；**`confirm` 是产出 `research_target` 的唯一路径**；Agent **不获得**该写权限 | ✅ |
 | **C5-C** | **Plan 只读消费 Proposal/Decision**：`research plan` 展示 `positions[].proposals`（含 decision 与 `targetRef` 校验）+ `orphanProposals`；`--json` 向后兼容；零写用**内容指纹**证明 | ✅ |
 | **C5-D** | **Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影**（`{preparationRef, status, questionCount} \| null`）：契约 LOCK（`7672a49`）→ **已实现（`dc64c33`）+ 测试（`aa4dc95`）+ 独立复验收口（§21.11）**；`New tables = 0, Migration = 0` | ✅ |
-| **C-MVP-R1** | **Material 导入可靠性**（状态机 + 续跑 + 查重语义 + 返回枚举 + 跨库恢复）：**仅契约**（总契约 **§29**，DESIGN ONLY），**`D-R1-3` 待裁决** | 📝 契约待裁决 |
+| **C-MVP-R1** | **Material 导入可靠性**（状态机 + 续跑 + 查重语义 + 返回枚举 + 跨库恢复 + 并发认领 + 块级账本）：**仅契约**（总契约 **§29** rev4，DESIGN ONLY）—— **全部 LOCKED**，**实现未授权** | 📝 契约 LOCKED |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -661,7 +661,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/architecture-review/07-domain-model-design.md` | **领域模型**：10 上下文 / 聚合 / 14 不变量 / identity / 生命周期 / §3.8a 评分口径 |
 | `docs/architecture-review/08-code-design.md` | **代码设计**：Phase A 详细 + S1–S7 拆分 + 表/接口/工具 |
 | `docs/phaseB/implementation-contract.md` | **Phase B v1 实现契约（B1–B5 已全部实现，见其 §12）**：Need → Position → Target → Fit → Diligence 的字段/identity/不变量/写入边界/T-B 验收 |
-| `docs/phaseC/implementation-contract.md` | **Phase C 总契约**（C1 语义 / SoT 边界 / 演化 / Human Gate / 幂等 / 不变量 / 验收场景）+ **§29 = C-MVP-R1（材料导入可靠性，DESIGN ONLY，`D-R1-3` 待裁决）** |
+| `docs/phaseC/implementation-contract.md` | **Phase C 总契约**（C1 语义 / SoT 边界 / 演化 / Human Gate / 幂等 / 不变量 / 验收场景）+ **§29 = C-MVP-R1（材料导入可靠性，DESIGN ONLY，全部 LOCKED、实现未授权）** |
 | `docs/phaseC/c5-implementation-contract.md` | **C5-A → C5-D 单文件谱系契约**（§19 C5-B · §20 C5-C · §21 C5-D；**§21.11 = 实现与验收闭环**） |
 | `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
 | `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
@@ -698,7 +698,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | C1–C4（Knowledge 语义 / Planning / Priority 验证 / Report） | ✅ | ✅ | ✅ | ❌ | — |
 | C5-A / C5-B（推荐 / 人工决定） | ✅ | ✅ | ✅ | ❌ | **真实库尚无 `target_proposal*` 两张表** |
 | C5-C / C5-D（Plan 只读消费 / Preparation 摘要） | ✅ | ✅ | ✅ | ❌ | — |
-| **C-MVP-R1**（材料导入可靠性） | 📝 契约 rev3（§29，**全部 LOCKED**） | ❌ | ❌ | ❌ | **实现未授权**（`D-R1-3 = B` · `D-R1-5 = 5a`） |
+| **C-MVP-R1**（材料导入可靠性） | 📝 契约 rev4（§29，**全部 LOCKED**） | ❌ | ❌ | ❌ | **实现未授权**（`D-R1-3 = B` · `D-R1-5 = 5a` · rev4 并发认领修正） |
 | C6 / Phase C 完整版（Material → Fragment → Evidence → Claim） | ⛔ 未授权 | ❌ | ❌ | ❌ | `DocumentFragment` 仅类型；`evidence/evidence-engine.ts` 返回 `[]` |
 | Phase D（外环：Experience → Pattern → 方法论候选） | ⛔ 未授权 | ❌ | ❌ | ❌ | 红线 9：不预造空壳表 |
 | Phase E（Wind / 自动发现行业） | ⛔ 未授权 | ❌ | ❌ | ❌ | `echo-data-provider.ts` 仍是占位（`isRealExternalData=false`） |

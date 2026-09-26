@@ -10,7 +10,7 @@
 | 文档 | 内容 |
 |---|---|
 | [`HANDOFF.md`](./HANDOFF.md) | **总入口**：完整需求（25 步链路 / 两个知识体系 / 两个 Loop / 四类知识 / 红线）、真实状态、架构、路线、踩坑 |
-| [`phaseC/implementation-contract.md`](./phaseC/implementation-contract.md) | **Phase C 总契约**（C1 Knowledge 语义 · SoT 边界 · 演化规则 · Human Gate · 幂等 · 不变量 · 验收场景）；专项契约：`phaseC/c2-*` · `c3-*` · `c4-*` · [`phaseC/c5-implementation-contract.md`](./phaseC/c5-implementation-contract.md)（C5-A→C5-D 单文件谱系；**§21.11 = 实现与验收闭环**）。**§29 = C-MVP-R1（材料导入可靠性，DESIGN ONLY，`D-R1-3` 待裁决）** |
+| [`phaseC/implementation-contract.md`](./phaseC/implementation-contract.md) | **Phase C 总契约**（C1 Knowledge 语义 · SoT 边界 · 演化规则 · Human Gate · 幂等 · 不变量 · 验收场景）；专项契约：`phaseC/c2-*` · `c3-*` · `c4-*` · [`phaseC/c5-implementation-contract.md`](./phaseC/c5-implementation-contract.md)（C5-A→C5-D 单文件谱系；**§21.11 = 实现与验收闭环**）。**§29 = C-MVP-R1（材料导入可靠性，DESIGN ONLY，全部 LOCKED、实现未授权）** |
 | [`architecture-review/06-business-intelligence-architecture-v3.1-final.md`](./architecture-review/06-business-intelligence-architecture-v3.1-final.md) | **业务与知识模型（最终锁定）**：四类知识、两个 Loop、Pool=组织层、Priority 内环、Evaluation 四面、Report=Projection、入口能力 |
 | [`architecture-review/07-domain-model-design.md`](./architecture-review/07-domain-model-design.md) | **领域模型**：10 限界上下文、聚合与不变量（I1–I16）、identity、生命周期、**§3.8a 评分口径（12→7 两层映射）** |
 | [`architecture-review/08-code-design.md`](./architecture-review/08-code-design.md) | **代码设计**：Phase A 详细设计 + S1–S7 小步拆分、表 / 接口 / 工具 |

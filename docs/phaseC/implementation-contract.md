@@ -1798,6 +1798,7 @@ D SUPERSEDE B           → 必须【成功】
 | **rev1** | 首版：as-built 失败机制（逐行核对）+ 状态机 + 查重规则 + 返回语义 + 跨库恢复 + 幂等身份（含 **1 项待裁决**）+ OUT + 失败注入验收 T-R1-1…T-R1-9 |
 | **rev2** | 验收者复核后的 5 处闭合（**不改 scope**）：① **§29.2 历史行迁移三分判定**（空引用旧行不再一律落 `received`，新增 `legacy_failed` + 迁移汇总）；② **§29.5a 并发所有权认领**（唯一索引 + 原子 `UPDATE` 租约；T-R1-10 用**两个独立进程**验收）；③ **§29.5b 逐块可恢复协议**（`claimId` 在 P1 预留并持久化；`ArtifactStore.put` 幂等复用；`ingestClaims` 向后兼容扩展）；④ **§29.6.1 未完成材料的可见性**（**D-R1-5 待裁决**）；⑤ **§29.8 T-R1-2 计数口径**（限定为**有效解析**的块；格式错误块只进 `parseErrors`）。新增 T-R1-10 / T-R1-11 / T-R1-12 |
 | **rev3** | **裁决锁定**（用户 2026-09-26）：`D-R1-3 = B`（块级进度账本）· `D-R1-5 = 5a`（接受部分可见 + 显式标注）。两项写入 **§29.11 裁定记录**；本契约**无剩余待裁决项**。**实现仍未被授权** |
+| **rev4** | **并发认领修正**（验收者指出 rev2 条款缺陷）：`§29.5a` 准入条件改为**只看租约**（`NULL` / 已过期），并在**同一条 `UPDATE`** 里推进 `ingest_status = 'projecting'` ⇒ "恰好一个持有者"成立；`legacy_failed` **排除在自动认领之外**；**T-R1-10 扩展**为两条竞争路径（首次 `INSERT` / 同一条 `failed` 并发续跑）+ 相应打红项。另修 HANDOFF/INDEX 残留的"`D-R1-3` 待裁决"表述 |
 
 ## §29.1 现状（as-built 失败机制，逐行核对）
 
@@ -1909,7 +1910,7 @@ type MaterialIngestOutcome =
 - `completed` 是终态。人工显式 `--force` 重跑：记入 `ingest_attempts`，**保留**原 `claim_refs_json` 的审计轨迹（**不静默删除历史**）。
 - 失败后保留的材料**允许且只允许**通过**显式人工动作**重新处理（CLI `retry` / `--force`）；系统**不得**自动重跑 `failed` 行。
 
-### §29.5a 并发所有权认领（rev2 · D-R1-6，**LOCKED**）
+### §29.5a 并发所有权认领（rev4 修正 · D-R1-6，**LOCKED**）
 
 **问题**：光有状态字段挡不住两个进程"同时查到没有记录 / 同时看到 `failed`，各自开始导入"。
 
@@ -1921,25 +1922,37 @@ type MaterialIngestOutcome =
              由 UNIQUE(subject_kind, subject_id, content_hash) 裁决
              冲突者 ⇒ 回读既有行，转 ②（不抛异常给用户）
 
-② 认领路径（对 received / parsed / failed，或已过期的 projecting）：
+② 认领路径（★ rev4 修正：**租约是唯一的准入条件**，且认领必须同一条 UPDATE 推进状态）
+
    UPDATE material
-      SET ingest_owner = :me,
+      SET ingest_status      = 'projecting',
+          ingest_stage       = :resumeStage,        -- 由账本 / 原状态推导的续做阶段
+          ingest_owner       = :me,
           ingest_lease_until = :now_plus_lease,
-          ingest_attempts = ingest_attempts + 1
+          ingest_attempts    = ingest_attempts + 1
     WHERE material_id = :id
-      AND ( ingest_status IN ('received','parsed','failed')
-            OR (ingest_status = 'projecting'
-                AND (ingest_lease_until IS NULL OR ingest_lease_until < :now)) )
+      AND (ingest_lease_until IS NULL OR ingest_lease_until < :now)   -- ★ 租约空闲
+      AND ingest_status IN ('received','parsed','failed','projecting')
    检查 changes()：
 
-   · changes() = 1  ⇒ 认领成功，进入 §29.5b 的逐块协议（该进程是唯一写入者）
+   · changes() = 1  ⇒ 认领成功（状态已变为 'projecting' + 租约为未来时刻）⇒ 进入 §29.5b
    · changes() = 0  ⇒ 别人在跑 ⇒ 返回 outcome = "in_progress"（附对方 status / owner / lease_until，不等待、不自旋）
 ```
 
+**rev4 为什么必须这样改（rev2 条款的缺陷，已由验收指出）**：
+
+- rev2 把**状态**当准入条件（`ingest_status IN ('received','parsed','failed')` 分支**不检查租约**），且认领时**不改变状态**（`failed` 仍为 `failed`）。
+- 后果：进程 A 认领成功（`changes() = 1`）后状态仍是 `failed` ⇒ 进程 B 在同一条件下**同样**得到 `changes() = 1`
+  ⇒ **"恰好一个持有者"不成立**，双写风险只是被"看起来有租约"掩盖了。
+- 修正要点：**准入只看租约**（`NULL` 或已过期）；**状态只决定续做位置**；"立租约 + 推进到 `projecting`"必须是**同一条 `UPDATE`**。
+- 另一处等价写法也**不允许**：先 `SELECT` 判断再 `UPDATE`（读-改-写窗口会重新引入双写）。
+
+- `legacy_failed` **不在自动认领集合里**：它只能由**显式人工 `retry`** 认领（同一条 `UPDATE`，但入口受限），且必须先完成 §29.2 (c) 的孤儿 Claim 检测。
 - **持租约者必须续租**：每完成一个块就刷新 `ingest_lease_until`（避免长材料把租约耗尽被别人抢走）。
 - 租约时长是**契约参数**（默认值在实现时定稿，必须 ≥ 单块最坏处理时间的数倍）；**不得**用租约做"自动重跑"——它只用于**判定能否认领**。
 - 崩溃后：租约到期 ⇒ 下一个 `retry` 可原子认领 ⇒ 按 §29.5b 从账本续做。
-- **验收必须用两个独立进程**（T-R1-10），不是同一进程内的两次调用。
+- **验收必须用两个独立进程**（T-R1-10），且必须覆盖**两条**竞争路径：
+  ① 同材料**首次**并发提交（`INSERT` 竞争）；② 同一条 **`failed`** 材料**并发续跑**（`UPDATE` 竞争）。
 
 ### §29.5b 逐块可恢复协议（rev2 · D-R1-4，**LOCKED**）
 
@@ -2038,7 +2051,7 @@ P4 收口（全部块 state='projected'）
 | **T-R1-7** | 对外 API 不再有布尔 `created` | 编译期 + 行为各一条断言 |
 | **T-R1-8** | 历史行（C-MVP 已导入）迁移 | 回填 `completed`；**不改** `materialId` / `claim_refs_json` / 行数 |
 | **T-R1-9** | 解析器版本变更后重跑 | `parser_version` 变化被记录；`completed` 行**不**自动重跑 |
-| **T-R1-10** | **两个独立进程**并发提交同一份材料（★ rev2 新增） | 恰好一个得到 `created` / `resumed`；另一个得到 `in_progress`（带对方 owner / lease）或 `duplicate`；最终 `Source` / `Document` / `Claim` **各只有一份**；断言方式是**行为**（进程退出码 + 两库行数），不是日志文案 |
+| **T-R1-10** | **两个独立进程**并发（★ rev2 新增，**rev4 扩展**） | ① **首次并发**（`INSERT` 竞争）：恰好一个 `created`，另一个 `duplicate` 或 `in_progress`；② **同一条 `failed` 材料并发续跑**（`UPDATE` 竞争）：恰好一个 `resumed`，另一个**必须** `in_progress`（带对方 owner / lease_until）—— **两个都 `resumed` 即失败**；③ 最终 `Source` / `Document` / `Claim` **各只有一份**，账本无重复 `blockIndex`。断言方式是**行为**（两进程退出码 + 两库行数），不是日志文案 |
 | **T-R1-11** | 迁移三分判定（★ rev2 新增） | 构造 (a)(b)(c) 三类历史行 ⇒ 分别得到 `completed` / `completed` / **`legacy_failed`**；迁移汇总打印 `a/b/c` 三个数；`materialId` / `claim_refs_json` / 行数不变；**(c) 不被自动续跑** |
 | **T-R1-12** | 跨库崩溃窗口（★ rev2 新增） | 在 P2 的 `put` 之后、状态回写之前打断 ⇒ 重跑**复用 P1 的 `claimId`**（`artifacts.sqlite` 里该 `claimId` 仍只有一行；不产生第二个 Claim），且账本不出现重复 `blockIndex` |
 
@@ -2050,6 +2063,8 @@ P4 收口（全部块 state='projected'）
 · 把 `resumed` 归并成 `duplicate`                 ⇒ T-R1-1 / T-R1-7 必须转红
 · 迁移清空历史行或改 id                           ⇒ T-R1-8 必须转红
 · 去掉 `changes() = 1` 的原子认领（改成"先查后写"）⇒ T-R1-10 必须转红
+· 认领条件里去掉租约检查（只按 `ingest_status` 筛）⇒ T-R1-10 ② 必须转红
+· 认领时不把 `ingest_status` 推进为 `projecting`        ⇒ T-R1-10 ② 必须转红
 · P1 不持久化 `claimId`（改到 P2 才生成）          ⇒ T-R1-12 必须转红
 · 迁移把 `claim_refs_json` 空的旧行一律置 `received` ⇒ T-R1-11 必须转红
 · 把格式错误的 `[CLAIM]` 块也计入账本              ⇒ T-R1-2 必须转红
@@ -2102,5 +2117,5 @@ P4 收口（全部块 state='projected'）
 > **裁决状态：全部 LOCKED**（`D-R1-1` … `D-R1-6`，见 §29.11）；本契约**无剩余待裁决项**。
 > 进入实现需用户**显式授权**；授权后先补"预计文件清单确认"（补 `c-mvp-r1.test.ts` 的 T-R1-1…T-R1-12 落点）与"失败场景可测性复核"。
 
-**End of §29（rev3）.**
+**End of §29（rev4）.**
 
