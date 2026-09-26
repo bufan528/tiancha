@@ -275,14 +275,22 @@ describe("Phase C4-A · cognition / conflict / state consumption", () => {
         "T-C4-7: conflictHistory is exactly the non-open rows",
       );
 
-      // T-C4-8: tamper a row ⇒ Report FOLLOWS the persisted value (read, not recomputed)
-      knowledge.resolveConflict("kcf-c4a-accepted", "accepted", new Date().toISOString());
+      // T-C4-8: MUTATE the persisted value for real (accepted → resolved), then the Report must FOLLOW it.
+      knowledge.resolveConflict("kcf-c4a-accepted", "resolved", new Date().toISOString());
       const before = dbFingerprint(db, ["report_snapshot"]);
       const after = new ReportService(db.db).generateDossier(sid).sections;
       assert.deepEqual(
         after.conflictHistory.map((c) => [c.conflictId, c.status]).sort(),
-        sections.conflictHistory.map((c) => [c.conflictId, c.status]).sort(),
-        "T-C4-8: still the persisted rows",
+        [
+          ["kcf-c4a-accepted", "resolved"],
+          ["kcf-c4a-resolved", "resolved"],
+        ].sort(),
+        "T-C4-8: the Report follows the MUTATED persisted status",
+      );
+      assert.equal(
+        after.conflictHistory.some((c) => c.status === "accepted"),
+        false,
+        "T-C4-8: the old classification is gone — the persisted value really changed",
       );
       // T-C4-9: generating a Report changed NO knowledge_conflict row
       assert.equal(dbFingerprint(db, ["report_snapshot"]), before, "T-C4-9: upstream untouched");
