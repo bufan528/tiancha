@@ -60,9 +60,10 @@ const TABLES = [
   "research_position",
   "research_target",
   "diligence_preparation",
+  "target_proposal",
 ] as const;
 
-/** Row-level fingerprint of ALL 24 tables (proves the plan writes nothing). */
+/** Row-level fingerprint of every table (proves the plan writes nothing). */
 const dbFingerprint = (db: ResearchDb) =>
   JSON.stringify(TABLES.map((t) => [t, db.db.prepare(`SELECT * FROM ${t}`).all()]));
 

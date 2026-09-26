@@ -58,6 +58,7 @@ const TABLES_24 = [
   "research_source",
   "research_state",
   "research_target",
+  "target_proposal",
 ] as const;
 
 /** A rich, real-chain fixture: a full ingest produces 12 gaps + persisted priorities. */

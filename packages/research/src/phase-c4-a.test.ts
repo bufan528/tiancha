@@ -71,6 +71,7 @@ const TABLES = [
   "material",
   "research_position",
   "research_target",
+  "target_proposal",
   "diligence_preparation",
 ] as const;
 
