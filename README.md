@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
 [![Status](https://img.shields.io/badge/Phase%20C%20C5--D%20done-green.svg)](#开发路线)
-[![Tests](https://img.shields.io/badge/tests-383%20passing-brightgreen.svg)](#开发)
+[![Tests](https://img.shields.io/badge/tests-383%20(1%20known%20flaky)-yellow.svg)](#开发)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -180,6 +180,7 @@ node --import tsx src/cli/tiancha.ts research smoke
 ```
 
 > PowerShell 下 SQLite 的 `ExperimentalWarning` 写在 stderr，会显示 `NativeCommandError` —— **不是失败**。
+> 已知 flaky：`C1-29`（同毫秒时间戳断言）偶发失败，重跑即绿，与功能无关。
 
 ---
 

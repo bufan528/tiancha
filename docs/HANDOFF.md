@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
 > **Phase C · C5-D 已实现并发布（`aa4dc95`）** · **代码 HEAD `aa4dc95`**（= `origin/main`，ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对（2026-09-26）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **383 tests（383 pass / 0 fail）** · `research smoke` PASS · 表 **26 张**。
+> 本文档已与真实代码状态**逐项核对（2026-09-26）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **383 tests**（1 个 pre-existing flaky：`C1-29`，见 §2.5） · `research smoke` PASS · 表 **26 张**。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。**C6 / Phase C 完整版仍未授权**（本文件 §0.1 已同步实现与授权状态）。
 
 ---
@@ -16,7 +16,7 @@
 | 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影）—— 已实现并发布（`dc64c33` + `aa4dc95`）** |
 | 验收状态 | C1–C5-D **已实现、已发布**；C5-D 于 **2026-09-26** 独立复核：root `tsc` 1 处类型错误（测试文件）已修、全量测试 383/383、契约逐条对照无偏离 —— 见 **`docs/phaseC/c5-implementation-contract.md` §21.11** |
 | HEAD / 远端 | **`aa4dc95`**（`test: add Phase C5-D preparation projection coverage`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
-| 验证基线 | root `tsc` 0 · research typecheck 0 · **383 tests / 383 pass / 0 fail** · `research smoke` PASS |
+| 验证基线 | root `tsc` 0 · research typecheck 0 · **383 tests**（2026-09-26 四次运行：3 次全绿 / 1 次 flaky `C1-29`，见 §2.5）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
 | 下一步 | **C-MVP-R1 契约已落盘**（`docs/phaseC/implementation-contract.md` **§29**，DESIGN ONLY）；**实现未授权**，其中 **`D-R1-3`（幂等身份 A/B 路线）待裁决** |
 | 之后 | C6：Material → Claim → Knowledge Evolution（未授权）；Phase C 完整版（Fragment / Evidence 链）需另立契约 |
@@ -239,6 +239,11 @@ npm --prefix packages/research run typecheck → exit 0
 node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 383 tests / 383 pass / 0 fail
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
+
+> **flaky（已知、非回归）**：`C1-29`（"confirming moves the CURRENT projection version; rejecting does not"）
+> 用两个 `new Date().toISOString()` 断言**互不相等**，同一毫秒内会偶发失败。
+> 2026-09-26 四次全量运行：**3 次 383/383 pass，1 次 382/383（仅 `C1-29` 失败）**；重跑即绿。
+> 它**不是** C5-D 或本轮改动引入的。修法（另立小步）：改用单调计数 / 注入时钟，而不是比较 wall-clock 字符串。
 
 ---
 

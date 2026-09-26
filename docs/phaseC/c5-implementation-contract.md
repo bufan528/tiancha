@@ -1400,7 +1400,7 @@ R10  ★ ResearchPlan.build() 不得触发 prepare() 或任何写操作
 |---|---|
 | `npx tsc --noEmit`（root） | ❌ → **发现并修复 1 处**：`src/cli/phase-c5-d-cli.test.ts:86` `TS18048: 't.deps.proposals' is possibly 'undefined'`（仓库既有对照写法：`src/cli/phase-c5-b-cli.test.ts:99` 用 `t.deps.proposals!`）。修复后 **exit 0** |
 | `packages/research` typecheck | exit 0 |
-| 全量测试 | **383 tests / 383 pass / 0 fail**（100 suites，~27s） |
+| 全量测试 | **383 tests**（100 suites，~27s）；2026-09-26 四次运行：3 次全绿 / 1 次 **pre-existing flaky `C1-29`**（两个 `new Date().toISOString()` 断言互不相等，同毫秒偶发） |
 | `research smoke` | PASS（child-session=real） |
 | 契约偏离 | 除 §21.11.2 的 1 处预估冗余外，无 scope / 表 / CLI 新增 |
 
