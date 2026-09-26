@@ -35,8 +35,11 @@ function dbFingerprint(db: { prepare: (sql: string) => any }): string {
       "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
     )
     .all() as Array<{ name: string }>;
+  // ★ CONTENT fingerprint (not merely row counts): a build() that rewrote a column WITHOUT
+  //   changing any row count must still be caught — the same standard C5-B uses for its
+  //   zero-write proof (§15 P12 "content fingerprint").
   return tables
-    .map((t) => `${t.name}:${(db.prepare(`SELECT * FROM ${t.name}`).all() as unknown[]).length}`)
+    .map((t) => `${t.name}:${JSON.stringify(db.prepare(`SELECT * FROM ${t.name}`).all())}`)
     .join("|");
 }
 
@@ -255,6 +258,45 @@ describe("C5-C · proposal display state (§20.3 D2 / D3)", () => {
       assert.equal(rejected.decision!.kind, "rejected");
       assert.equal(rejected.decision!.operator, "Bob");
       assert.equal(rejected.decision!.comment, undefined);
+    } finally {
+      t.db.close();
+    }
+  });
+
+  test("D5 fallback: an unknown companyRef degrades the DISPLAY name only", async () => {
+    const t = await setup();
+    try {
+      const seeded = await seedProposal(t, "真实公司");
+      // A proposal whose companyRef is NOT in this industry's Company Universe.
+      t.repo.insertTargetProposal({
+        ...seeded,
+        proposalRef: "prop-unknown-company",
+        companyRef: "com-not-in-universe",
+      });
+
+      const view = t.plans.build(t.sid);
+      const p = allPlanProposals(view).find((x) => x.proposalRef === "prop-unknown-company")!;
+      const stored = t.repo.getTargetProposal("prop-unknown-company")!;
+
+      // ① the display name degrades to the REF — it never becomes a Company entity (§20.11 / D5)
+      assert.equal(p.companyName, "com-not-in-universe");
+      // ② the fallback affects DISPLAY ONLY: every semantic field mirrors the persisted row
+      assert.equal(p.proposalRef, stored.proposalRef);
+      assert.equal(p.score, stored.score);
+      assert.equal(p.selectionReason, stored.selectionReason);
+      assert.equal(p.positionImportance, stored.positionImportance);
+      assert.equal(p.status, stored.status);
+      assert.deepEqual(p.matchedTargetKinds, stored.matchedTargetKinds);
+      assert.equal(p.targetRef, null, "an unknown company can never yield a target");
+      // ③ attachability is decided by (gapRef, positionRef) ONLY — the fallback cannot change it
+      assert.ok(
+        allPlanProposals(view).some((x) => x.proposalRef === seeded.proposalRef),
+        "the real-company proposal is still mounted normally",
+      );
+      assert.ok(
+        allPlanProposals(view).some((x) => x.proposalRef === "prop-unknown-company"),
+        "and the unknown-company one is shown too (never hidden)",
+      );
     } finally {
       t.db.close();
     }
