@@ -83,7 +83,7 @@ const run = (deps: ResearchCliDeps, ...argv: string[]) =>
 async function seedConfirmed(t: T, name: string) {
   assert.equal(await run(t.deps, "company", "add", INDUSTRY, "--name", name, "--kinds", "头部客户"), 0);
   assert.equal(await run(t.deps, "proposal", "generate", INDUSTRY), 0);
-  const proposal = t.deps.proposals.list(t.sid, "proposed").filter((p) => p.companyRef !== "")[0];
+  const proposal = t.deps.proposals!.list(t.sid, "proposed").filter((p) => p.companyRef !== "")[0];
   assert.equal(await run(t.deps, "confirm", proposal.proposalRef, "--operator", "张三"), 0);
   const targetRef = t.repo.listTargets(t.sid)[0].targetRef;
   return { proposalRef: proposal.proposalRef, targetRef };
