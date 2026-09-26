@@ -38,6 +38,10 @@ export class ResearchDb {
       mkdirSync(dirname(this.path), { recursive: true });
     }
     this.db = new DatabaseSync(this.path);
+    // ★ C-MVP-R1 (§29.5a): cross-process material ingest means two processes may bootstrap the
+    // schema concurrently — and every migration WRITES. Wait for the lock instead of throwing a
+    // bare SQLITE_BUSY at whichever process arrived second.
+    this.db.exec("PRAGMA busy_timeout = 10000");
     try {
       this.migrate();
     } catch (err) {

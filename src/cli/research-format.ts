@@ -307,9 +307,12 @@ export function formatMaterialAddHuman(v: MaterialAddView): string {
   ];
   // ★ D-R1-5 (5a): a material that is NOT complete must SAY SO — with its real progress.
   if (!MATERIAL_OUTCOME_COMPLETE[v.outcome]) {
+    // ★ A pre-C-MVP-R1残骸 has NO ledger at all — say that, instead of pretending "0/0 blocks".
     lines.push(
-      `  ⚠ 材料未完成：已投影 ${v.projectedBlocks}/${v.totalBlocks} 块` +
-        `${v.stage ? `，停在 ${v.stage}` : ""}（状态 ${v.ingestStatus}）`,
+      v.totalBlocks === 0
+        ? `  ⚠ 材料未完成：无块级进度记录（迁移前导入的残骸，需人工复核）（状态 ${v.ingestStatus}）`
+        : `  ⚠ 材料未完成：已投影 ${v.projectedBlocks}/${v.totalBlocks} 块` +
+            `${v.stage ? `，停在 ${v.stage}` : ""}（状态 ${v.ingestStatus}）`,
     );
     if (v.error) lines.push(`  错误：${v.error}`);
     lines.push(`  修复：tiancha research material retry ${v.materialId}`);
