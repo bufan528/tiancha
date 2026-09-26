@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **Phase C · C5-D 已实现并发布（`aa4dc95`）** · **代码 HEAD `aa4dc95`**（= `origin/main`，ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对（2026-09-26）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **383 tests**（1 个 pre-existing flaky：`C1-29`，见 §2.5） · `research smoke` PASS · 表 **26 张**。
+> **Phase C · C5-D 与 C-MVP-R1 均已实现并发布** · **代码 HEAD `709447e`**（= `origin/main`，ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对（2026-09-26，第二轮）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **396 tests / 396 pass / 0 fail**（`C1-29` flaky 已修） · `research smoke` PASS · 表 **26 张**。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。**C6 / Phase C 完整版仍未授权**（本文件 §0.1 已同步实现与授权状态）。
 
 ---
@@ -12,14 +12,14 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **Phase C · C1→C5-D 全部 FINAL LOCK 且已实现发布**；**C6 / Phase C 完整版未授权** |
-| 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影）—— 已实现并发布（`dc64c33` + `aa4dc95`）** |
-| 验收状态 | C1–C5-D **已实现、已发布**；C5-D 于 **2026-09-26** 独立复核：root `tsc` 1 处类型错误（测试文件）已修、全量测试 383/383、契约逐条对照无偏离 —— 见 **`docs/phaseC/c5-implementation-contract.md` §21.11** |
-| HEAD / 远端 | **`aa4dc95`**（`test: add Phase C5-D preparation projection coverage`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
-| 验证基线 | root `tsc` 0 · research typecheck 0 · **383 tests**（2026-09-26 四次运行：3 次全绿 / 1 次 flaky `C1-29`，见 §2.5）· `research smoke` PASS |
+| 当前阶段 | **Phase C · C1→C5-D 与 C-MVP-R1 全部 FINAL LOCK 且已实现发布**；**C6 / Phase C 完整版未授权** |
+| 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影）—— 已实现并发布（`dc64c33` + `aa4dc95`）** · **C-MVP-R1（材料导入可靠性：状态机 + 续跑 + 并发原子认领 + 块级账本 + 五态返回）—— 已实现并发布（`e0fe004` … `709447e`）** |
+| 验收状态 | C1–C5-D 与 **C-MVP-R1** 全部**已实现、已发布**；C5-D 闭环见 **`docs/phaseC/c5-implementation-contract.md` §21.11**；C-MVP-R1 闭环见 **`docs/phaseC/implementation-contract.md` §29.12**（含 **5 处实现细化 + 1 项明确缺口**：5a 的"未完成材料不计入汇总"目前只落实 UI 可见性） |
+| HEAD / 远端 | **`709447e`**（`fix: cross-process busy_timeout and honest rendering of ledger-less residual materials`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
+| 验证基线 | root `tsc` 0 · research typecheck 0 · **396 tests / 396 pass / 0 fail**（`C1-29` flaky 已修）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 契约已全部 LOCKED**（`docs/phaseC/implementation-contract.md` **§29** rev4：`D-R1-3 = B` 块级账本 · `D-R1-5 = 5a` 部分可见 + 显式标注 · **rev4 修正并发认领**）；**实现未授权（需显式授权）** |
-| 之后 | C6：Material → Claim → Knowledge Evolution（未授权）；Phase C 完整版（Fragment / Evidence 链）需另立契约 |
+| 下一步 | **C-MVP-R1 已完成并发布**（`§29` rev5）；下一步候选：**C6（Material → Claim → Knowledge Evolution）** 或 **Phase C 完整版（Fragment / Evidence 链，含 5a 未尽项）** —— **均未授权** |
+| 之后 | Phase D（外环：Experience → Pattern → 方法论候选）· Phase E（Wind + 自动发现）—— 未授权 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
 
@@ -370,7 +370,9 @@ node --import tsx src/cli/tiancha.ts research smoke
 | `tiancha research pool <行业>` | **（S7）**查看信息池槽位与条目（只读） |
 | `tiancha research priority <行业>` | **（S7）**查看研究优先级（读取已持久化结果，只读） |
 | `tiancha research report <行业>` | **（S7）**生成只读投影：append 快照 + 物化 Markdown 到 `~/.tiancha/reports/` |
-| `tiancha research material add <行业> <文件>` | **（C-MVP）**把真实研究材料加入行业：规则解析 `[CLAIM]` 块 → Claim → 既有 `ingestClaims`；打印 before/after 变化 |
+| `tiancha research material add <行业> <文件>` | **（C-MVP-R1）**把真实研究材料加入行业：规则解析 `[CLAIM]` 块 → Claim → 既有 `ingestClaims`；打印 **五态之一**（`created` / `duplicate` / `resumed` / `failed` / `in_progress`）+ before/after 变化 |
+| `tiancha research material list <行业>` | **（C-MVP-R1）**只读列出该行业的材料与**导入状态 / 已投影块数 / 错误**（未完成的材料**显式标注**，D-R1-5 5a）；同时打印一次性迁移的三分汇总 |
+| `tiancha research material retry <materialId> [--force] [--accept-orphans]` | **（C-MVP-R1）**显式人工修复：续跑未完成材料（`--force` 重跑已完成；`--accept-orphans` 才允许动迁移残骸）—— **Agent 无此工具** |
 | `tiancha research target add <行业> --kind <k> --name <主体> --position <posRef> --purpose <…> --reason <…> [--fallback-for <ref>] [--limitation <…>]…` | **（B2）**人确认一个具体研究对象——**产品内唯一的 target 写入路径**（`createdBy` 恒为 user） |
 | `tiancha research target list <行业>` | **（B2/B5）**列出已确认的研究对象（含备选标记）及其**只读适配概况**（强/部分/弱/无 + 需备选对象数） |
 | `tiancha research chain <行业>` | **（B5）**展示调研链条（模板实例：位置 / 为什么重要 / 建议研究哪类对象 / 服务问题数）——**同时幂等生成** `ResearchPosition`（B1 投影在**生产中唯一的入口**，只写该表） |
@@ -385,13 +387,14 @@ node --import tsx src/cli/tiancha.ts research smoke
 
 > 以上 research 命令均支持 `--json`（**输出格式切换**：与文本渲染消费同一个 service 结果）。
 
-### 研究工具（19 个，主模型语义选择）
+### 研究工具（20 个，主模型语义选择）
 `research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list`（2A/2B）
 `+ research_methodology_show / research_methodology_list / research_methodology_propose`（P1）
 `+ research_pool_show / research_evaluate / research_priority / research_report`（**S7，只读**）
 `+ research_material_add`（**C-MVP，写一份 Material**——Agent 唯一可写的东西）
 `+ research_chain_show / research_need_list / research_target_list / research_diligence_show`（**B5，只读**）
 `+ research_plan_show`（**C5-C，只读**：Plan 展示 Proposal / Decision；C5-D 后含 `preparation` 摘要）
+`+ research_material_list`（**C-MVP-R1，只读**：材料的导入状态 / 已投影块数 / 错误；**未完成的材料显式标注**）
 
 > **没有** `research_methodology_decide` —— 模型只能**提案**，激活必须人通过 CLI（Invariant 6）。`host.test.ts` 有硬断言。
 > **（S7/C-MVP）Agent 权限边界**：`research_evaluate` 读**已落库**的评估、**绝不**触发计算；`research_report` 只 append 投影；`research_material_add` 只写用户提供的材料（**不评估、不改 Priority**）。
@@ -518,7 +521,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **C5-B** | **Human-Gated Decision**：`research confirm\|reject <proposalRef> --operator <name>`；**`confirm` 是产出 `research_target` 的唯一路径**；Agent **不获得**该写权限 | ✅ |
 | **C5-C** | **Plan 只读消费 Proposal/Decision**：`research plan` 展示 `positions[].proposals`（含 decision 与 `targetRef` 校验）+ `orphanProposals`；`--json` 向后兼容；零写用**内容指纹**证明 | ✅ |
 | **C5-D** | **Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影**（`{preparationRef, status, questionCount} \| null`）：契约 LOCK（`7672a49`）→ **已实现（`dc64c33`）+ 测试（`aa4dc95`）+ 独立复验收口（§21.11）**；`New tables = 0, Migration = 0` | ✅ |
-| **C-MVP-R1** | **Material 导入可靠性**（状态机 + 续跑 + 查重语义 + 返回枚举 + 跨库恢复 + 并发认领 + 块级账本）：**仅契约**（总契约 **§29** rev4，DESIGN ONLY）—— **全部 LOCKED**，**实现未授权** | 📝 契约 LOCKED |
+| **C-MVP-R1** | **Material 导入可靠性**（状态机 + 续跑 + 查重语义 + 五态返回 + 跨库恢复 + 并发原子认领 + 块级账本）：契约 **§29 rev5** → **已实现（`e0fe004`）+ 测试（`f6a0a2c`，T-R1-1…T-R1-12）+ 修正（`709447e`）**；闭环与缺口见 **§29.12** | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -526,7 +529,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 |---|---|---|
 | **A** | 单行业研究闭环 | **S1–S7 已完成**（含 DATA-R1 legacy 修复、C-MVP 材料入口） |
 | **B** | Research Planning / 调研准备链 | **B1–B5 已全部实现**（`docs/phaseB/implementation-contract.md` §12：无剩余 Step） |
-| **C** | 调研回填闭环 | **进行中**：C1–C5-D **全部已实现并发布**；C-MVP-R1（材料导入可靠性）契约已落、**实现未授权**；C6（Material → Claim → Knowledge Evolution）未授权 |
+| **C** | 调研回填闭环 | **进行中**：C1–C5-D 与 **C-MVP-R1 全部已实现并发布**；C6（Material → Claim → Knowledge Evolution）未授权 |
 | **D** | 双体系协同闭环（外环） | Research Experience → Pattern → Methodology Candidate → Human Gate |
 | **E** | 自动化与规模化 | 自动搜集 + 赛道识别 + Wind 接入（**入口能力**） |
 | F（横向） | Report（投影） | 任何阶段可生成；不占 Phase |
@@ -698,7 +701,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | C1–C4（Knowledge 语义 / Planning / Priority 验证 / Report） | ✅ | ✅ | ✅ | ❌ | — |
 | C5-A / C5-B（推荐 / 人工决定） | ✅ | ✅ | ✅ | ❌ | **真实库尚无 `target_proposal*` 两张表** |
 | C5-C / C5-D（Plan 只读消费 / Preparation 摘要） | ✅ | ✅ | ✅ | ❌ | — |
-| **C-MVP-R1**（材料导入可靠性） | 📝 契约 rev4（§29，**全部 LOCKED**） | ❌ | ❌ | ❌ | **实现未授权**（`D-R1-3 = B` · `D-R1-5 = 5a` · rev4 并发认领修正） |
+| **C-MVP-R1**（材料导入可靠性） | ✅ 契约 §29 rev5 | ✅ | ✅（T-R1-1…T-R1-12，含**两个操作系统进程**的并发用例） | ❌ | **真实库仍未用过材料导入**（`material` = 0 行）；5a 的"未完成材料不计入汇总"仅落实 UI 可见性（缺口见 `§29.12.3`） |
 | C6 / Phase C 完整版（Material → Fragment → Evidence → Claim） | ⛔ 未授权 | ❌ | ❌ | ❌ | `DocumentFragment` 仅类型；`evidence/evidence-engine.ts` 返回 `[]` |
 | Phase D（外环：Experience → Pattern → 方法论候选） | ⛔ 未授权 | ❌ | ❌ | ❌ | 红线 9：不预造空壳表 |
 | Phase E（Wind / 自动发现行业） | ⛔ 未授权 | ❌ | ❌ | ❌ | `echo-data-provider.ts` 仍是占位（`isRealExternalData=false`） |

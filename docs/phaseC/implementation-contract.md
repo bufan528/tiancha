@@ -2117,5 +2117,66 @@ P4 收口（全部块 state='projected'）
 > **裁决状态：全部 LOCKED**（`D-R1-1` … `D-R1-6`，见 §29.11）；本契约**无剩余待裁决项**。
 > 进入实现需用户**显式授权**；授权后先补"预计文件清单确认"（补 `c-mvp-r1.test.ts` 的 T-R1-1…T-R1-12 落点）与"失败场景可测性复核"。
 
-**End of §29（rev4）.**
+## §29.12 实现与验收闭环（2026-09-26）
+
+> ⚠️ 本节是**追加记录**：§29.0 – §29.11 的原文（含 rev1–rev4 的 "实现未授权"）**一字未改**。
+> 本节只记录**授权之后**实际发生的事。
+
+### §29.12.1 授权 → 提交（全部已发布）
+
+| 步骤 | commit | 内容 |
+|---|---|---|
+| 契约 rev1→rev4 | `b7233e6` … `9314c6f` | 见 §29.0 / §29.11 |
+| **实现授权** | — | 用户 2026-09-26 全权授权 C-MVP-R1 实现 |
+| 实现 | `e0fe004` | `feat: implement C-MVP-R1 material ingest state machine` |
+| flaky 修复 | `30c318c` | `test: deflake C1-29`（见 §29.12.4） |
+| 既有套件适配 | `1437748` | 五态 union 替换布尔 `created` 的既有断言 |
+| 新测试 | `f6a0a2c` | `test: add C-MVP-R1 coverage`（T-R1-1…T-R1-12） |
+| 实现修正 | `709447e` | 跨进程 `busy_timeout` + 无账本残骸的诚实渲染 |
+
+### §29.12.2 与本契约的逐条对照
+
+| 契约条款 | 实现 | 判定 |
+|---|---|---|
+| §29.2 状态机 6 态 + 列 | `material` 新增 9 列（含 `ingest_blocks_json`）；`CREATE TABLE` 与 `addColumnIfMissing` 双写 | ✅ |
+| §29.2 唯一约束 + 预检查 | `ensureMaterialContentUniqueness()`：先 `GROUP BY … HAVING COUNT(*) > 1` 并**抛错点名**，再建 `idx_material_content_unique` | ✅ |
+| §29.2 三分迁移 | `migrateMaterialIngestState()`：`(a)`/`(b)` ⇒ `completed`，`(c)` ⇒ `legacy_failed`；`a/b/c` 计数暴露给 CLI | ✅ |
+| §29.3 查重只认 `completed` | `listMaterialsByContent()` + outcome 门（`legacy_failed` ⇒ `failed`，需 `acceptOrphanRisk`） | ✅ |
+| §29.4 五态返回 | `MaterialIngestOutcome` 五分支；**布尔 `created` 已删除**（T-R1-7 编译期 + 行为各一条） | ✅ |
+| §29.5a 原子认领 | `claimMaterialIngest()`：租约为唯一准入条件 + 同一条 `UPDATE` 推进 `projecting` | ✅ |
+| §29.5b 逐块可恢复 | `claimId` 在 P1 生成并持久化；`ingestClaims` 新增**可选** `sourceId` / `claimIds` / `runId` / `skipBlocks` / `onBlockCommitted`（缺省行为不变） | ✅ |
+| §29.5 显式人工 retry | CLI `research material retry <id> [--force] [--accept-orphans]`；**Agent 无此工具** | ✅ |
+| §29.6 路线 B | 随机 `claimId` + `claim_blocks_json`（`reserved → artifact_written → projected` 单向） | ✅ |
+| §29.6.1 5a | `research material list` + Agent `research_material_list` 暴露状态与进度 | ⚠️ 部分（见 §29.12.3 第 5 项） |
+| §29.7 OUT | 未引入 LLM / Fragment / Evidence；未改 Priority / Evaluation / Knowledge 语义 | ✅ |
+
+### §29.12.3 与契约正文的 5 处实现细化（不改 scope）
+
+| # | 细化 | 理由 |
+|---|---|---|
+| 1 | `parser_version` 实现为 **NULLable**（契约 §29.2 表里写的是 `NOT NULL`） | NULL = "尚未由 C-MVP-R1 判定"是**一次性迁移的判定键**；若用 `NOT NULL DEFAULT`，新行与老行无法区分，可能把新行误判为残骸 |
+| 2 | **显式失败时释放租约**（`ingest_owner` / `ingest_lease_until` 置空）；只有**崩溃**才依赖租约到期 | 我们仍活着 ⇒ 已停止写入 ⇒ 释放是安全的，且让人工 retry 不必干等租约 |
+| 3 | `legacy_failed` **没有账本** ⇒ CLI 渲染"无块级进度记录（迁移前导入的残骸，需人工复核）" | 不能假装 `0/0 块`；迁移无法重建当时的 claim id |
+| 4 | 新增 `PRAGMA busy_timeout = 10000`（`ResearchDb` 构造） | 两个进程同时打开同一库会**并发写 schema**（每次 migrate 都写）⇒ 没有它，跨进程认领在**打开阶段**就先崩（实测 `database is locked`） |
+| 5 | **5a 的"未完成材料的 Claim 不得计入已确认材料证据汇总"目前只落实为 UI / 查询可见性** | 报告与评估的汇总口径需要 `Claim → Material` 反向溯源，属 **Phase C 完整版**；此处**显式列为缺口**，不假装已满足 |
+
+> **第 5 项是已知缺口**：它不影响 T-R1-1…T-R1-12 的任何一条，但它是 5a 的**未尽部分**，应随 Phase C 完整版一并落地。
+
+### §29.12.4 flaky `C1-29` 一并修复
+
+`phase-c-c1.test.ts` 的 `assert.notEqual(afterConfirm.updatedAt, beforeConfirm.updatedAt)` 比较两个**同毫秒**的 ISO 字符串 ⇒ 偶发失败。
+改为断言**单调性**（`>=`），并把"current 认知真的变了"交给既有的 `version` / `beliefs` 断言。见 `30c318c`。
+
+### §29.12.5 验收结果（2026-09-26 实测）
+
+| 项 | 结果 |
+|---|---|
+| `npx tsc --noEmit`（root） | exit 0 |
+| `packages/research` typecheck | exit 0 |
+| 全量测试 | **396 tests / 396 pass / 0 fail**（104 suites，~28s） |
+| `research smoke` | PASS（child-session=real） |
+| 新测试落点 | `packages/research/src/c-mvp-r1.test.ts`（T-R1-1…T-R1-12，含**两个操作系统进程**的并发用例）+ `src/cli/c-mvp-r1-cli.test.ts`（五态区分 / 未完成渲染 / retry 拒绝） |
+| Agent 工具数 | 19 → **20**（新增**只读** `research_material_list`；`retry` / `--force` **不给** Agent） |
+
+**End of §29（rev5: §29.12 实现与验收闭环追加）.**
 
