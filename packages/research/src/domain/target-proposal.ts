@@ -68,6 +68,25 @@ export interface TargetProposal extends TargetProposalDraft {
 }
 
 /**
+ * C5-B: the HUMAN decision on a proposal.
+ *
+ * ★ Deliberately SEPARATE from `TargetProposal.status` (contract §19.9): the status is the
+ *   current-state SoT written by the CAS transition, while this row is an **append-only audit
+ *   record** of "who decided what". It must never be used to backwards-derive the status.
+ * ★ One proposal has AT MOST one decision ⇒ `proposalRef` IS the identity (no `decisionRef`).
+ */
+export type ProposalDecisionKind = "confirmed" | "rejected";
+
+export interface ProposalDecision {
+  proposalRef: string;
+  kind: ProposalDecisionKind;
+  /** Human operator. Required, trimmed, never defaulted (contract §19.7). */
+  operator: string;
+  comment?: string;
+  decidedAt: string;
+}
+
+/**
  * `RECOMMENDATION_SCORE_V1` (§11.2) — integer weights, **fixed and versioned**; an
  * implementer may not re-derive or rearrange them. Ordering: score DESC, then
  * positionRef ASC, then companyRef ASC (total, deterministic — no randomness).

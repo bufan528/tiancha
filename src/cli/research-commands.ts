@@ -44,12 +44,15 @@ import {
   targetRefFor,
   CompanyService,
   TargetProposalService,
+  ProposalDecisionService,
 } from "@tiancha/research";
+import type { DecisionOutcome } from "@tiancha/research";
 import type { PositionCoverage } from "@tiancha/research";
 import {
   formatChainHuman,
   formatCompanyHuman,
   formatCompanyListHuman,
+  formatDecisionHuman,
   formatProposalGenerateHuman,
   formatProposalHuman,
   formatProposalListHuman,
@@ -100,6 +103,9 @@ export interface ResearchCliDeps {
   companies?: CompanyService;
   /** ★ C5-A: the ONLY writer of `target_proposal` (contract §6). */
   proposals?: TargetProposalService;
+  /** ★ C5-B: the HUMAN Gate orchestrator (confirm / reject). Optional; absent ⇒ the same
+   *  implementation is built from `deps.repo.db` (mirrors `plans?` / `companies?`). */
+  decisions?: ProposalDecisionService;
   /** Materialised-Markdown directory (production: `~/.tiancha/reports`). */
   reportDir: string;
   out: (line: string) => void;
@@ -121,7 +127,9 @@ export type ResearchSubcommand =
   | "plan"
   | "report-history"
   | "company"
-  | "proposal";
+  | "proposal"
+  | "confirm"
+  | "reject";
 export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
   "evaluate",
   "pool",
@@ -134,6 +142,8 @@ export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
   "report-history",
   "company",
   "proposal",
+  "confirm",
+  "reject",
 ];
 
 /** `--json` is a FORMAT switch only; the positional arg is the industry name. */
@@ -166,6 +176,9 @@ export async function runResearchCommand(sub: string, rest: string[], deps: Rese
       return runCompany(rest, options, deps);
     case "proposal":
       return runProposal(rest, options, deps);
+    case "confirm":
+    case "reject":
+      return runDecision(sub, rest, options, deps);
     default:
       deps.err(`unknown research subcommand: ${sub}（可用：${RESEARCH_SUBCOMMANDS.join(" | ")}）`);
       return 1;
@@ -480,6 +493,49 @@ export async function runProposal(
 
   deps.err("usage: tiancha research proposal <generate|list|get> ...");
   return 1;
+}
+
+/**
+ * `tiancha research confirm|reject <proposalRef> --operator <name> [--comment <text>] [--json]`
+ * — C5-B, the HUMAN Gate.
+ *
+ * ★ `--operator` is REQUIRED for BOTH verbs and must be non-blank (contract §19.7); there is no
+ *   default. The decision is a human fact, so `confirmed by ?` / `rejected by ?` must be explicit.
+ * ★ Exit code is 0 only when a NEW terminal decision was recorded; `already_decided` and
+ *   `target_already_exists` are deterministic business results and exit 1 without side effects.
+ */
+export async function runDecision(
+  verb: string,
+  rest: string[],
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  const decisions = deps.decisions ?? new ProposalDecisionService(deps.repo.db);
+  const argv = rest;
+  const { positional, flags } = parseFlags(argv);
+  const usage =
+    `usage: tiancha research ${verb} <proposalRef> --operator <name> [--comment <text>] [--json]`;
+
+  if (rejectUnknownFlags(argv, ["--json", "--operator", "--comment"], usage, deps.err)) return 1;
+  const proposalRef = positional[0];
+  const operator = flags.get("operator")?.[0];
+  if (!proposalRef || !operator || operator.trim().length === 0) {
+    deps.err(usage);
+    return 1;
+  }
+
+  let outcome: DecisionOutcome;
+  try {
+    outcome =
+      verb === "confirm"
+        ? decisions.confirm(proposalRef, operator, flags.get("comment")?.[0])
+        : decisions.reject(proposalRef, operator, flags.get("comment")?.[0]);
+  } catch (err) {
+    deps.err(`处理失败：${(err as Error).message}`);
+    return 1;
+  }
+  deps.out(options.json ? toJson(outcome) : formatDecisionHuman(outcome));
+  return outcome.status === "confirmed" || outcome.status === "rejected" ? 0 : 1;
 }
 
 // ---- C-MVP: material entry --------------------------------------------------

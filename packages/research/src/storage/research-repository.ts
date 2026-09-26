@@ -28,6 +28,7 @@ import type {
   DiligencePreparation,
   TargetProposal,
   TargetProposalStatus,
+  ProposalDecision,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -703,13 +704,18 @@ export class ResearchRepository {
 
   // ---- TargetProposal (C5-A) ------------------------------------------------
   /**
-   * Persistence for C5 proposals. The ONLY writer is `TargetProposalService`; this class stays
-   * a pure write-through (no business logic, no transition, no decision — those are C5-B).
+   * C5-B: the ONLY proposal-creation primitive, and a plain `INSERT` on purpose.
+   *
+   * ★ It is deliberately NOT `INSERT OR REPLACE`: SQLite's REPLACE deletes the conflicting row
+   *   instead of raising, which would let a concurrent generator SILENTLY OVERWRITE the winner
+   *   (contract §19.5). A conflict on `idx_proposal_active_subject` is turned into a
+   *   deterministic business result by `TargetProposalService.persistDrafts`.
+   * ★ Status changes never go through this path — they use `casTransitionTargetProposal`.
    */
-  upsertTargetProposal(p: TargetProposal): void {
+  insertTargetProposal(p: TargetProposal): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO target_proposal
+        `INSERT INTO target_proposal
          (proposal_ref, industry_ref, gap_ref, position_ref, company_ref,
           matched_target_kinds_json, position_importance, covered_requirement_refs_json,
           unresolved_requirement_refs_json, score, score_version, kind_vocabulary_version,
@@ -741,6 +747,48 @@ export class ResearchRepository {
       .prepare("SELECT * FROM target_proposal WHERE proposal_ref = ?")
       .get(proposalRef) as any;
     return row ? rowToTargetProposal(row) : undefined;
+  }
+
+  /**
+   * C5-B: the ONLY proposal-status writer — a compare-and-set.
+   * `changes === 1` ⇒ the transition happened; `changes === 0` ⇒ the row was no longer in `from`
+   * (another operator decided first, or it is already terminal). Never "read then update".
+   */
+  casTransitionTargetProposal(
+    proposalRef: string,
+    from: TargetProposalStatus,
+    to: TargetProposalStatus,
+  ): number {
+    const result = this.db
+      .prepare("UPDATE target_proposal SET status = ? WHERE proposal_ref = ? AND status = ?")
+      .run(to, proposalRef, from);
+    return Number(result.changes);
+  }
+
+  /** C5-B: append-only decision record. One proposal ⇒ at most one row (`proposal_ref` PK). */
+  insertTargetProposalDecision(d: ProposalDecision): void {
+    this.db
+      .prepare(
+        `INSERT INTO target_proposal_decision
+         (proposal_ref, kind, operator, comment, decided_at)
+         VALUES (?,?,?,?,?)`,
+      )
+      .run(d.proposalRef, d.kind, d.operator, d.comment ?? null, d.decidedAt);
+  }
+
+  getTargetProposalDecision(proposalRef: string): ProposalDecision | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM target_proposal_decision WHERE proposal_ref = ?")
+      .get(proposalRef) as any;
+    return row
+      ? {
+          proposalRef: row.proposal_ref,
+          kind: row.kind,
+          operator: row.operator,
+          comment: row.comment ?? undefined,
+          decidedAt: row.decided_at,
+        }
+      : undefined;
   }
 
   /**

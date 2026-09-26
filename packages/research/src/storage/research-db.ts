@@ -408,6 +408,17 @@ export class ResearchDb {
       CREATE INDEX IF NOT EXISTS idx_proposal_industry ON target_proposal(industry_ref);
       CREATE INDEX IF NOT EXISTS idx_proposal_subject
         ON target_proposal(industry_ref, company_ref, status);
+
+      -- C5-B: TargetProposalDecision — the HUMAN decision record for ONE proposal.
+      -- proposal_ref is the PRIMARY KEY (Proposal 1 : Decision 0..1), so no second identity
+      -- layer is needed. Append-only: the repository exposes insert + read only.
+      CREATE TABLE IF NOT EXISTS target_proposal_decision (
+        proposal_ref TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        operator TEXT NOT NULL,
+        comment TEXT,
+        decided_at TEXT NOT NULL
+      );
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();
@@ -417,6 +428,8 @@ export class ResearchDb {
     this.backfillRequirementSufficiencyRef();
     this.migratePoolEntriesToSlots();
     this.repairLegacyMethodologyV1();
+    // ★ C5-B last: it may FAIL FAST on legacy duplicate active proposals (see the method).
+    this.ensureProposalActiveUniqueness();
   }
 
   /**
@@ -499,6 +512,53 @@ export class ResearchDb {
       "company",
       "target_kinds_json",
       "ALTER TABLE company ADD COLUMN target_kinds_json TEXT NOT NULL DEFAULT '[]'",
+    );
+  }
+
+  /**
+   * C5-B: make "at most one ACTIVE proposal per (industry, company)" a DATABASE invariant.
+   *
+   * ★ R1 (reviewer ruling) — FAIL FAST on legacy duplicates: the theoretical C5-A
+   *   cross-connection race could have left two `proposed` rows for one company. We never
+   *   delete, overwrite, or pick a winner: those rows are persisted research recommendations,
+   *   and silently rewriting them would turn a data-consistency problem into the system editing
+   *   research history. We name the offending pairs and refuse to finish initialisation; the
+   *   operator resolves them, then restarts.
+   *
+   * ★ We deliberately do NOT just issue `CREATE UNIQUE INDEX` and let SQLite throw a bare
+   *   "UNIQUE constraint failed" — that diagnosis would be useless. The pre-check runs first.
+   */
+  private ensureProposalActiveUniqueness(): void {
+    const exists = this.db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='target_proposal'")
+      .get();
+    if (!exists) return; // defensive only: initSchema always creates the table just above
+
+    const duplicates = this.db
+      .prepare(
+        `SELECT industry_ref, company_ref, COUNT(*) AS n
+           FROM target_proposal
+          WHERE status = 'proposed'
+          GROUP BY industry_ref, company_ref
+         HAVING COUNT(*) > 1
+          ORDER BY industry_ref ASC, company_ref ASC`,
+      )
+      .all() as Array<{ industry_ref: string; company_ref: string; n: number }>;
+    if (duplicates.length > 0) {
+      const detail = duplicates
+        .map((d) => `${d.industry_ref}/${d.company_ref} (${d.n} active proposals)`)
+        .join("; ");
+      throw new Error(
+        `target_proposal contains ${duplicates.length} duplicate ACTIVE proposal group(s): ${detail}. ` +
+          "C5-B cannot enforce one-active-proposal-per-company while they exist, and it will NOT " +
+          "delete or overwrite them (they are persisted research recommendations). " +
+          "Resolve them manually, then restart.",
+      );
+    }
+
+    this.db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_active_subject " +
+        "ON target_proposal(industry_ref, company_ref) WHERE status = 'proposed'",
     );
   }
 

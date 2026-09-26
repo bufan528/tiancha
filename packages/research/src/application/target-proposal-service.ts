@@ -59,7 +59,15 @@ export class TargetProposalService {
         status: INITIAL_PROPOSAL_STATUS,
         createdAt: new Date().toISOString(),
       };
-      repo.upsertTargetProposal(proposal);
+      try {
+        repo.insertTargetProposal(proposal);
+      } catch (err) {
+        // ★ C5-B: the ONLY conflict we may absorb is the active-subject race. Anything else is a
+        //   real error and must propagate (contract §19.5③) — never blanket-catch.
+        if (!isActiveSubjectConflict(err, repo, draft.industryRef, draft.companyRef)) throw err;
+        result.skippedActiveExists += 1;
+        continue;
+      }
       result.created += 1;
     }
     return result;
@@ -72,4 +80,34 @@ export class TargetProposalService {
   get(proposalRef: string): TargetProposal | undefined {
     return new ResearchRepository(this.db).getTargetProposal(proposalRef);
   }
+
+  /**
+   * C5-B: the ONLY state-change entry for a proposal, and a compare-and-set (§19.6). It is the
+   * single place `target_proposal.status` may change; `ProposalDecisionService` orchestrates it
+   * from inside its own transaction. Returns the number of rows changed (1 = transitioned).
+   */
+  transition(proposalRef: string, from: TargetProposalStatus, to: TargetProposalStatus): number {
+    return new ResearchRepository(this.db).casTransitionTargetProposal(proposalRef, from, to);
+  }
+}
+
+/**
+ * Double-checked identification of the ONE conflict `persistDrafts` may absorb: the partial unique
+ * index `idx_proposal_active_subject`. We deliberately never decide on a brittle error string
+ * alone — we ALSO re-read the conflicting subject and require that an ACTIVE proposal exists now
+ * (contract §19.5③). Every other SQLite error stays fatal.
+ */
+function isActiveSubjectConflict(
+  err: unknown,
+  repo: ResearchRepository,
+  industryRef: string,
+  companyRef: string,
+): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  if (!/UNIQUE constraint failed/i.test(message)) return false;
+  if (!message.includes("target_proposal")) return false;
+  if (!/idx_proposal_active_subject|industry_ref, ?company_ref/i.test(message)) return false;
+  return repo
+    .listTargetProposals(industryRef, "proposed")
+    .some((p) => p.companyRef === companyRef);
 }

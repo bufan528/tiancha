@@ -25,6 +25,7 @@ import type {
   TargetProposal,
   TargetProposalDraft,
 } from "@tiancha/research";
+import type { DecisionOutcome } from "@tiancha/research";
 // ★ C2: the current/retired question predicates live in the domain (single source of truth).
 import { currentQuestions, retiredQuestions } from "@tiancha/research";
 // ★ C2 Step 2-A: read-only position coverage (capability vs current research state).
@@ -32,6 +33,33 @@ import type { PositionCoverage } from "@tiancha/research";
 
 /** The one and only rendering of the `insufficient_evidence` state. */
 export const EVIDENCE_INSUFFICIENT = "证据不足";
+
+// ---- C5-B: decision rendering -----------------------------------------------
+
+/** `research confirm|reject` — renders the DETERMINISTIC outcome (never a raw SQLite error). */
+export function formatDecisionHuman(outcome: DecisionOutcome): string {
+  switch (outcome.status) {
+    case "confirmed":
+      return [
+        `已确认调研：${outcome.proposalRef}`,
+        `  正式研究对象：${outcome.targetRef}`,
+        `  决策时间：${outcome.decidedAt}`,
+        "（由人工决策触发，已物化为正式研究对象）",
+      ].join("\n");
+    case "rejected":
+      return [
+        `已拒绝调研：${outcome.proposalRef}`,
+        `  决策时间：${outcome.decidedAt}`,
+        "（仅记录人工决策，未创建研究对象，也未改动任何研究事实）",
+      ].join("\n");
+    case "already_decided":
+      return `该研究建议已处于终态：${outcome.proposalRef}（当前状态 ${outcome.proposalStatus}）——终态不可反转`;
+    case "target_already_exists":
+      return `该企业已存在正式研究对象：${outcome.targetRef}——未重复创建；建议 ${outcome.proposalRef} 保持未决`;
+    case "not_found":
+      return `未找到研究建议：${outcome.proposalRef}`;
+  }
+}
 
 // ---- C5-A: Company Universe + TargetProposal --------------------------------
 

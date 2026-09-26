@@ -54,6 +54,7 @@ import {
   ResearchPlanService,
   CompanyService,
   TargetProposalService,
+  ProposalDecisionService,
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
@@ -484,6 +485,8 @@ async function run(): Promise<void> {
         // ★ C5-A: the human-only company entry point + the ONLY writer of `target_proposal`.
         companies: new CompanyService(db.db),
         proposals: new TargetProposalService(db.db),
+        // ★ C5-B: the HUMAN Gate orchestrator (confirm / reject → Target materialisation).
+        decisions: new ProposalDecisionService(db.db),
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),
         err: (line) => console.error(line),
