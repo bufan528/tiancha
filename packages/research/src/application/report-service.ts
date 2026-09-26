@@ -14,7 +14,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { ResearchRepository } from "../storage/research-repository.js";
 import { KnowledgeRepository } from "../storage/knowledge-repository.js";
 import { ReportRepository } from "../storage/report-repository.js";
-import { MethodologyService } from "./methodology-service.js";
+import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 import { PriorityService } from "./priority-service.js";
 import type {
   ChangeLine,
@@ -79,7 +79,11 @@ export class ReportService {
   ): { sections: ReportSections; methodologyVersionId: string } {
     const repo = new ResearchRepository(this.db);
     const knowledgeRepo = new KnowledgeRepository(this.db);
-    const methodology = new MethodologyService(repo).getActive();
+    // ★ C4-A / R1: read-only + legal fallback.
+    //   `getActive()` would BOOTSTRAP — i.e. WRITE `methodology` — when no active row exists,
+    //   which contradicts "Report writes only its own append-only projection" (I14).
+    //   The returned `versionId` is UNCHANGED; no bootstrap, no upsert.
+    const methodology = repo.getActiveMethodology() ?? METHODOLOGY_V1;
 
     const knowledge = knowledgeRepo.findKnowledgeBySubject(subjectKind, subjectId);
     const allBeliefs: KnowledgeBelief[] = knowledge ? knowledgeRepo.listBeliefs(knowledge.knowledgeId) : [];
@@ -200,6 +204,37 @@ export class ReportService {
         gapId: typeof a.params?.gapId === "string" ? (a.params.gapId as string) : undefined,
       }));
 
+    // ---- C4-A: cognition lifecycle（**只透传 SoT**；不聚合、不派生、不推断）--------
+    //   `KnowledgeLine` 的既有字段就是全部输出面（beliefId / dimension / state / claimRef / sourceRef）。
+    //   同一维度内按 beliefId 升序 ⇒ 确定性，且不依赖插入序。
+    const beliefsInState = (state: KnowledgeBelief["state"]): KnowledgeLine[] =>
+      allBeliefs
+        .filter((b) => b.state === state)
+        .sort((x, y) =>
+          x.dimension < y.dimension ? -1 : x.dimension > y.dimension ? 1 : x.beliefId < y.beliefId ? -1 : 1,
+        )
+        .map(toLine);
+
+    // 已解决 / 已接受的冲突 = a READ-ONLY view over the SAME `knowledge_conflict` rows
+    //   (`conflicts` above still carries ONLY `open`; nothing is resolved or sided here).
+    const conflictHistory: ConflictLine[] = knowledgeRepo
+      .listConflictsByStatus("resolved")
+      .concat(knowledgeRepo.listConflictsByStatus("accepted"))
+      .filter((c) => subjectClaimRefs.has(c.claimARef) || subjectClaimRefs.has(c.claimBRef))
+      .map((c) => ({
+        conflictId: c.conflictId,
+        dimension: c.dimension,
+        claimARef: c.claimARef,
+        claimBRef: c.claimBRef,
+        status: c.status,
+      }))
+      .sort((a, b) =>
+        a.dimension < b.dimension ? -1 : a.dimension > b.dimension ? 1 : a.conflictId < b.conflictId ? -1 : 1,
+      );
+
+    // 研究状态 = read-through of the persisted row（`null` ⇒ 尚未落库，**不伪造**）。
+    const researchState = repo.getStateBySubject(subjectKind, subjectId) ?? null;
+
     return {
       methodologyVersionId: methodology.versionId,
       sections: {
@@ -213,6 +248,14 @@ export class ReportService {
         evaluation,
         priority,
         nextActions,
+        // C4-A: cognition lifecycle / conflict history / state（只读透传）
+        pendingCandidates: beliefsInState("candidate"),
+        revisedBeliefs: beliefsInState("revised"),
+        supersededBeliefs: beliefsInState("superseded"),
+        rejectedBeliefs: beliefsInState("rejected"),
+        conflictingBeliefs: beliefsInState("conflicting"),
+        conflictHistory,
+        state: researchState,
       },
     };
   }

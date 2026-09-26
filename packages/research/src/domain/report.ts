@@ -13,6 +13,8 @@
  *    recomputed or modified here.
  */
 
+import type { ResearchState } from "./research-state.js";
+
 export type ReportKind = "report" | "dossier";
 
 /** 当前认知 / 主要判断 — one belief, referenced by id (content lives in Knowledge). */
@@ -89,9 +91,19 @@ export interface EvaluationSummary {
 }
 
 /**
+ * 研究状态（read-through） — 透传 persisted `ResearchState` 的**既有字段**。
+ *
+ * ★ 这是 projection / read-through，**不是 aggregation service**：
+ *   禁止由它派生 `progressPercent` / `completionRate` / `researchQuality` /
+ *   `researchMaturity` / `nextBestAction` 之类**没有 SoT 支持**的指标。
+ *   `version` 可以展示，但 `version ≠ 研究进度百分比`。
+ */
+export type ReportStateLine = ResearchState;
+
+/**
  * The structured sections of a projection (08 §4.6):
  * 当前认知 / 关键事实 / 主要判断 / 主要冲突 / 缺口 / 最近变化 / 最近证据 / 当前评价 /
- * 优先级 / 下一步.
+ * 优先级 / 下一步，以及 C4-A 新增的 cognition 生命周期与状态透传。
  */
 export interface ReportSections {
   currentKnowledge: KnowledgeLine[];
@@ -105,6 +117,22 @@ export interface ReportSections {
   evaluation: EvaluationSummary | null;
   priority: PriorityLine[];
   nextActions: NextActionLine[];
+
+  // ---- C4-A: cognition lifecycle / conflict history / state（全部只读透传）----
+  /** 待确认候选 — `state === "candidate"`（**永不** current）. */
+  pendingCandidates: KnowledgeLine[];
+  /** 已修订 — `state === "revised"`（只透传**状态**；修订关系链不在 `KnowledgeLine` 中）. */
+  revisedBeliefs: KnowledgeLine[];
+  /** 已取代 — `state === "superseded"`. */
+  supersededBeliefs: KnowledgeLine[];
+  /** 已否决 — `state === "rejected"`（与其它非 current 状态**同等合法、同等可观察**）. */
+  rejectedBeliefs: KnowledgeLine[];
+  /** 冲突中的 belief — `state === "conflicting"`（维度级冲突；**不选边**）. */
+  conflictingBeliefs: KnowledgeLine[];
+  /** 已解决 / 已接受的冲突（`conflicts` 仍**只含 open**）. */
+  conflictHistory: ConflictLine[];
+  /** 研究状态 — read-through（`null` = 尚无 persisted state，**不伪造**）. */
+  state: ReportStateLine | null;
 }
 
 interface ProjectionBase {

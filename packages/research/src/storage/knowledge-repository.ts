@@ -15,6 +15,7 @@ import type {
   KnowledgeBelief,
   KnowledgeBeliefState,
   KnowledgeConflict,
+  KnowledgeConflictStatus,
   KnowledgeRelation,
 } from "../domain/index.js";
 
@@ -202,6 +203,21 @@ export class KnowledgeRepository {
     const rows = this.db
       .prepare("SELECT * FROM knowledge_conflict WHERE status = 'open' ORDER BY created_at ASC")
       .all() as any[];
+    return rows.map(rowToConflict);
+  }
+
+  /**
+   * ★ C4-A: conflicts with a given status — a READ-ONLY view over the SAME rows.
+   *
+   * `resolveConflict()` has always written `resolved` / `accepted`, but nothing could read them
+   * back (only `listOpenConflicts()` existed). This adds the missing read face WITHOUT changing
+   * any semantics: it reads `knowledge_conflict` only, creates no table and no projection, and
+   * never resolves / accepts / picks a side.
+   */
+  listConflictsByStatus(status: KnowledgeConflictStatus): KnowledgeConflict[] {
+    const rows = this.db
+      .prepare("SELECT * FROM knowledge_conflict WHERE status = ? ORDER BY created_at ASC")
+      .all(status) as any[];
     return rows.map(rowToConflict);
   }
 
