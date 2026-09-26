@@ -101,7 +101,8 @@ describe("C-MVP CLI (research material add)", () => {
 
       lines.length = 0;
       await runMaterialAdd(INDUSTRY, file, { json: false }, deps);
-      assert.match(lines.join("\n"), /相同材料已存在/);
+      // ★ C-MVP-R1 §29.4: a COMPLETED相同内容 is reported as a complete duplicate.
+      assert.match(lines.join("\n"), /相同材料已完整入库/);
       assert.equal(repo.listMaterials(sid).length, before, "no duplicate material");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -117,7 +118,8 @@ describe("C-MVP CLI (research material add)", () => {
       assert.equal(await runMaterialAdd(INDUSTRY, file, { json: true }, deps), 0);
       const view = JSON.parse(lines.join("\n"));
       assert.equal(view.industry, INDUSTRY);
-      assert.equal(view.created, true);
+      // ★ C-MVP-R1 §29.4: no boolean any more — the JSON carries the five-value outcome.
+      assert.equal(view.outcome, "created");
       assert.equal(view.parsedClaims, 2);
       assert.equal(view.before.openGaps, 12);
       assert.equal(view.after.openGaps, 10);

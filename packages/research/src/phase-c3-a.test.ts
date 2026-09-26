@@ -440,7 +440,7 @@ describe("Phase C3-A · Gap → persisted Priority / NextAction lifecycle", () =
         title: "专家访谈纪要",
         text: REAL_MATERIAL,
       });
-      assert.equal(ingested.created, true, "the material went through the real pipe");
+      assert.equal(ingested.outcome, "created", "the material went through the real pipe");
       assert.equal(repo.getPoolSlot(`slot-${sid}-${DIM}`)!.status, "sufficient", "market became sufficient");
       assert.equal(repo.getRequirement(marketRequirementId)!.status, "met", "the requirement is met");
       const cancelledRow = repo.listNextActions(sid).find((a) => a.params?.gapId === marketGapId)!;

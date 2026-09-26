@@ -117,9 +117,11 @@ describe("C-MVP material ingestion (C1/C3/C4/C5)", () => {
       title: "专家访谈纪要",
       text: MATERIAL,
     });
-    assert.equal(result.created, true);
-    assert.equal(result.parsedClaims, 2, "two claims produced");
-    assert.equal(result.claimIds.length, 2);
+    // ★ C-MVP-R1 §29.4: the five-value outcome union replaced the boolean `created`.
+    assert.equal(result.outcome, "created");
+    assert.equal(result.material.ingestBlocks.length, 2, "two claims produced");
+    const claimIds = result.outcome === "created" ? result.claimIds : [];
+    assert.equal(claimIds.length, 2);
 
     // C4: the pool / gap / priority state actually moved
     const after = state(repo, sid);
@@ -129,7 +131,7 @@ describe("C-MVP material ingestion (C1/C3/C4/C5)", () => {
     assert.equal(priorities.currentPriorities(sid).length, 10, "priority shrank with the gaps");
 
     // C3: the claims went through the REAL claim pipeline (they are real artifacts)
-    for (const id of result.claimIds) {
+    for (const id of claimIds) {
       assert.ok(await artifacts.get(id), `claim artifact ${id} exists`);
     }
     // confidence / sourceRef from the material reached Knowledge
@@ -178,12 +180,13 @@ describe("C-MVP material ingestion (C1/C3/C4/C5)", () => {
     };
 
     const first = await materials.ingest({ subjectKind: "industry", subjectId: sid, title: "m", text: MATERIAL });
-    assert.equal(first.created, true);
+    assert.equal(first.outcome, "created");
     const afterFirst = counts();
 
     const second = await materials.ingest({ subjectKind: "industry", subjectId: sid, title: "m", text: MATERIAL });
-    assert.equal(second.created, false, "identical content is a no-op");
-    assert.equal(second.claimIds.length, 0, "no new claims");
+    // ★ C-MVP-R1 §29.3: only a COMPLETED row means "fully duplicated" — and it reports `duplicate`,
+    // never a bare boolean (which could not distinguish a残骸 from a complete import).
+    assert.equal(second.outcome, "duplicate", "identical content is a complete duplicate");
     assert.deepEqual(counts(), afterFirst, "nothing was duplicated");
 
     // a genuinely DIFFERENT material is still accepted
@@ -193,7 +196,7 @@ describe("C-MVP material ingestion (C1/C3/C4/C5)", () => {
       title: "m2",
       text: `[CLAIM]\ndimension: policy\ncontent: 新政策发布\n[/CLAIM]`,
     });
-    assert.equal(other.created, true);
+    assert.equal(other.outcome, "created");
     assert.equal(counts().materials, 2);
     db.close();
   });

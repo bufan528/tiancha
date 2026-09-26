@@ -88,13 +88,17 @@ const countEvals = (db: ResearchDb) =>
   (db.db.prepare("SELECT COUNT(*) AS n FROM investment_evaluation").get() as any).n;
 
 describe("S7 capability exposure", () => {
-  test("T-A12-1 / T-A12-2: exactly 19 uniquely-named tools; the S7 + B5 + C2 tools registered", async () => {
+  test("T-A12-1 / T-A12-2: exactly 20 uniquely-named tools; the S7 + B5 + C2 + C-MVP-R1 tools registered", async () => {
     const { tools, byName, db } = await setup();
-    // ★ C2 Phase 2 · Step 2-C: 19 = 14 (after C-MVP) + 4 B5 read-only + 1 plan read-only projection.
+    // ★ C-MVP-R1 (§29.6.1): 20 = 19 (C2 Step 2-C) + 1 READ-ONLY material-status tool.
     //   This is an EXPORT-LIST change only — no existing tool's semantics changed.
-    assert.equal(tools.length, 19, "exactly 19 tools (14 after C-MVP + 4 B5 + 1 C2 Step 2-C)");
-    assert.equal(new Set(tools.map((t) => t.name)).size, 19, "no duplicate registration");
+    assert.equal(tools.length, 20, "exactly 20 tools (19 + the C-MVP-R1 material status tool)");
+    assert.equal(new Set(tools.map((t) => t.name)).size, 20, "no duplicate registration");
     for (const n of [...S7_TOOLS, ...B5_TOOLS]) assert.ok(byName.has(n), `missing tool ${n}`);
+    assert.ok(byName.has("research_material_list"), "the read-only material status tool");
+    // ★ D-R1-5 (5a) / §29.7: the Agent may REPORT material state, never repair it.
+    const names = tools.map((t) => t.name).join(",");
+    assert.ok(!/material_(retry|force|delete|repair)/.test(names), "no material write/repair surface");
     db.close();
   });
 
