@@ -802,3 +802,258 @@ operator:
 | 10 | 冲突识别 | **双重校验**（constraint 信息 + 冲突对象重读）；其它错误必须抛出 |
 
 **End of contract（rev5.1）.**
+
+---
+
+# §20 rev6.1 — C5-C Implementation Contract（Research Plan 只读消费 Proposal）
+
+> 状态：**rev6.1 — CONTRACT LOCK PASS.** 父基线：`4c5db64`（C5-B 已发布）。
+> **C5-C Implementation / Commit / Push 均未授权。**
+
+## §20.0 修订历史
+
+| 版本 | 变更 |
+|---|---|
+| rev1–rev5.1 | C5-A / C5-B（已发布：`a1bba24` / `05f1800` / `f4e48b2` / `e921147` / `dd07538` / `4c5db64`） |
+| rev6 | 首版 C5-C：`ResearchPlanService.build()` 只读消费 Proposal + Decision；D1–D4 |
+| **rev6.1** | 融入 C-FIX-C-1…4 + SoT-first 措辞修正 + D5 裁定（`companyName` KEEP） |
+
+## §20.1 C5-C 定位
+
+> **Plan 是 Proposal/Decision 的消费者，不是第二套 Recommendation / Decision Engine。**
+
+```text
+C5-A            C5-B                        C5-C
+推荐计算   →   Human Gate 决策/物化   →   Plan 只读编排视图
+（已冻结）      （已冻结）                    （本阶段）
+```
+
+## §20.2 目标链（全链只读）
+
+```text
+Gap → Position → TargetProposal（C5-C 新增）→ 已确认 Target → Diligence
+                      └ Decision（C5-C 新增，只读）
+```
+
+## §20.3 D1–D5 裁定（LOCKED）
+
+| # | 裁定 |
+|---|---|
+| **D1** | **两层**：可归属的 Proposal 挂 `gap.positions[].proposals[]`；其余进 `ResearchPlanView.orphanProposals[]` ⇒ **never hidden** |
+| **D2** | `proposed / confirmed / rejected` **三态全部展示**，必须显式 `status` |
+| **D3** | 只读展示 `decision`（`kind` / `operator` / `comment?` / `decidedAt`）；**无 Decision ⇒ `null`，不得伪造** |
+| **D4** | Proposal 时间 = **`proposedAt`**；Decision 时间 = **`decidedAt`**；**Plan DTO 禁止字段名 `createdAt` / `updatedAt`** |
+| **D5** | **保留 `companyName`**（`CompanyService.list()` 只读展示字段） |
+
+### §20.3.1 `attachable` — 精确定义（C-FIX-C-1，硬红线）
+
+```text
+Attachable(proposal) ⟺
+      ∃ gap ∈ view.gaps                      （仅限 build() 已发出的 gap）
+            proposal.gapRef === gap.gapId
+        AND
+      ∃ position ∈ gap.positions             （仅限该 gap 内已发出的 position）
+            proposal.positionRef === position.positionRef
+
+Otherwise ⇒ view.orphanProposals[]
+```
+
+**判定只使用「已被 `build()` 发出的」gap / position** —— 不是另行从 DB 查出的 gap/position；两个条件**必须同时成立**。
+⇒ **禁止**「gap 存在就算归属」。四种情况**一律** orphan：
+
+```text
+① Gap 未发出（closed / 不再 active）
+② Position 未发出（不在当前 projection）
+③ Position 存在但不在该 gap 内（跨 gap）
+④ gapRef / positionRef 无法解析
+```
+
+**never hidden**：Proposal 是**已持久化的研究推荐记录**，不得因上述任一原因从 Plan 消失。
+
+## §20.4 字段级冻结（C5-C）
+
+```ts
+/** C5-C: the plan's read-only view of ONE decision record. Never inferred — always persisted. */
+export interface ResearchPlanDecision {
+  kind: "confirmed" | "rejected";
+  operator: string;
+  comment?: string;
+  decidedAt: string;
+}
+
+/** C5-C: the plan's read-only view of ONE proposal. NOT a Proposal SoT, no identity of its own. */
+export interface ResearchPlanProposal {
+  proposalRef: string;
+  industryRef: string;
+  gapRef: string;
+  positionRef: string;
+  companyRef: string;
+  /** D5: Company Universe 的展示字段（CompanyService.list，只读）。不是 Proposal 的新 SoT，
+   *  不得用于重算 eligibility / score / selectionReason / proposalRef 或任何 Proposal 持久化语义。 */
+  companyName: string;
+  matchedTargetKinds: string[];
+  positionImportance: number;
+  coveredRequirementRefs: string[];
+  unresolvedRequirementRefs: string[];
+  score: number;
+  scoreVersion: string;
+  kindVocabularyVersion: string;
+  recommendationRevision: string;
+  selectionReason: string;
+  status: "proposed" | "confirmed" | "rejected";
+  /** ★ named `proposedAt` on purpose — the DTO must never carry `createdAt` / `updatedAt`. */
+  proposedAt: string;
+  /** ★ `proposed ⇒ null`. Never synthesize a decision from `status`. */
+  decision: ResearchPlanDecision | null;
+  /** ★ Only when the persisted ResearchTarget actually EXISTS; otherwise null. */
+  targetRef: string | null;
+}
+
+export interface ResearchPlanPosition {
+  …（C2 既有字段不变）
+  proposals: ResearchPlanProposal[];        // ← C5-C 新增
+}
+
+export interface ResearchPlanView {
+  …（C2 既有 6 个字段不变）
+  orphanProposals: ResearchPlanProposal[];  // ← C5-C 新增（never hidden）
+}
+```
+
+**确定性顺序（C-FIX-C-4，冻结为实现契约）**：
+
+```text
+proposals[] 与 orphanProposals[] 的排序：
+    score DESC → proposalRef ASC
+
+★ 只读取已持久化的 score / proposalRef，不重算、不新增排序语义
+★ 不得依赖数据库当前返回顺序（它不构成业务语义）
+```
+
+配套：`domain/research-plan.ts` 新增纯函数 `compareProposals`（与既有 `compareGaps` / `compareTargets` / `compareNextActions` 同形）。
+
+**保持不动**：`ResearchPlanState` / `ResearchPlanFit` / `ResearchPlanPreparation` / `ResearchPlanTarget` / `ResearchPlanGap` / `ResearchPlanNextAction` 全部原样。
+
+## §20.5 两条硬红线
+
+### 红线 1：`confirmed ≠ Target`（C-FIX-C-2 + SoT-first 措辞）
+
+```text
+Proposal.status = "confirmed"
+   ⇒ 该 Proposal 已通过 C5-B 的 confirm transition（持久化事实）
+   ⇒ ★ 不据此推断 Target 当前存在
+
+Target existence 必须独立只读验证：
+    targetRef := targetRefFor(proposal.industryRef, subjectKeyForCompany(company))
+    TargetService.get(targetRef) 存在  ⇒ 输出该 targetRef
+    TargetService.get(targetRef) 不存在 ⇒ targetRef = null
+
+★ 禁止把「可推导的 identity」展示成「已有 Target」：
+    能算出一个 targetRef  ≠  该 Target 存在
+★ 禁止 Plan 创建 / 补建 / 修复 ResearchTarget
+★ 只看当前持久化事实，不依赖 materialisation 的历史叙事（SoT-first）
+```
+
+### 红线 2：复用查询，绝不自建 Proposal 查询/解释层
+
+```text
+ResearchPlanService
+   ├── TargetProposalService.list(industryRef)           ← 唯一 Proposal 读取入口
+   ├── ResearchRepository.getTargetProposalDecision(ref) ← 唯一 Decision 读取入口
+   ├── TargetService.get / list                          ← 既有的只读入口
+   └── CompanyService.list                               ← 既有的只读入口（companyName）
+```
+
+**禁止**在 `research-plan-service.ts` 内出现 `FROM target_proposal` / `FROM target_proposal_decision` 或任何自拼的 Proposal SQL。
+
+## §20.6 CLI（语义不变，只增展示）
+
+```text
+research plan <行业>
+research plan <行业> --json
+```
+
+- **不新增** flag、**不改**既有 flag 语义、**不改**退出码；
+- `--json` 结构**新增** `orphanProposals` 与 `positions[].proposals`（向后兼容的字段新增）；
+- human 渲染新增提案段（`status` 显式；`decision` 缺失时显示「尚无决策」，**不伪造**）。
+
+## §20.7 `build()` call-chain（文档冻结）
+
+```text
+ResearchPlanService.build(industryId)   ← one read-only build path（仍是唯一）
+  ├── repo.getIndustry / getStateBySubject / listNextActions / getActiveMethodology
+  ├── ResearchNeedService.list
+  ├── ChainProjectionService.positionCoverage / listProjectedPositions
+  ├── TargetService.list / get
+  ├── QuestionTargetFitService.summarize
+  ├── DiligencePreparationService.list
+  ├── TargetProposalService.list                    ← C5-C 新增（只读）
+  ├── ResearchRepository.getTargetProposalDecision ← C5-C 新增（只读）
+  └── CompanyService.list                           ← C5-C 新增（只读，companyName）
+```
+
+> **one build path remains one read-only build path.**
+
+## §20.8 明确禁止项（20 条，原文冻结）
+
+```text
+✗ 不创建 Plan 表                          ✗ 不创建 Plan ID
+✗ 不增加 Plan createdAt / updatedAt        ✗ 不增加 Plan status / version
+✗ 不增加 Plan save / upsert                ✗ 不写 target_proposal
+✗ 不写 target_proposal_decision            ✗ 不调用 ProposalDecisionService.confirm()
+✗ 不调用 ProposalDecisionService.reject()  ✗ 不调用 TargetService.add()
+✗ 不创建 ResearchTarget                    ✗ 不修改 ResearchGap
+✗ 不修改 Knowledge                         ✗ 不修改 ResearchState
+✗ 不重新计算 Gap → Position                ✗ 不重新计算 Position → Proposal eligibility
+✗ 不重新计算 Proposal score                ✗ 不改变 C5-A/B Proposal / Decision / Human Gate 语义
+✗ Plan DTO 中不得出现字段名 createdAt / updatedAt（任何位置，不只行首）
+✗ 不得在 Plan 内自建 Proposal / Decision 查询（必须复用 Service / Repository 入口）
+```
+
+## §20.9 T-C5-C 验收矩阵
+
+| # | 用例 | 覆盖 |
+|---|---|---|
+| T-C5-C-1 | 可归属 Proposal 出现在对应 `gap.positions[].proposals[]` | D1 / §20.3.1 |
+| **T-C5-C-2a** | Gap 不再被发出（closed / 不再 active）⇒ proposal ∈ `orphanProposals[]` | D1 never hidden |
+| **T-C5-C-2b** | Gap 仍发出，但该 Position 不再出现在 projection ⇒ ∈ `orphanProposals[]` | D1 never hidden |
+| **T-C5-C-2c** | `gapRef` / `positionRef` 无法解析 ⇒ ∈ `orphanProposals[]` | D1 never hidden |
+| **T-C5-C-2d** | `proposals[]` 与 `orphanProposals[]` 均满足 `score DESC → proposalRef ASC` | C-FIX-C-4 |
+| T-C5-C-3 | 三态全部展示且 `status` 显式 | D2 |
+| T-C5-C-4 | `proposed ⇒ decision === null`（**不伪造**） | D3 |
+| T-C5-C-5 | `confirmed` / `rejected` ⇒ decision 逐字段等于持久化记录（含 `kind`） | D3 |
+| T-C5-C-6 | **Confirmed ≠ Target**：`confirmed` 但 Target 不存在 ⇒ `targetRef === null`，且**不创建** Target | §20.5 红线 1 |
+| T-C5-C-7 | `build()` 零写：**全表动态指纹**前后一致（含连续两次 build） | §20.8 / I-C2-22 |
+| T-C5-C-8 | 幂等：两次 `build()` **deepEqual**（数组顺序亦确定） | I-C2-17 |
+| T-C5-C-9 | **静态**：`research-plan-service.ts` 不含 `FROM target_proposal`，且含 `TargetProposalService` | §20.5 红线 2 |
+| T-C5-C-10 | **静态**：Plan DTO 声明中不含字段名 `createdAt` / `updatedAt`（**全局正则**） | D4 |
+| T-C5-C-11 | C2 回归：既有 Plan 测试全绿 + `T-C3-22b` 表集合不变 | 冻结面 |
+| T-C5-C-12 | CLI：`research plan` 与 `--json` 展示提案段；无决策时显示「尚无决策」 | §20.6 |
+
+## §20.10 与 C2 / C4 / C5-A / C5-B 冻结面的冲突检查
+
+| 冻结面 | 影响 | 判定 |
+|---|---|---|
+| `I-C2-17` 幂等 | 新增字段来自**持久化常量**（`proposedAt`/`decidedAt` 存于 DB，非新生成）；顺序由 `compareProposals` 确定 | ✅ 不冲突 |
+| `I-C2-22` 零写 | 全部新增来源**只读**；不调 `refresh*`/`sync*`/`upsert*` | ✅ 不冲突 |
+| `I-C2-24/25` 不重算 | 不重算 Gap→Position / eligibility / score；`gapRef`/`positionRef` 直接比对 | ✅ 不冲突 |
+| C2 `§1.1` DTO 无身份/生命周期 | 不新增 `planId`/`status`/`version`/`save`/`upsert` | ✅ 不冲突 |
+| C2 **字段禁列**（`phase-c2-step2c.test.ts:525`） | 用 `proposedAt`/`decidedAt` ⇒ 不触发 | ✅ 通过 |
+| `T-C3-22b` 表集合不变 | 不建表 | ✅ 不冲突 |
+| C5-B `§19.9` 禁止项 | Plan 不调 `confirm/reject` / `TargetService.add()`；不写两张 proposal 表 | ✅ 不冲突 |
+| `§2.4` Position→Target 红线 | Plan 不新增该路径（只**读**已有 targetRef） | ✅ 不冲突 |
+| C4 Report 冻结面 | 不触碰 | ✅ 不冲突 |
+
+**结论：无冲突、无 BLOCKER；C5-C 是纯增量只读扩展。**
+
+## §20.11 D5 裁定 — `companyName` KEEP
+
+```text
+companyName 是 Company Universe 的「展示字段」：
+  - 来源：CompanyService.list(industryRef)（只读）
+  - ★ 不得用于重新计算 eligibility / score / selectionReason / proposalRef
+    或任何其它 Proposal 持久化语义
+  - ★ 不是 Proposal 的新 SoT
+```
+
+**End of contract（rev6.1）.**
