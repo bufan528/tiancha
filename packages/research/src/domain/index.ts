@@ -44,3 +44,5 @@ export * from "./research-need.js";
 export * from "./research-target.js";
 export * from "./question-target-fit.js";
 export * from "./diligence-preparation.js";
+export * from "./target-kind-vocabulary.js";
+export * from "./target-proposal.js";

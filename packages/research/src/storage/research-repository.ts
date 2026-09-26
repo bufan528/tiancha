@@ -26,6 +26,8 @@ import type {
   ResearchPosition,
   ResearchTarget,
   DiligencePreparation,
+  TargetProposal,
+  TargetProposalStatus,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -100,8 +102,8 @@ export class ResearchRepository {
       .prepare(
         `INSERT OR REPLACE INTO company
          (company_id, canonical_name, aliases_json, primary_industry_id, chain_position,
-          current_state_id, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?)`,
+          current_state_id, target_kinds_json, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         c.companyId,
@@ -110,6 +112,7 @@ export class ResearchRepository {
         c.primaryIndustryId ?? null,
         c.chainPosition ?? null,
         c.currentStateId ?? null,
+        JSON.stringify(c.targetKinds),
         c.createdAt,
         c.updatedAt,
       );
@@ -117,18 +120,23 @@ export class ResearchRepository {
 
   getCompany(id: string): Company | undefined {
     const row = this.db.prepare("SELECT * FROM company WHERE company_id = ?").get(id) as any;
-    return row
-      ? {
-          companyId: row.company_id,
-          canonicalName: row.canonical_name,
-          aliases: JSON.parse(row.aliases_json),
-          primaryIndustryId: row.primary_industry_id ?? undefined,
-          chainPosition: row.chain_position ?? undefined,
-          currentStateId: row.current_state_id ?? undefined,
-          createdAt: row.created_at,
-          updatedAt: row.updated_at,
-        }
-      : undefined;
+    return row ? rowToCompany(row) : undefined;
+  }
+
+  /**
+   * C5-A: the Company Universe source (contract §10.2). Scoped by `primary_industry_id`, which
+   * is the ONLY industry affiliation C5 v1 recognises — a company whose `primaryIndustryId`
+   * is absent belongs to no industry and therefore to no universe.
+   */
+  listCompanies(industryId?: string): Company[] {
+    const rows = (
+      industryId === undefined
+        ? this.db.prepare("SELECT * FROM company ORDER BY company_id ASC").all()
+        : this.db
+            .prepare("SELECT * FROM company WHERE primary_industry_id = ? ORDER BY company_id ASC")
+            .all(industryId)
+    ) as any[];
+    return rows.map(rowToCompany);
   }
 
   // ---- ResearchQuestion ----
@@ -693,6 +701,69 @@ export class ResearchRepository {
     return rows.map(rowToTarget);
   }
 
+  // ---- TargetProposal (C5-A) ------------------------------------------------
+  /**
+   * Persistence for C5 proposals. The ONLY writer is `TargetProposalService`; this class stays
+   * a pure write-through (no business logic, no transition, no decision — those are C5-B).
+   */
+  upsertTargetProposal(p: TargetProposal): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO target_proposal
+         (proposal_ref, industry_ref, gap_ref, position_ref, company_ref,
+          matched_target_kinds_json, position_importance, covered_requirement_refs_json,
+          unresolved_requirement_refs_json, score, score_version, kind_vocabulary_version,
+          recommendation_revision, selection_reason, status, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        p.proposalRef,
+        p.industryRef,
+        p.gapRef,
+        p.positionRef,
+        p.companyRef,
+        JSON.stringify(p.matchedTargetKinds),
+        p.positionImportance,
+        JSON.stringify(p.coveredRequirementRefs),
+        JSON.stringify(p.unresolvedRequirementRefs),
+        p.score,
+        p.scoreVersion,
+        p.kindVocabularyVersion,
+        p.recommendationRevision,
+        p.selectionReason,
+        p.status,
+        p.createdAt,
+      );
+  }
+
+  getTargetProposal(proposalRef: string): TargetProposal | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM target_proposal WHERE proposal_ref = ?")
+      .get(proposalRef) as any;
+    return row ? rowToTargetProposal(row) : undefined;
+  }
+
+  /**
+   * Deterministic order (`proposal_ref ASC`). `status` is an optional filter; the uniqueness
+   * rule of contract §10.3 is expressed by callers via `status = "proposed"` + a `companyRef`
+   * match, so no bespoke repository API is needed for it.
+   */
+  listTargetProposals(industryRef: string, status?: TargetProposalStatus): TargetProposal[] {
+    const rows = (
+      status === undefined
+        ? this.db
+            .prepare("SELECT * FROM target_proposal WHERE industry_ref = ? ORDER BY proposal_ref ASC")
+            .all(industryRef)
+        : this.db
+            .prepare(
+              "SELECT * FROM target_proposal WHERE industry_ref = ? AND status = ? " +
+                "ORDER BY proposal_ref ASC",
+            )
+            .all(industryRef, status)
+    ) as any[];
+    return rows.map(rowToTargetProposal);
+  }
+
   // ---- DiligencePreparation (Phase B v1) ----
   /**
    * The preparation is the ONE thing B4 writes. Idempotent by `dp-<targetRef>`, so
@@ -1011,6 +1082,41 @@ function rowToMethodologyCandidate(row: any): MethodologyCandidate {
     decidedAt: row.decided_at ?? undefined,
     operator: row.operator ?? undefined,
     comment: row.comment ?? undefined,
+  };
+}
+
+function rowToCompany(row: any): Company {
+  return {
+    companyId: row.company_id,
+    canonicalName: row.canonical_name,
+    aliases: JSON.parse(row.aliases_json),
+    primaryIndustryId: row.primary_industry_id ?? undefined,
+    targetKinds: JSON.parse(row.target_kinds_json ?? "[]"),
+    chainPosition: row.chain_position ?? undefined,
+    currentStateId: row.current_state_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function rowToTargetProposal(row: any): TargetProposal {
+  return {
+    proposalRef: row.proposal_ref,
+    industryRef: row.industry_ref,
+    gapRef: row.gap_ref,
+    positionRef: row.position_ref,
+    companyRef: row.company_ref,
+    matchedTargetKinds: JSON.parse(row.matched_target_kinds_json),
+    positionImportance: row.position_importance,
+    coveredRequirementRefs: JSON.parse(row.covered_requirement_refs_json),
+    unresolvedRequirementRefs: JSON.parse(row.unresolved_requirement_refs_json),
+    score: row.score,
+    scoreVersion: row.score_version,
+    kindVocabularyVersion: row.kind_vocabulary_version,
+    recommendationRevision: row.recommendation_revision,
+    selectionReason: row.selection_reason,
+    status: row.status,
+    createdAt: row.created_at,
   };
 }
 

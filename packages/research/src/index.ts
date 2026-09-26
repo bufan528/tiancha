@@ -28,3 +28,6 @@ export * from "./application/target-service.js";
 export * from "./application/question-target-fit-service.js";
 export * from "./application/diligence-preparation-service.js";
 export * from "./application/research-plan-service.js";
+export * from "./application/company-service.js";
+export * from "./application/target-proposal-service.js";
+export * from "./application/target-recommendation-service.js";

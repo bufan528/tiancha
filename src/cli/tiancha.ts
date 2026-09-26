@@ -52,6 +52,8 @@ import {
   QuestionTargetFitService,
   DiligencePreparationService,
   ResearchPlanService,
+  CompanyService,
+  TargetProposalService,
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
@@ -479,6 +481,9 @@ async function run(): Promise<void> {
         diligence: new DiligencePreparationService(db.db),
         // ★ C2 Step 2-C: the ONE plan projection/build path (read-only; shared with the Agent).
         plans: new ResearchPlanService(db.db),
+        // ★ C5-A: the human-only company entry point + the ONLY writer of `target_proposal`.
+        companies: new CompanyService(db.db),
+        proposals: new TargetProposalService(db.db),
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),
         err: (line) => console.error(line),

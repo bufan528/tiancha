@@ -21,6 +21,9 @@ import type {
   ResearchPlanView,
   ResearchPriority,
   ResearchTarget,
+  Company,
+  TargetProposal,
+  TargetProposalDraft,
 } from "@tiancha/research";
 // ★ C2: the current/retired question predicates live in the domain (single source of truth).
 import { currentQuestions, retiredQuestions } from "@tiancha/research";
@@ -29,6 +32,90 @@ import type { PositionCoverage } from "@tiancha/research";
 
 /** The one and only rendering of the `insufficient_evidence` state. */
 export const EVIDENCE_INSUFFICIENT = "证据不足";
+
+// ---- C5-A: Company Universe + TargetProposal --------------------------------
+
+/** `research company add` / `research company get` — one candidate-enterprise fact. */
+export function formatCompanyHuman(c: Company, industryName?: string): string {
+  const lines = [
+    `候选企业：${c.canonicalName}`,
+    `  编号：${c.companyId}`,
+    `  行业：${industryName ?? c.primaryIndustryId ?? "（未归属行业）"}`,
+    `  类型：${c.targetKinds.length > 0 ? c.targetKinds.join(" / ") : "（无）"}`,
+  ];
+  if (c.aliases.length > 0) lines.push(`  别名：${c.aliases.join(" / ")}`);
+  return lines.join("\n");
+}
+
+/** `research company list` — the Company Universe of one industry (§10.2). */
+export function formatCompanyListHuman(rows: Company[], industryName: string): string {
+  if (rows.length === 0) {
+    return `候选企业（${industryName}）：暂无。请先执行 tiancha research company add …。`;
+  }
+  return [
+    `候选企业（${industryName}，共 ${rows.length}）`,
+    ...rows.map(
+      (c) => `  - ${c.canonicalName} · ${c.targetKinds.join("/") || "（无类型）"} · ${c.companyId}`,
+    ),
+    "（候选企业池只用于推荐：它本身不是研究对象，也不代表任何研究结论）",
+  ].join("\n");
+}
+
+/** `research proposal generate` — what the engine drafted and what was actually persisted. */
+export function formatProposalGenerateHuman(
+  industryName: string,
+  drafts: TargetProposalDraft[],
+  result: { created: number; skippedSameRef: number; skippedActiveExists: number },
+  stored: TargetProposal[],
+): string {
+  const lines = [
+    `研究建议（${industryName}，只读投影 + 本次持久化）`,
+    `  本次计算：${drafts.length} 条候选建议`,
+    `  新增：${result.created} · 已存在同一建议：${result.skippedSameRef} · 该企业已有活跃建议：${result.skippedActiveExists}`,
+  ];
+  if (stored.length === 0) {
+    lines.push("  当前暂无研究建议：没有匹配的候选企业，或研究状态尚未形成缺口。");
+  } else {
+    lines.push(`  当前研究建议（共 ${stored.length}）`);
+    for (const p of stored) {
+      lines.push(`  - [${p.status}] ${p.companyRef} · ${p.selectionReason}`);
+      lines.push(
+        `      依据：Position 重要度 ${p.positionImportance} · 覆盖 ${p.coveredRequirementRefs.length} 项 · 未解决 ${p.unresolvedRequirementRefs.length} 项 · 评分 ${p.score}（${p.scoreVersion}）`,
+      );
+    }
+  }
+  lines.push(
+    "（研究建议不是研究事实：它是系统基于当前持久化研究状态提出的待人工决策建议，尚未成为正式研究对象）",
+  );
+  return lines.join("\n");
+}
+
+/** `research proposal list` — persisted proposals only. */
+export function formatProposalListHuman(rows: TargetProposal[], industryName: string): string {
+  if (rows.length === 0) {
+    return `研究建议（${industryName}）：暂无。请先执行 tiancha research proposal generate ${industryName}。`;
+  }
+  return [
+    `研究建议（${industryName}，共 ${rows.length}）`,
+    ...rows.map((p) => `  - [${p.status}] ${p.proposalRef} · 评分 ${p.score}`),
+  ].join("\n");
+}
+
+/** `research proposal get` — the full structured provenance of one proposal (§11.1). */
+export function formatProposalHuman(p: TargetProposal): string {
+  return [
+    `研究建议：${p.proposalRef}`,
+    `  状态：${p.status}`,
+    `  行业：${p.industryRef} · 缺口：${p.gapRef} · 位置：${p.positionRef} · 企业：${p.companyRef}`,
+    `  匹配类型：${p.matchedTargetKinds.join(" / ")}`,
+    `  Position 重要度：${p.positionImportance}`,
+    `  覆盖的信息需求（${p.coveredRequirementRefs.length}）：${p.coveredRequirementRefs.join(", ") || "（无）"}`,
+    `  其中未解决（${p.unresolvedRequirementRefs.length}）：${p.unresolvedRequirementRefs.join(", ") || "（无）"}`,
+    `  评分：${p.score}（${p.scoreVersion}）· 词表版本：${p.kindVocabularyVersion}`,
+    `  推荐版本：${p.recommendationRevision}`,
+    `  推荐依据：${p.selectionReason}`,
+  ].join("\n");
+}
 
 const DIMENSION_STATUS_LABEL: Record<string, string> = {
   evaluated: "已评估",

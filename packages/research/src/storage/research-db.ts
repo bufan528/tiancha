@@ -381,10 +381,38 @@ export class ResearchDb {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_dp_target ON diligence_preparation(target_ref);
+
+      -- C5-A: TargetProposal — the system's PROPOSAL to study a company (never a fact).
+      -- Its status column is the proposal's OWN state machine (proposed|confirmed|rejected),
+      -- deliberately distinct from research_target.status (contract §4.4 red line 4).
+      -- recommendation_revision fingerprints the persisted research state, so the same input
+      -- state always maps to the same proposal_ref (idempotent re-generate, P11).
+      CREATE TABLE IF NOT EXISTS target_proposal (
+        proposal_ref TEXT PRIMARY KEY,
+        industry_ref TEXT NOT NULL,
+        gap_ref TEXT NOT NULL,
+        position_ref TEXT NOT NULL,
+        company_ref TEXT NOT NULL,
+        matched_target_kinds_json TEXT NOT NULL,
+        position_importance REAL NOT NULL,
+        covered_requirement_refs_json TEXT NOT NULL,
+        unresolved_requirement_refs_json TEXT NOT NULL,
+        score REAL NOT NULL,
+        score_version TEXT NOT NULL,
+        kind_vocabulary_version TEXT NOT NULL,
+        recommendation_revision TEXT NOT NULL,
+        selection_reason TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_proposal_industry ON target_proposal(industry_ref);
+      CREATE INDEX IF NOT EXISTS idx_proposal_subject
+        ON target_proposal(industry_ref, company_ref, status);
     `);
     this.ensureIndustryKnowledgeColumn();
     this.ensureMethodologyDimensionsColumn();
     this.ensureRequirementConditionColumns();
+    this.ensureCompanyTargetKindsColumn();
     this.ensureS45Columns();
     this.backfillRequirementSufficiencyRef();
     this.migratePoolEntriesToSlots();
@@ -458,6 +486,19 @@ export class ResearchDb {
       "information_requirement",
       "sufficiency_policy_ref",
       "ALTER TABLE information_requirement ADD COLUMN sufficiency_policy_ref TEXT",
+    );
+  }
+
+  /**
+   * C5-A: add `company.target_kinds_json` via PRAGMA pre-check.
+   * The column is NOT NULL with a safe default `'[]'`, so pre-C5 rows stay readable and simply
+   * carry no kinds (they are therefore not eligible for any proposal — see contract §10.1).
+   */
+  private ensureCompanyTargetKindsColumn(): void {
+    this.addColumnIfMissing(
+      "company",
+      "target_kinds_json",
+      "ALTER TABLE company ADD COLUMN target_kinds_json TEXT NOT NULL DEFAULT '[]'",
     );
   }
 

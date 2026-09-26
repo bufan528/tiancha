@@ -40,11 +40,19 @@ import {
   projectionId,
   ReportRepository,
   ResearchPlanService,
+  TargetRecommendationService,
   targetRefFor,
+  CompanyService,
+  TargetProposalService,
 } from "@tiancha/research";
 import type { PositionCoverage } from "@tiancha/research";
 import {
   formatChainHuman,
+  formatCompanyHuman,
+  formatCompanyListHuman,
+  formatProposalGenerateHuman,
+  formatProposalHuman,
+  formatProposalListHuman,
   formatDiligenceHuman,
   formatDiligenceListHuman,
   formatEvaluationHuman,
@@ -86,6 +94,12 @@ export interface ResearchCliDeps {
    *  Production composition injects it explicitly; when a read-only call site omits it, `runPlan`
    *  constructs the SAME implementation from `deps.repo.db` (identical class, never a second view). */
   plans?: ResearchPlanService;
+  /** ★ C5-A: the minimal HUMAN-ONLY company entry point (Company Universe, contract §10.2).
+   *  Optional so that read-only call sites and older tests need not be rewired; when absent the
+   *  handler constructs the SAME implementation from `deps.repo.db` (mirrors `plans?`). */
+  companies?: CompanyService;
+  /** ★ C5-A: the ONLY writer of `target_proposal` (contract §6). */
+  proposals?: TargetProposalService;
   /** Materialised-Markdown directory (production: `~/.tiancha/reports`). */
   reportDir: string;
   out: (line: string) => void;
@@ -105,7 +119,9 @@ export type ResearchSubcommand =
   | "need"
   | "diligence"
   | "plan"
-  | "report-history";
+  | "report-history"
+  | "company"
+  | "proposal";
 export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
   "evaluate",
   "pool",
@@ -116,6 +132,8 @@ export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
   "diligence",
   "plan",
   "report-history",
+  "company",
+  "proposal",
 ];
 
 /** `--json` is a FORMAT switch only; the positional arg is the industry name. */
@@ -144,6 +162,10 @@ export async function runResearchCommand(sub: string, rest: string[], deps: Rese
       return runPlan(name, options, deps);
     case "report-history":
       return runReportHistory(rest, options, deps);
+    case "company":
+      return runCompany(rest, options, deps);
+    case "proposal":
+      return runProposal(rest, options, deps);
     default:
       deps.err(`unknown research subcommand: ${sub}（可用：${RESEARCH_SUBCOMMANDS.join(" | ")}）`);
       return 1;
@@ -235,6 +257,229 @@ export async function runReportHistory(
 
   deps.out(options.json ? toJson(rows) : formatReportHistoryHuman(rows, ind.canonicalName));
   return 0;
+}
+
+// ---- C5-A: Company Universe (human-only) + TargetProposal -------------------
+
+/**
+ * C5-A: strict **per-verb** CLI whitelist (C4-B discipline, contract §12).
+ *
+ * `parseFlags` silently ignores an unknown `--xxx`, so every verb checks its OWN allowed set
+ * and turns a non-whitelisted flag into a usage error. Deliberately NOT a rewrite of
+ * `parseFlags`, and deliberately not one shared wide set (that would let e.g. `get --name X`
+ * through).
+ */
+function rejectUnknownFlags(
+  argv: string[],
+  allowed: readonly string[],
+  usage: string,
+  err: (line: string) => void,
+): boolean {
+  const unknown = argv.filter((a) => a.startsWith("--") && !allowed.includes(a));
+  if (unknown.length === 0) return false;
+  err(`${usage}（不支持的参数：${unknown.join(" ")}）`);
+  return true;
+}
+
+/**
+ * `tiancha research company <add|list|get> ...` — C5-A.
+ *
+ * The ONLY way a company enters the universe is a human spelling out its name, industry and
+ * kinds (contract §4.4 red lines 6/9/11). No discovery, no inferred industry, no guessed kind.
+ */
+export async function runCompany(
+  rest: string[],
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  const companies = deps.companies ?? new CompanyService(deps.repo.db);
+  const verb = rest[0];
+  const argv = rest.slice(1);
+  const { positional, flags } = parseFlags(argv);
+
+  if (verb === "add") {
+    if (
+      rejectUnknownFlags(
+        argv,
+        ["--json", "--name", "--kinds"],
+        "usage: tiancha research company add <行业> --name <企业名> --kinds <类型1,类型2> [--json]",
+        deps.err,
+      )
+    ) {
+      return 1;
+    }
+    const industryName = positional[0];
+    const name = flags.get("name")?.[0];
+    const kindsRaw = flags.get("kinds")?.[0];
+    if (!industryName || !name || !kindsRaw) {
+      deps.err(
+        "usage: tiancha research company add <行业> --name <企业名> --kinds <类型1,类型2> [--json]",
+      );
+      return 1;
+    }
+    const ind = resolveIndustry(industryName, options, deps, "company");
+    if (!ind) return 1;
+    try {
+      const company = companies.add({
+        industryId: ind.industryId,
+        canonicalName: name,
+        targetKinds: kindsRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0),
+      });
+      deps.out(options.json ? toJson(company) : formatCompanyHuman(company, ind.canonicalName));
+      return 0;
+    } catch (err) {
+      deps.err(`新增企业失败：${(err as Error).message}`);
+      return 1;
+    }
+  }
+
+  if (verb === "list") {
+    if (
+      rejectUnknownFlags(
+        argv,
+        ["--json", "--industry"],
+        "usage: tiancha research company list <行业> [--json]",
+        deps.err,
+      )
+    ) {
+      return 1;
+    }
+    const industryName = positional[0] ?? flags.get("industry")?.[0];
+    if (!industryName) {
+      deps.err("usage: tiancha research company list <行业> [--json]");
+      return 1;
+    }
+    const ind = resolveIndustry(industryName, options, deps, "company");
+    if (!ind) return 1;
+    const rows = companies.list(ind.industryId);
+    deps.out(options.json ? toJson(rows) : formatCompanyListHuman(rows, ind.canonicalName));
+    return 0;
+  }
+
+  if (verb === "get") {
+    if (
+      rejectUnknownFlags(
+        argv,
+        ["--json"],
+        "usage: tiancha research company get <companyId> [--json]",
+        deps.err,
+      )
+    ) {
+      return 1;
+    }
+    const companyId = positional[0];
+    if (!companyId) {
+      deps.err("usage: tiancha research company get <companyId> [--json]");
+      return 1;
+    }
+    const company = companies.get(companyId);
+    if (!company) {
+      deps.err(`未找到企业：${companyId}`);
+      return 1;
+    }
+    deps.out(options.json ? toJson(company) : formatCompanyHuman(company));
+    return 0;
+  }
+
+  deps.err("usage: tiancha research company <add|list|get> ...");
+  return 1;
+}
+
+/**
+ * `tiancha research proposal <generate|list|get> ...` — C5-A.
+ *
+ * ★ `generate` is a **controlled human action** that PERSISTS proposals; the Recommendation
+ *   Engine it calls is pure/zero-write. Engine-pure ≠ generate-read-only (contract §12).
+ * ★ No confirm / reject / target materialisation exists on this surface — that is C5-B.
+ * ★ `list` accepts `--json` ONLY: contract §12 defines `list [industry]`, so the repository's
+ *   status filter is deliberately NOT exposed as a CLI flag.
+ */
+export async function runProposal(
+  rest: string[],
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  const proposals = deps.proposals ?? new TargetProposalService(deps.repo.db);
+  const verb = rest[0];
+  const argv = rest.slice(1);
+  const { positional, flags } = parseFlags(argv);
+
+  if (verb === "generate") {
+    if (
+      rejectUnknownFlags(
+        argv,
+        ["--json", "--gap"],
+        "usage: tiancha research proposal generate <行业> [--gap <gapRef>] [--json]",
+        deps.err,
+      )
+    ) {
+      return 1;
+    }
+    const ind = resolveIndustry(positional[0], options, deps, "proposal");
+    if (!ind) return 1;
+    const gapRef = flags.get("gap")?.[0];
+    const drafts = new TargetRecommendationService(deps.repo.db).build(
+      ind.industryId,
+      gapRef ? { gapRef } : {},
+    );
+    const result = proposals.persistDrafts(drafts);
+    const rows = proposals.list(ind.industryId);
+    deps.out(
+      options.json
+        ? toJson({ ...result, drafts: drafts.length, proposals: rows })
+        : formatProposalGenerateHuman(ind.canonicalName, drafts, result, rows),
+    );
+    return 0;
+  }
+
+  if (verb === "list") {
+    if (
+      rejectUnknownFlags(
+        argv,
+        ["--json"],
+        "usage: tiancha research proposal list <行业> [--json]",
+        deps.err,
+      )
+    ) {
+      return 1;
+    }
+    const ind = resolveIndustry(positional[0], options, deps, "proposal");
+    if (!ind) return 1;
+    const rows = proposals.list(ind.industryId);
+    deps.out(options.json ? toJson(rows) : formatProposalListHuman(rows, ind.canonicalName));
+    return 0;
+  }
+
+  if (verb === "get") {
+    if (
+      rejectUnknownFlags(
+        argv,
+        ["--json"],
+        "usage: tiancha research proposal get <proposalRef> [--json]",
+        deps.err,
+      )
+    ) {
+      return 1;
+    }
+    const proposalRef = positional[0];
+    if (!proposalRef) {
+      deps.err("usage: tiancha research proposal get <proposalRef> [--json]");
+      return 1;
+    }
+    const proposal = proposals.get(proposalRef);
+    if (!proposal) {
+      deps.err(`未找到研究建议：${proposalRef}`);
+      return 1;
+    }
+    deps.out(options.json ? toJson(proposal) : formatProposalHuman(proposal));
+    return 0;
+  }
+
+  deps.err("usage: tiancha research proposal <generate|list|get> ...");
+  return 1;
 }
 
 // ---- C-MVP: material entry --------------------------------------------------
