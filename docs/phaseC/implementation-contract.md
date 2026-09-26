@@ -1781,3 +1781,187 @@ D SUPERSEDE B           → 必须【成功】
 | 依据 | **Q1 裁决 A**：C1 的 E2E（`C1-24`）已证明"Knowledge → Pool → Gap 在 C1 语义下正确"，该验证并入 C1 回归，不再单独占阶段 |
 | 范围 | 本次改动**只动"分工与索引"**；C1 已冻结的 Knowledge 语义**一行未改** |
 
+---
+
+# §29 rev1 — C-MVP-R1 Implementation Contract（Material 导入可靠性：状态机 + 续跑）
+
+> 状态：**rev1 — DESIGN ONLY。Implementation / Commit / Push 均未授权。**
+> 父基线：`aa4dc95`（= `origin/main`，C5-D 已发布；root `tsc` 已归零）。
+> 依据：用户 2026-09-26 裁决 —— **(a) 状态机 + 续跑** 为方案；**(c)「只有 `completed` 才算导入完成」并入查重规则**；
+> (b)「先解析再保存」只作**前置校验优化**，**不单独解决完整性问题**（解析成功后 Claim 写入 / 跨库更新 / 知识投影仍可能失败）。
+> 定位：本契约是 **C-MVP 的可靠性修订**，**不改动** C-MVP 已发布的规则解析语义（`[CLAIM]` 规则、无 LLM、不臆测）。
+
+## §29.0 修订历史
+
+| 版本 | 变更 |
+|---|---|
+| **rev1** | 首版：as-built 失败机制（逐行核对）+ 状态机 + 查重规则 + 返回语义 + 跨库恢复 + 幂等身份（含 **1 项待裁决**）+ OUT + 失败注入验收 T-R1-1…T-R1-9 |
+
+## §29.1 现状（as-built 失败机制，逐行核对）
+
+代码位置：`packages/research/src/application/material-ingest-service.ts`
+
+```text
+行 61      existing = repo.findMaterialByHash(subjectKind, subjectId, contentHash)   ← 查重门：只看"存在"
+行 62-70   命中 ⇒ return { created: false, parsedClaims: existing.claimRefs.length, claimIds: [] }
+行 86      repo.upsertMaterial(material)        ← Material 先落库（此时 claimRefs = []）
+行 88      parseClaims(text)                    ← 规则解析（无 LLM）
+行 94-101  discovery.ingestClaims({...})        ← 写 artifacts.sqlite(Claim) + 主库(Source/Document/Knowledge/Pool/Gap)
+行 104-105 repo.upsertMaterial({ ...claimRefs: claimIds })
+```
+
+**缺陷（可复现推演）**：
+
+| 中断点 | 后果 |
+|---|---|
+| `:86` 之后、`:105` 之前任意失败（含跨库写入失败） | Material 已存在且 `claimRefs = []` |
+| 再次提交同一份材料 | `:61` 命中 ⇒ 返回 `created:false` / `parsedClaims:0` / `claimIds:[]` ⇒ **该材料永远无法补完**，调用方看到的是"重复资料"（**静默成功**） |
+| `created:false` 的语义 | 同时表示「完全重复」与「上一次失败的残骸」—— **不可区分** |
+
+**次生问题（同源；属 C-MVP 已发布范围，但本契约必须一并写清）**：
+
+- `OpportunityDiscoveryService.ingestClaims()`（`:285`）与 `ingestMaterial()`（`:84` / `:92`）**每次调用**都新建 `src-${randomUUID()}` / `doc-${randomUUID()}`；
+  Claim id 亦为 `claim-${randomUUID()}`（`:295`）。⇒ **重跑一次 = 多出一份 Source / Document / Claim**。
+- 跨库：Claim 正文在 `artifacts.sqlite`，Source / Document / Material / Knowledge / Pool 在 `tiancha.sqlite`
+  ⇒ **不存在能包住两者的普通事务**（§15 CR-10 已写定同一事实）。
+- 行业骨架的幂等（`:120` `questionKey(subject, dimension)`）**不覆盖** Source / Document / Claim。
+
+## §29.2 状态机（D-R1-1，**LOCKED**）
+
+新增列（`material` 表；**加列必经 `PRAGMA table_info` 预检查**，与 DATA-R1 同一手法）：
+
+| 列 | 类型 | 含义 |
+|---|---|---|
+| `ingest_status` | TEXT NOT NULL DEFAULT `'received'` | `received` / `parsed` / `projecting` / `completed` / `failed` |
+| `ingest_stage` | TEXT NULL | `failed` 时记录失败阶段（取值同上，标明停在哪一步） |
+| `ingest_error` | TEXT NULL | `failed` 时的错误摘要（message 截断；**不得**写入密钥/凭据） |
+| `parser_version` | TEXT NOT NULL | 解析器版本（当前 `material-parser/v1`） |
+| `model_version` | TEXT NULL | 模型版本；C-MVP-R1 **恒 `null`**（规则解析无模型）。字段为**未来"模型候选层"预留**，**不表示**已引入 LLM |
+| `ingest_attempts` | INTEGER NOT NULL DEFAULT `0` | 续跑计数（审计用） |
+
+历史行回填：**已完成投影的行**（`claim_refs_json` 非空）一律置 `completed`；`parser_version` 回填 `material-parser/v1`。
+回填是**一次性 + 幂等**（`PRAGMA` 预检查驱动），**不改身份、不新建行、不删历史**。
+
+状态迁移（**唯一合法图**）：
+
+```text
+received ──parse 成功──► parsed ──开始写入──► projecting ──全部完成──► completed
+    │                     │                     │
+    └──────失败───────────┴─────────────────────┴──► failed（记录 ingest_stage + ingest_error）
+failed ──显式续跑──► 回到失败阶段继续（幂等）
+completed ──默认终态──► 仅 `--force`（人工显式）可重跑；见 §29.5
+```
+
+- 每个阶段的执行**幂等可重入**：重复执行同一阶段**不得**产生第二份记录。
+- `received` 只表示"Material 行已持久化"，**不得**据此认为已导入。
+
+## §29.3 查重规则（D-R1-1 + (c)，**LOCKED**）
+
+> **命中条件**：同 `(subjectKind, subjectId, contentHash)` **且 `ingest_status = 'completed'`**。
+
+| 命中情况 | 返回 |
+|---|---|
+| 同内容、`completed` | `duplicate`（完整重复，不重跑） |
+| 同内容、`received` / `parsed` / `projecting` / `failed` | **不是重复** ⇒ 走续跑，或**明确报错**（见 §29.4） |
+| 无同内容行 | 新建，走状态机 |
+
+## §29.4 返回语义（D-R1-2，**LOCKED**）
+
+`created: boolean` **对外废弃**（不再作为业务语义），改为枚举：
+
+```text
+type MaterialIngestOutcome =
+  | { outcome: "created";     material; claimIds }   // 首次导入并走到 completed
+  | { outcome: "duplicate";   material }             // 同内容且已 completed
+  | { outcome: "resumed";     material; claimIds }   // 从 failed / 半成品续跑并完成
+  | { outcome: "failed";      material; stage; error } // 仍未完成（不抛异常时的返回）
+  | { outcome: "in_progress"; material }             // 已有一条同内容导入正在 projecting（并发保护）
+```
+
+- CLI **必须区分打印**这五种（**禁止**把 `resumed` 显示成 `duplicate`）。
+- 只有 `created` / `resumed` 携带 `claimIds`。
+- 未完成记录**必须**续跑或**明确报错**；**禁止**静默当作完整重复跳过。
+
+## §29.5 跨库恢复（D-R1-4，**LOCKED**）
+
+- **不使用**跨库事务（两库两连接，§15 CR-10）。恢复依靠 **状态标记 + 幂等重跑**。
+- 阶段推进顺序固定为：**先写阶段标记 → 执行该阶段 → 成功后推进状态**；崩溃点永远停在**可重入**的阶段标记上。
+- `artifacts.sqlite` 的 Claim 写入必须**内容可辨**（见 §29.6），使"续跑"不会产生第二份 Claim。
+- `completed` 是终态。人工显式 `--force` 重跑：记入 `ingest_attempts`，**保留**原 `claim_refs_json` 的审计轨迹（**不静默删除历史**）。
+- 失败后保留的材料**允许且只允许**通过**显式人工动作**重新处理（CLI `retry` / `--force`）；系统**不得**自动重跑 `failed` 行。
+
+## §29.6 幂等身份（D-R1-3，**⚠️ 待裁决 — 本契约唯一未锁定项**）
+
+现状矛盾：`claimId = claim-<uuid>`（`:295`）、`sourceId/documentId = src/doc-<uuid>`（`:84` / `:92` / `:285`）均为**随机身份**。
+因此"续跑不重复"必须在下列两条路线中**选一条**：
+
+| 路线 | 做法 | 优点 | 代价 |
+|---|---|---|---|
+| **A. 内容寻址身份** | `claimId = claim-<sha256(subjectKind\|subjectId\|dimension\|content)>`；`sourceId` / `documentId` 由 `ingestId = mat-<sha256(subjectKind+subjectId+contentHash)>` 派生 | 天然幂等；续跑即 no-op；belief 的 `claimRef` 稳定 | **改变 Claim 身份语义**：同内容来自**两个不同来源**的 Claim 会被合并 ⇒ 可能削弱 `sufficiency.independentSources` 口径（S4-FOLLOWUP 未修完） |
+| **B. 块级进度账本**（★ 建议） | 保留随机 Claim id；`material` 增记录 `claim_blocks_json = [{blockIndex, blockHash, claimId}]`；续跑只处理**未记账**的块；`Source` / `Document` 由 `ingestId` 派生以避免重复 | **不动 Claim 身份 / 不动 sufficiency 口径**；与 C-MVP"复用既有 `ingestClaims`"一致 | 状态更多；整份材料完成前存在"部分可见"的 Claim |
+
+**建议 B**。A 触及 `independentSources` 语义，属 S4.5 / S4-FOLLOWUP 领域，应另立裁决。
+> 若选 A，须同时重新定义 `independentSources` 的口径（谁代表"独立来源"），并评估对既有 Evaluation 结果的影响。
+
+## §29.7 OUT（明确禁止）
+
+- ❌ 引入 LLM / 模型抽取（C-MVP 的"规则解析"语义不变；`model_version` 字段**不**代表已引入模型）
+- ❌ 新增 `Fragment` / `Evidence`（属 Phase C 完整版，**另立契约**）
+- ❌ 改 Priority / Evaluation / Knowledge 语义
+- ❌ 为"可 join"而新增跨库表 / 列（§15 CR-10）
+- ❌ 让 `material` 变成事实 SoT（`Claim` 仍是唯一 SoT）
+
+## §29.8 失败注入验收（T-R1-*，每条须有"故意破坏 ⇒ 转红"证据）
+
+| # | 场景（失败注入点） | 期望 |
+|---|---|---|
+| **T-R1-1** | `:86` 之后、解析之前抛错 | 材料行留存为 `failed/received`；**再次提交同内容 ⇒ `resumed` 并最终 `completed`**（不是 `duplicate`） |
+| **T-R1-2** | Claim 写入 `artifacts.sqlite` 中途抛错 | `failed/projecting`；续跑后 Claim 数 = 解析块数（**不翻倍**） |
+| **T-R1-3** | Knowledge 投影中途抛错 | 同上；续跑后 `belief` / PoolItem / Gap **不重复** |
+| **T-R1-4** | 回写 `claim_refs_json` 之前抛错 | 续跑后 `material.claim_refs_json` 与 Claim 实际**一致**（双向引用完整） |
+| **T-R1-5** | 同材料并发两次提交 | 第二次得到 `in_progress` 或 `duplicate`，**绝不双写** |
+| **T-R1-6** | `completed` 的同材料再次提交 | `duplicate`；**零**新行（整库内容指纹不变） |
+| **T-R1-7** | 对外 API 不再有布尔 `created` | 编译期 + 行为各一条断言 |
+| **T-R1-8** | 历史行（C-MVP 已导入）迁移 | 回填 `completed`；**不改** `materialId` / `claim_refs_json` / 行数 |
+| **T-R1-9** | 解析器版本变更后重跑 | `parser_version` 变化被记录；`completed` 行**不**自动重跑 |
+
+**mutation（必须能打红）**：
+
+```text
+· 查重门去掉 `ingest_status = 'completed'` 条件   ⇒ T-R1-1 必须转红
+· 续跑时重建 Source / Document（随机 id）         ⇒ T-R1-2 必须转红
+· 把 `resumed` 归并成 `duplicate`                 ⇒ T-R1-1 / T-R1-7 必须转红
+· 迁移清空历史行或改 id                           ⇒ T-R1-8 必须转红
+```
+
+## §29.9 与已冻结面的冲突检查
+
+| 冻结面 | 约束 | C-MVP-R1 影响 |
+|---|---|---|
+| C-MVP（规则解析） | 只有 `[CLAIM]` 产生 Claim；格式错误不臆测 | ✅ 不变 |
+| I5（PoolItem 必须指向 Claim） | — | ✅ 不变 |
+| I13（占位数据不进 Knowledge / Evaluation） | — | ✅ 不变 |
+| §15 CR-10（跨库不 join） | 只允许应用层解析 | ✅ 遵守 |
+| DATA-R1（加列 = PRAGMA 预检查 + 幂等回填） | — | ✅ 同一手法 |
+| C5-D（Plan 只读） | — | ✅ 不涉及 |
+
+## §29.10 预计文件清单（**待 Implementation Authorization 时确认**）
+
+| 文件 | 性质 |
+|---|---|
+| `packages/research/src/domain/material.ts` | 生产（状态枚举 + 账本类型） |
+| `packages/research/src/application/material-ingest-service.ts` | 生产（状态机 + 续跑 + 返回枚举） |
+| `packages/research/src/storage/research-db.ts` | 生产（加列 + 历史回填，`PRAGMA` 预检查） |
+| `packages/research/src/storage/research-repository.ts` | 生产（按状态查重 / 记进度） |
+| `packages/research/src/domain/material-parser.ts` | 生产（导出 `PARSER_VERSION`；**解析行为不变**） |
+| `src/cli/research-commands.ts` · `src/cli/research-format.ts` | 生产（五种 outcome 的打印 + `retry` / `--force`） |
+| `packages/research/src/c-mvp-r1.test.ts`（新） | 测试 T-R1-1 … T-R1-9 |
+| `src/cli/c-mvp-r1-cli.test.ts`（新） | 测试 CLI 对五种 outcome 的区分 |
+
+---
+
+> **授权声明：§29 为 DESIGN ONLY。实现 / commit / push 均未授权；`D-R1-3`（幂等身份 A/B）待裁决。**
+> 裁决后才进入 Implementation Authorization；届时先补"预计文件清单确认"与"失败场景可测性复核"。
+
+**End of §29（rev1）.**
+
