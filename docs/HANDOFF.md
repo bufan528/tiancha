@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **2026-09-25 更新 · Phase B v1 Step B5 后** · **代码 HEAD `6eb9ea2`**（文档同步提交紧随其后，见 §0.4） · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **196 tests 全过** · `research smoke` PASS。
+> **Phase C · C5-D 契约 Final Lock 后更新** · **代码 HEAD `7672a49`**（C5-D 契约 rev2；**已 push 到 `origin/main`**，ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **372 tests（371 pass / 1 pre-existing flaky `C1-29`）** · `research smoke` PASS。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。
 
 ---
@@ -12,12 +12,14 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **Phase B v1 · B1–B5 全部完成，FINAL PASS（2026-09-25 独立验收）；Phase C 待授权** |
-| 验收状态 | **Phase B v1 FINAL PASS**（B5 代码 `6eb9ea2` / 文档 `8ec8f6f`，2026-09-25 独立验收通过） |
-| HEAD / 远端 | B5 链：`6eb9ea2`（B5 代码）→ `8ec8f6f`（B5 文档同步）→ `27b9a37`（B5 acceptance closure，**当前 HEAD**）；其后仅剩本次文档 cleanup 提交。远端 `origin/main` 停在 `8ec8f6f`（B5 closure 与本次 cleanup 均**未 push**，按验收要求） |
-| 验证基线 | root `tsc` 0 · research typecheck 0 · **196 tests 全过** · `research smoke` PASS |
-| 真实库 | `~/.tiancha/db/tiancha.sqlite`；`mw-v1` 已被 DATA-R1 修复（weight/criticality 齐全，`risk`/`key_validation` 恢复 critical）；**当前只有 `人形机器人` 一条行业**（B5 真实库验证产生的 position / target / preparation 残留已清理） |
-| 下一步 | **Phase C**：调研回填闭环（Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新），待授权 |
+| 当前阶段 | **Phase C · C1→C5-D 契约全部 FINAL LOCK 且已发布**；**C5-D 实现未授权** |
+| 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影，契约 rev2 / 文档 rev8）** |
+| 验收状态 | C1–C5-C **已实现、已发布、已独立复验**；**C5-D 仅契约 LOCK（`7672a49`），实现/测试尚未开始** |
+| HEAD / 远端 | **`7672a49`**（`docs: revise Phase C5-D contract to rev2`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
+| 验证基线 | root `tsc` 0 · research typecheck 0 · **372 tests / 371 pass / 1 pre-existing flaky `C1-29`** · `research smoke` PASS |
+| 真实库 | `~/.tiancha/db/tiancha.sqlite`；**26 张表**（C5-A/B 新增 `target_proposal` / `target_proposal_decision`）；当前只有 `人形机器人` 一条行业 |
+| 下一步 | **C5-D 实现（未授权）**：`ResearchPlanProposal.preparation` 只读投影 `{preparationRef, status, questionCount} \| null` + T-D-1…T-D-11 —— 见 **`docs/phaseC/c5-implementation-contract.md` §21** |
+| 之后 | C6：Material → Claim → Knowledge Evolution（未授权） |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
 
@@ -38,7 +40,8 @@
 |---|---|
 | 弄清「天查到底要做什么」 | §1（含**用户的完整原始需求**） |
 | 弄清「现在做到哪了」 | §2 真实状态、§9 实施进展 |
-| **Phase B v1 实现契约（字段 / identity / 不变量 / 验收）** | **`docs/phaseB/implementation-contract.md`**（其 §12 是实现进度表） |
+| **Phase C 实现契约（当前主线）** | **`docs/phaseC/implementation-contract.md`**（总契约）+ `phaseC/c2-*` / `c3-*` / `c4-*` / **`phaseC/c5-implementation-contract.md`（§21 = C5-D）** |
+| Phase B v1 实现契约（字段 / identity / 不变量 / 验收） | `docs/phaseB/implementation-contract.md`（其 §12 是实现进度表） |
 | 理解「为什么这样设计」 | §3 架构三层（业务 v3.1 → 领域模型 → 代码设计） |
 | 改代码前防踩红线 | §8 不变量、§10 关键决策、§12 踩坑 |
 | 找工作 | §4 目录、§6 命令面、§13 文档索引 |
@@ -47,7 +50,16 @@
 
 | commit | 含义 |
 |---|---|
-| `6eb9ea2` + 本文档提交 | **B5** 调研准备链能力暴露（CLI `chain/need/diligence` + Agent 4 只读工具）+ 文档同步（**当前代码 HEAD**） |
+| `7672a49` / `8591975` | **C5-D 契约 rev2（Final Lock，文档 rev8）/ rev1** —— **当前 HEAD = `origin/main`**（仅 docs） |
+| `8b822f4` / `735be57` / `50075f2` | **C5-C** 验证强化测试 / 基线测试 / Plan 只读消费 Proposal 投影 |
+| `afd4a64` | **C5-C** 契约 rev6.1（追加 §20） |
+| `4c5db64` / `dd07538` / `05f1800` | **C5-B** 测试 / 人工决定（`confirm`·`reject` 为 `research_target` 唯一写路径）/ 契约 rev5.1 |
+| `e921147` / `f4e48b2` / `a1bba24` | **C5-A** 测试 / 推荐（Company·Proposal）/ 契约 rev4 |
+| `b86c7be` | **C4** 契约 §8.4 所有权澄清（C4-A Report / C4-B `report-history`） |
+| `72151b5` | **C3** Priority/NextAction 验证测试 |
+| `ee16851` / `6bfd702` / `69d2b1d` | **C2** Phase 2 Step 2-C / Step 2-B / Phase 2 契约 FINAL LOCK |
+| `57789e5` / `6f2e291` | **C2** 契约 Final Lock / **Phase C 总契约 v1** |
+| `6eb9ea2` + 文档提交 | **B5** 调研准备链能力暴露（CLI `chain/need/diligence` + Agent 只读工具）+ 文档同步 |
 | `1592b9f` / `bd0948e` / `cd20cf6` | **B4** DiligencePreparation + 文档同步 + handover refresh |
 | `e64ddd4` / `6c12ac2` | **B3** QuestionTargetFit + 文档同步 |
 | `253decb` / `9232668` | **B2** ResearchTarget + 文档同步 |
@@ -371,7 +383,7 @@ node --import tsx src/cli/tiancha.ts research smoke
 
 ---
 
-## 7. 数据模型（24 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
+## 7. 数据模型（26 张表，同库 `~/.tiancha/db/tiancha.sqlite`）
 
 **2A（11）**：industry · company · research_question · information_requirement · research_gap · information_pool_entry(legacy) · research_state · research_source · research_document · next_action · methodology
 
@@ -393,7 +405,11 @@ node --import tsx src/cli/tiancha.ts research smoke
 
 **B4（1）**：diligence_preparation（三类来源 `common`/`target_specific`/`fit_derived` 存于 `questions_json`；`dp-<targetRef>` 幂等）
 
-**（B5 不新增任何表）**：B5 只暴露 B1–B4 已存在的产物；`ResearchNeed` / `QuestionTargetFit` 仍是**派生值对象**，不落表。
+**C5-A（1）**：target_proposal（**推荐**：`proposalRef` 确定性；同 `(gap, position, subject)` 仅有 active 行 —— `idx_proposal_active_subject` UNIQUE；`companyName` 仅为展示字段，不是 SoT）
+
+**C5-B（1）**：target_proposal_decision（**人工决定**：`confirm` / `reject` + `operator` + `comment`；`confirm` 同时建 `research_target`）
+
+**（B5 / C5-C / C5-D 均不新增任何表）**：B5 只暴露 B1–B4 已存在的产物；C5-C 是 `ResearchPlan` 的**只读投影**（新增 `orphanProposals` / `positions[].proposals` 字段）；**C5-D 同样只读**（`New tables = 0, Migration = 0`）。`ResearchNeed` / `QuestionTargetFit` 仍是**派生值对象**，不落表。
 
 **加列（PRAGMA 预检查）**：`industry.current_knowledge_id`、`methodology.dimensions_json`、`information_requirement.{confirmed,uncertain,unknown}_condition` + `preferred_position_kinds_json` + `sufficiency_policy_ref`（S4.5）、`research_gap.gap_type`（S4.5）、`investment_evaluation.{evaluation,aggregation}_policy_version_id`（S4.5）
 
@@ -454,6 +470,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **DATA-R1** | legacy `mw-v1` 数据修复迁移（补齐冻结基线自身的 `weight`/`criticality`；真实库已复验） |
 | **C-MVP** | 最小材料入口（`Material` 自带 subject provenance + 规则解析 + 复用 `ingestClaims` + 幂等） |
 | **Phase B v1 · B1–B5** | `ChainTemplate`/`Position`/`Need` · `ResearchTarget` · `QuestionTargetFit` · `DiligencePreparation` · CLI/Agent 暴露 |
+| **Phase C · C1–C5-D** | Knowledge Projection 语义对齐 · Gap-driven Research Planning（含 Phase 2 Step 2-B/2-C）· Priority/NextAction 验证 · Report/Dossier 只读投影 · **C5-A 推荐 → C5-B 人工决定 → C5-C Plan 只读消费 → C5-D Preparation 边界冻结 + 只读摘要（C5-D 仅契约 LOCK）** |
 
 ### 9.2 代码实现进度（S1–S7 / DATA-R1 / C-MVP / Phase B v1）
 
@@ -476,7 +493,15 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **B2** | Phase B v1 第二步：`ResearchTarget` = Human-confirmed subject（`--name` 由人给；无 Position→Target 路径） | ✅ |
 | **B3** | Phase B v1 第三步：`QuestionTargetFit` = 规则判定（weak/none + 重要问题 ⇒ 提出备选需求，不选对象） | ✅ |
 | **B4** | Phase B v1 第四步：`DiligencePreparation` = 研究什么（三类来源可区分 + 每问可溯源；无 LLM/非报告） | ✅ |
-| **B5** | Phase B v1 收尾：**能力暴露** —— CLI `chain/need/diligence`（`chain` 是投影在生产中唯一入口）+ `target list` 附只读适配概况 + Agent 4 个只读工具（14 → 18） | ✅ |
+| **B5** | Phase B v1 收尾：**能力暴露** —— CLI `chain/need/diligence`（`chain` 是投影在生产中唯一入口）+ `target list` 附只读适配概况 + Agent 只读工具（14 → 18） | ✅ |
+| **C1** | **Knowledge Projection 语义对齐**（CURRENT 投影版本唯一派生；`confirm` 移动版本、`reject` 不动） | ✅ |
+| **C2** | **Gap-driven Research Planning**：契约 Final Lock（`57789e5`/`69d2b1d`）→ Step 2-B Target 关联闭环（`6bfd702`）→ Step 2-C `research plan` 只读研究计划（`ee16851`）；Plan DTO 有**字段禁列**（`planId`/`createdAt`/`updatedAt`/`versionId`/`save(`/`upsert(`） | ✅ |
+| **C3** | **Priority / NextAction 验证**：验证 Knowledge 引起的变化正确驱动**既有 persisted** Priority/NextAction（不重算、Report 不重算） | ✅ |
+| **C4** | **Report / IndustryDossier 只读投影**（C4-A）与 **report-snapshot history**（C4-B，`research report-history`）；契约 §8.4 明确两者所有权 | ✅ |
+| **C5-A** | **Research Recommendation**：`Company`（`research company add/list/get`）+ `TargetProposal`（`research proposal generate/list/get`）；`proposalRef` 确定性、同 `(gap, position, subject)` 仅一条 active（UNIQUE） | ✅ |
+| **C5-B** | **Human-Gated Decision**：`research confirm\|reject <proposalRef> --operator <name>`；**`confirm` 是产出 `research_target` 的唯一路径**；Agent **不获得**该写权限 | ✅ |
+| **C5-C** | **Plan 只读消费 Proposal/Decision**：`research plan` 展示 `positions[].proposals`（含 decision 与 `targetRef` 校验）+ `orphanProposals`；`--json` 向后兼容；零写用**内容指纹**证明 | ✅ |
+| **C5-D** | **Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影**（`{preparationRef, status, questionCount} \| null`）：**契约已 LOCK（`7672a49`），实现未授权**；`New tables = 0, Migration = 0` | ⏸ 契约 LOCK |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -484,7 +509,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 |---|---|---|
 | **A** | 单行业研究闭环 | **S1–S7 已完成**（含 DATA-R1 legacy 修复、C-MVP 材料入口） |
 | **B** | Research Planning / 调研准备链 | **B1–B5 已全部实现**（`docs/phaseB/implementation-contract.md` §12：无剩余 Step） |
-| **C** | 调研回填闭环 | Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新 |
+| **C** | 调研回填闭环 | **进行中**：C1–C4 已实现并发布；C5-A/B/C 已实现并发布；**C5-D 契约已 LOCK，实现未授权**；C6（Material → Claim → Knowledge Evolution）未授权 |
 | **D** | 双体系协同闭环（外环） | Research Experience → Pattern → Methodology Candidate → Human Gate |
 | **E** | 自动化与规模化 | 自动搜集 + 赛道识别 + Wind 接入（**入口能力**） |
 | F（横向） | Report（投影） | 任何阶段可生成；不占 Phase |

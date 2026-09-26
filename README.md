@@ -77,14 +77,21 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 | `tiancha research chain <行业>` | 展示调研链条（模板实例）与"建议研究哪类对象"——**同时幂等生成**该行业的 `ResearchPosition`（B1 投影在生产中的唯一入口） |
 | `tiancha research need <行业>` | 展示派生的研究需求（含"为什么需要调研而不只是抓数据"的规则解释），只读 |
 | `tiancha research diligence <行业> --target <ref>` | 生成并展示调研准备（提纲 + cautions；省略 `--target` 时只读列出现有准备） |
+| `tiancha research plan <行业>` | **只读研究计划**（C2 Step 2-C）：按 Gap/Position 组织，含 `positions[].proposals`（研究建议 + 人工决策 + 确认后的研究对象）与 `orphanProposals`（悬空建议）|
+| `tiancha research report-history <行业>` | **只读** report-snapshot 历史（C4-B） |
+| `tiancha research company add <行业> --name <企业名> --kinds <类型1,类型2>` | 登记一名**候选企业**（C5-A，幂等）|
+| `tiancha research company list\|get <行业\|companyId>` | 只读查看候选企业 |
+| `tiancha research proposal generate <行业> [--gap <gapRef>]` | **生成研究建议**（C5-A，只读推导 + 落 `target_proposal`；不创建研究对象）|
+| `tiancha research proposal list\|get <行业\|proposalRef>` | 只读查看研究建议及其状态 |
+| `tiancha research confirm\|reject <proposalRef> --operator <名> [--comment <文本>]` | **人工决定**（C5-B）：`confirm` 是产出 `research_target` 的**唯一**路径（Agent 无此权限）|
 | `tiancha research target add <行业> --kind <k> --name <主体> --position <posRef> --purpose <…> --reason <…>` | 人确认一个具体研究对象（**唯一的 target 写入路径**） |
 | `tiancha research target list <行业>` | 列出已确认的研究对象及其只读适配概况（强/部分/弱/无 + 需备选对象数） |
 | `tiancha session readonly <path>` | 只读恢复历史会话 |
 
 > 上述 `research` 命令均支持 `--json`（输出格式切换，与文本渲染同一结果）。
 
-**研究工具（18 个）**：主模型按语义自行选择调用（**无关键词分类器**）——
-`research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list / research_methodology_show / research_methodology_list / research_methodology_propose / research_pool_show / research_evaluate / research_priority / research_report / research_material_add / research_chain_show / research_need_list / research_target_list / research_diligence_show`。
+**研究工具（19 个）**：主模型按语义自行选择调用（**无关键词分类器**）——
+`research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list / research_methodology_show / research_methodology_list / research_methodology_propose / research_pool_show / research_evaluate / research_priority / research_report / research_material_add / research_chain_show / research_need_list / research_target_list / research_diligence_show / research_plan_show`。
 > **没有** `research_methodology_decide`：模型只能提案，激活必须由人通过 CLI 完成。
 > **Agent 权限边界**：`research_evaluate` 读已落库的评估、绝不触发重算；`research_report` 只追加投影；`research_material_add` 只写用户提供的材料（不评估、不改优先级）；B5 的 4 个工具（链/需求/对象/准备）**只读已生成的产物**，未生成时提示由研究者执行 CLI —— Agent **不投影链条、不录入对象、不生成提纲**。
 
@@ -117,12 +124,22 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
   - `B2` **ResearchTarget = Human-confirmed subject**：`subjectKey` 必须由人给出，`createdBy` 恒为 `user`，**不存在** Position → Target 的自动路径；备选对象必须带 ref + limitations；
   - `B3` **QuestionTargetFit = 规则判定**：纯函数 `evaluateFit()`（`targetKind × 服务该问题 → strong/partial/weak/none`）；`weak/none` + 重要问题 ⇒ 提出"需要备选对象"这一需求（**只提需求、不选对象**），不落表；
   - `B4` **DiligencePreparation = 研究什么**：三类来源 `common` / `target_specific` / `fit_derived` **结构化可区分**，每条问题可溯源（I-B5）；无 LLM、非报告；
-  - `B5` **能力暴露**：CLI `research chain / need / diligence` + `target list` 带只读适配概况；Agent 4 个只读工具（14 → 18）——**只读已生成的产物**，未生成时提示由研究者执行 CLI（与 `research_evaluate` 同一套治理）。`research chain` 是 B1 投影在生产中的唯一入口。
+  - `B5` **能力暴露**：CLI `research chain / need / diligence` + `target list` 带只读适配概况；Agent 只读工具（14 → 18）——**只读已生成的产物**，未生成时提示由研究者执行 CLI（与 `research_evaluate` 同一套治理）。`research chain` 是 B1 投影在生产中的唯一入口。
+- **Phase C（调研回填闭环）C1–C5 已完成并发布**（契约：`docs/phaseC/implementation-contract.md` + `phaseC/c2-*` / `c3-*` / `c4-*` / `c5-implementation-contract.md`）：
+  - `C1` **Knowledge Projection 语义对齐**：CURRENT 投影版本唯一派生（`confirm` 移动版本、`reject` 不动）；
+  - `C2` **Gap-driven Research Planning**（含 Phase 2 Step 2-B Target 关联闭环、Step 2-C `research plan` 只读研究计划）；
+  - `C3` **Priority / NextAction 验证**：只验证**既有 persisted** 结果被正确驱动，**不重算**；
+  - `C4` **Report / IndustryDossier 只读投影**（C4-A）与 **report-snapshot history**（C4-B，`research report-history`）；
+  - `C5-A` **研究建议**：`research company add/list/get` + `research proposal generate/list/get`（`proposalRef` 确定性 + 同 `(gap, position, subject)` 仅一条 active）；
+  - `C5-B` **人工决定**：`research confirm|reject <proposalRef> --operator <名>` —— **`confirm` 是产出 `research_target` 的唯一路径**，**Agent 无该写权限**；
+  - `C5-C` **Plan 只读消费 Proposal/Decision**：`research plan` 展示 `positions[].proposals` + `orphanProposals`（悬空建议）；Agent 新增 `research_plan_show`（18 → 19，仍**只读**）；
+  - `C5-D` **Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影**：**契约已 FINAL LOCK（`7672a49`），实现在本 README 写作时尚未授权**（无新表、无 migration）。
 
 **能力边界：**
 - 当前数据源是 **Echo 占位 Provider**，所有 Evidence 标记 `isRealExternalData=false` / `sourceType=echo_placeholder`。**不能据此做真实投资判断、不给"值得/不值得"结论**；真实 Wind/Web/上传文档在 Phase E 接入。
 - 默认评分规则是**证据强度分**（确定性、可解释），**不是投资锚点评分**；真实锚点评分属 Methodology 的 Evaluation Policy。
 - **尚未实现**：Field Research 全链（Material→Fragment→Evidence→Claim）、真实数据源与自动发现行业、Research Experience（外环）、提纲中的 `requestedMaterials`/`risks`（无真实来源时不臆造）—— 见「开发路线」。
+- **C5-D 状态说明**：C5-D（Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影）**只完成了契约 FINAL LOCK**；本条 README 描述的 `research plan` 输出**不含** `preparation` 摘要字段，该字段属**尚未实现**的能力。
 
 ---
 
