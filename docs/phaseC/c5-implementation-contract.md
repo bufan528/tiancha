@@ -605,3 +605,200 @@ research proposal reject <proposalRef>
 ---
 
 **End of contract（rev4）.** 任何实现必须逐条对齐本文件；若需偏离，须先修订本契约。
+
+---
+
+# §19 rev5 — C5-B Implementation Contract（Proposal Decision / Human Gate）
+
+> 状态：**rev5.1 — APPROVED / READY TO FREEZE.**
+> 父基线：**C5-A 已发布基线**（`a1bba24` 契约 / `f4e48b2` 生产 / `e921147` 测试，均在 `origin/main`）。
+> **未经单独授权，不得开始 C5-B 实现。**
+
+## §19.0 修订历史
+
+| 版本 | 变更 |
+|---|---|
+| rev5 | 首版 C5-B 契约：Decision 对象 / decision 表 / partial unique index / 两类并发 / CAS / 事务 |
+| **rev5.1** | 修 4 处：① **废止 `INSERT OR REPLACE`**（BLOCKER）② `operator` 在 confirm/reject **均 required** ③ **同一事务上下文**不变量 ④ 并发验收强化 + `INSERT OR REPLACE` **防回归静态断言** |
+
+## §19.1 C5-A 已发布基线**不可回改**
+
+```text
+f4e48b2（生产）/ e921147（测试）已 push 到 origin/main
+⇒ 禁止 amend / rebase / squash / 追加 "C5-A fix" commit / 重写历史
+```
+
+**唯一例外**：C5-B **允许**修改 `application/target-proposal-service.ts` 与 `storage/research-repository.ts` 的 **Proposal 创建 primitive**，定性为「**C5-B 为建立数据库并发不变量而对 persistence primitive 的安全升级**」，**不是**修补 C5-A 缺陷。硬边界见 §19.8。
+
+## §19.2 C5-B 新增对象
+
+| 新增 | 定义 |
+|---|---|
+| `ProposalDecisionKind` | `"confirmed" \| "rejected"` |
+| `ProposalDecision` | `{ proposalRef, kind, operator, comment?, decidedAt }` |
+| **`target_proposal_decision` 表** | append-only；**`proposal_ref TEXT PRIMARY KEY`**（**不引入 `decisionRef`**；`Proposal 1 : Decision 0..1`）；**无 UPDATE / DELETE 路径** |
+| `ProposalDecisionService` | **编排者**：`confirm(ref, operator, comment?)` / `reject(ref, operator, comment?)`；**自己不写 `target_proposal`** |
+| `TargetProposalService.transition(ref, next, ctx)` | **唯一** `target_proposal` 状态写者；**CAS 实现** |
+| CLI | `research proposal confirm\|reject <proposalRef> --operator <name> [--comment <text>] [--json]` |
+
+## §19.3 partial unique index（数据库不变量）
+
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_active_subject
+  ON target_proposal(industry_ref, company_ref)
+  WHERE status = 'proposed';
+```
+
+**不变量**：同一 `(industry_ref, company_ref)` **至多一个** `status='proposed'`。
+与 §10.3 **不冲突**：`confirmed` / `rejected` 不在索引谓词内 ⇒ "`rejected` 后新 revision 可重推" 继续成立。
+
+## §19.4 两类并发必须**分开设计**
+
+| 场景 | 正确机制 |
+|---|---|
+| 两个生成器同时为同一 Company 建 Proposal | **partial unique index + 确定性冲突恢复**（§19.5） |
+| 两个操作者同时 confirm 同一 Proposal | **CAS**（`UPDATE … WHERE status='proposed'`） |
+| confirm 与 reject 竞争 | 一个成功，另一个 **`already_decided`** |
+| confirm 与 Target 创建竞争 | **同一事务**（§19.6） |
+| Target 已存在 | **ROLLBACK**，Proposal 不变（`target_already_exists`） |
+
+## §19.5 生成竞争的确定性处理（**废止 `INSERT OR REPLACE`**）
+
+**为什么必须废止（SQLite 语义）**：
+```text
+INSERT OR REPLACE 命中约束 ⇒ 不抛错 ⇒ DELETE 冲突行 + INSERT 当前行
+  ⇒ 与 partial unique index 组合后，竞争会「静默覆盖赢家」
+  ⇒ 直接破坏 §10.3「竞争 ⇒ skippedActiveExists」的语义
+```
+
+**契约条款**：
+
+```text
+① 禁止在任何 Proposal 创建路径使用 INSERT OR REPLACE。
+② Repository primitive 升级：
+     upsertTargetProposal(...)  ⇒  重命名为 insertTargetProposal(...)
+       SQL: INSERT OR REPLACE INTO target_proposal …   ⇒   INSERT INTO target_proposal …
+     唯一调用点是 TargetProposalService.persistDrafts（C5-B 一并更新）。
+   ★ 这是 §19.1 允许的安全升级：proposalRef / score / selectionReason / revisionInput /
+     Engine 输出全部不变；串行 persistDrafts 的业务结果不变（3 层提前跳过逻辑完全保留）。
+   ★ 状态变更（transition）不走该 primitive，而走独立的 CAS UPDATE（§19.6）。
+③ 冲突识别必须**双重校验**，不得只依赖脆弱的错误字符串匹配：
+     SQLite UNIQUE error
+        ↓ 确认属于 target_proposal
+        ↓ 确认对应 active-subject 唯一约束（驱动能提供 constraint/index 信息则直接利用）
+        ↓ 重读 (industry_ref, company_ref) 的 active proposal
+        ↓ 存在 ⇒ skippedActiveExists += 1（确定性业务结果，不抛错）
+   ★ 其它任何 SQLite 错误（普通 UNIQUE / NOT NULL / FK / 其它）**必须原样抛出**，不得被吞。
+④ 既有顺序不变：getTargetProposal(ref) 命中 ⇒ skippedSameRef；
+   listTargetProposals(industry,"proposed").some(companyRef) ⇒ skippedActiveExists；随后才 INSERT。
+   ⇒ 纯 INSERT 的附带收益：createdAt 不再可能被 REPLACE 覆盖。
+⑤ PersistProposalsResult 字段集合不变（复用 skippedActiveExists）。
+```
+
+## §19.6 Decision CAS 与**同一事务上下文**
+
+```text
+reject()（rev4 §8.3 只写了 confirm，本版补齐）：
+  BEGIN
+    1. 读 Proposal
+    2. CAS: UPDATE target_proposal SET status='rejected' WHERE proposal_ref=? AND status='proposed'
+    3. changes === 0 → ROLLBACK → already_decided
+    4. appendDecision(rejected, operator, comment?)
+    5. COMMIT → rejected
+
+confirm()：rev4 §8.3 的 9 步（subjectKeyForCompany → targetRefFor → getTarget 存在则
+  ROLLBACK / target_already_exists → appendDecision(confirmed) → TargetService.add() → COMMIT）不变。
+
+★ 同一事务上下文不变量：
+   CAS / decision INSERT / Target INSERT 必须全部经由
+   **同一个 ResearchRepository 实例 = 同一个 DatabaseSync 连接**。
+   实现约束：
+     - ProposalDecisionService 构造时接收 DatabaseSync；
+     - 事务内只用一个 repo 实例贯穿：repo.transaction(() => { … })；
+     - TargetService 必须用同一个 db 构造（new TargetService(this.db)）；
+     - 禁止在事务中 new 第二个 DatabaseSync / 第二个 repo；
+     - 禁止嵌套 repo.transaction()（BEGIN 会失败）。
+
+★ 核心不变量（任一失败 ⇒ ROLLBACK）：
+     Proposal = proposed（保持原状） · Decision = 0 行 · Target = 未被 C5 修改
+
+★ 幂等（两个 verb 都适用）：入口先读 ⇒ confirmed / rejected ⇒ exact no-op 或确定性终结结果；
+  终态不可反转（R4）。
+```
+
+## §19.7 `operator` 契约（confirm / reject **均 required**）
+
+```text
+research proposal confirm <proposalRef> --operator <name> [--comment <text>] [--json]
+research proposal reject  <proposalRef> --operator <name> [--comment <text>] [--json]
+
+operator:
+  - required（缺失 ⇒ usage error，退出码 1）
+  - trim 后不得为空（空 / 纯空白 ⇒ usage error）
+  - 不得默认 "user"；不得由系统自动填充
+  - 白名单：confirm / reject ⇒ allowed = ["--operator", "--comment", "--json"]
+```
+
+## §19.8 C5-A 行为必须**完全不变**的清单
+
+```text
+① Engine 输出（drafts / proposalRef / score / selectionReason）逐字不变
+② proposalRef 公式与 revisionInput 9 项不变
+③ CLI `company add|list|get`、`proposal generate|list|get` 的输出与退出码不变
+④ `--gap` 仍只是计算过滤器
+⑤ persistDrafts 的串行行为不变（C5-A 既有 28 + 9 测试继续全绿）
+⑥ per-verb 白名单不变（不得新增 --status）
+```
+
+## §19.9 C5-B 明确**禁止**
+
+```text
+❌ amend / rebase / squash C5-A 提交
+❌ 改变 C5-A 推荐计算语义（Engine / revisionInput / score / reason）
+❌ Agent 侧获得任何写权限（confirm/reject 只走 CLI 人工路径）
+❌ 生成后自动 confirm / 自动 materialize Target
+❌ 跳过 Human Decision 直接建 ResearchTarget（§2.4 / R3）
+❌ decision 表的 UPDATE / DELETE；`list decisions → 反推 proposal.status`
+❌ 让 UNIQUE 冲突或其它 SQLite 异常冒泡为未处理错误（吞错仅限 §19.5③ 的特定冲突）
+❌ 在同一事务内嵌套调用另一个事务；跨连接拼装"同一事务"
+❌ 改动 Plan / Diligence / Report / C2·C4 冻结面
+❌ CLI 暴露 `--status`
+```
+
+## §19.10 预计文件清单
+
+**新增** ① `application/proposal-decision-service.ts` ② `phase-c5-b.test.ts` ③ `src/cli/phase-c5-b-cli.test.ts`
+**修改** ④ `domain/target-proposal.ts`（+Decision 类型） ⑤ `domain/index.ts` ⑥ 包 `index.ts` ⑦ `storage/research-db.ts`（+decision 表 + partial index） ⑧ `storage/research-repository.ts`（+decision CRUD、+CAS transition、`upsertTargetProposal`→`insertTargetProposal`） ⑨ `application/target-proposal-service.ts`（+`transition()`、+冲突恢复） ⑩ `src/cli/research-commands.ts`（+confirm/reject verb + 白名单） ⑪ `src/cli/research-format.ts`（+decision 渲染）
+
+## §19.11 不变量与验收
+
+| 用例 | 内容 |
+|---|---|
+| T-C5-B-1 | confirm ⇒ Target 落库且 `createdBy === "user"`；Proposal 变 `confirmed` |
+| T-C5-B-2 | reject ⇒ 无 Target、decision 入库、Proposal `rejected` |
+| T-C5-B-3 | 二次 confirm / confirm 后 reject / reject 后 confirm ⇒ **确定性终结结果**（R4） |
+| T-C5-B-4 | `target_already_exists` ⇒ **ROLLBACK**：Proposal 仍 `proposed`、decision 0 行、Target 未被 C5 修改 |
+| **T-C5-B-5** | 并发双 confirm：① 恰一个 `confirmed` ② 另一个 `already_decided` ③ `status=confirmed` ④ decision **exactly 1** ⑤ `research_target` 至多新增 1 ⑥ **两个调用均无未处理异常** ⑦ 三者状态一致 |
+| T-C5-B-6 | partial index 不变量：同 `(industry, company)` 至多一个 `proposed` |
+| **T-C5-B-7** | generate 竞争：① 最终 active Proposal exactly 1 ② **先持久化者未被覆盖**（逐字段比对） ③ 后者得 `skippedActiveExists` ④ 不产生第二行 active ⑤ 非 unique 异常继续抛出 ⑥ **静态断言：Repository 源码不存在 `INSERT OR REPLACE INTO target_proposal`** |
+| T-C5-B-8 | C5-A 回归：既有 28 + 9 测试全绿；Engine 输出逐字不变 |
+| T-C5-B-9 | R1：未确认 Proposal 不进任何"研究事实"视图，也不产生 Diligence |
+| T-C5-B-10 | 静态审计：`TargetService.add(` 在 C5 代码中的唯一调用点 = confirm 分支 |
+| T-C5-B-11 | `--operator` 缺失 / 空白 ⇒ usage error；confirm 与 reject 对称 |
+
+## §19.12 裁定记录（已关闭）
+
+| # | 议题 | 裁定 |
+|---|---|---|
+| 1 | C5-A 历史提交 | **不可回改**（不 amend / 不追加 fix / 不重写） |
+| 2 | C5-B 可否改 `target-proposal-service.ts` | **可以**（persistence primitive 安全升级，不得改推荐计算语义） |
+| 3 | partial unique index | **必须加入** |
+| 4 | 唯一冲突处理 | **确定性业务结果**（不冒异常） |
+| 5 | `INSERT OR REPLACE` | **C5-B 废止**（会导致静默覆盖赢家） |
+| 6 | `operator` | **confirm / reject 均 required**，trim 非空，不默认 |
+| 7 | `decisionRef` | **不需要**（`proposal_ref` 作 PRIMARY KEY） |
+| 8 | 事务边界 | CAS / Decision / Target **同一 Repository / 同一连接 / 同一事务上下文** |
+| 9 | status 与 decision SoT | `proposal.status` = 当前状态 SoT；decision 表 = append-only 审计；**禁止反推** |
+| 10 | 冲突识别 | **双重校验**（constraint 信息 + 冲突对象重读）；其它错误必须抛出 |
+
+**End of contract（rev5.1）.**
