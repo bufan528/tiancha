@@ -37,6 +37,8 @@ import {
   ActiveRequirementResolver,
   currentPreparationView,
   MethodologyService,
+  projectionId,
+  ReportRepository,
   ResearchPlanService,
   targetRefFor,
 } from "@tiancha/research";
@@ -52,10 +54,12 @@ import {
   formatPoolHuman,
   formatPriorityHuman,
   formatReportHuman,
+  formatReportHistoryHuman,
   formatTargetHuman,
   formatTargetWithFitHuman,
   toJson,
   type NeedListView,
+  type ReportHistoryRow,
   type TargetListView,
 } from "./research-format.js";
 import { renderDossierMarkdown, reportFileName } from "./report-markdown.js";
@@ -100,7 +104,8 @@ export type ResearchSubcommand =
   | "chain"
   | "need"
   | "diligence"
-  | "plan";
+  | "plan"
+  | "report-history";
 export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
   "evaluate",
   "pool",
@@ -110,6 +115,7 @@ export const RESEARCH_SUBCOMMANDS: readonly ResearchSubcommand[] = [
   "need",
   "diligence",
   "plan",
+  "report-history",
 ];
 
 /** `--json` is a FORMAT switch only; the positional arg is the industry name. */
@@ -136,6 +142,8 @@ export async function runResearchCommand(sub: string, rest: string[], deps: Rese
       return runDiligence(rest, options, deps);
     case "plan":
       return runPlan(name, options, deps);
+    case "report-history":
+      return runReportHistory(rest, options, deps);
     default:
       deps.err(`unknown research subcommand: ${sub}（可用：${RESEARCH_SUBCOMMANDS.join(" | ")}）`);
       return 1;
@@ -184,6 +192,48 @@ export async function runReport(name: string | undefined, options: ResearchCliOp
   const mdPath = join(deps.reportDir, reportFileName(ind.canonicalName, dossier.dossierId));
   writeFileSync(mdPath, markdown, "utf8");
   deps.out(options.json ? toJson({ ...dossier, markdownPath: mdPath }) : formatReportHuman(dossier, mdPath));
+  return 0;
+}
+
+/**
+ * `tiancha research report-history <行业> [--json]` — C4-B: the READ-ONLY report-snapshot history.
+ *
+ * ★ It consumes PERSISTED `report_snapshot` rows only (via `ReportRepository.listProjections()`): it
+ *   never generates a report, never refreshes or rebuilds anything, and mutates no upstream SoT
+ *   (红线 3.3a / I-C4-13). It returns snapshot METADATA only — `sections` are never re-expanded here.
+ */
+export async function runReportHistory(
+  rest: string[],
+  options: ResearchCliOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  // ★ T-C4-17: strict parameter WHITELIST — only `--json` is accepted. `parseResearchArgs` only
+  //   recognises `--json` and would silently swallow every other `--xxx`, so the guard lives HERE
+  //   and the shared parser is deliberately left untouched.
+  const unknownFlags = rest.filter((a) => a.startsWith("--") && a !== "--json");
+  if (unknownFlags.length > 0) {
+    deps.err(
+      `usage: tiancha research report-history <行业> [--json]（不支持的参数：${unknownFlags.join(" ")}；` +
+        `本命令为只读历史查询，不支持 --rebuild / --refresh / --regenerate / --compare-and-update）`,
+    );
+    return 1;
+  }
+  const { name } = parseResearchArgs(rest);
+  const ind = resolveIndustry(name, options, deps, "report-history");
+  if (!ind) return 1;
+
+  const rows: ReportHistoryRow[] = new ReportRepository(deps.repo.db)
+    .listProjections(ind.industryId)
+    .filter((p) => p.subjectKind === "industry")
+    .map((p) => ({
+      projectionRef: projectionId(p),
+      reportKind: p.reportKind,
+      generatedAt: p.generatedAt,
+      methodologyVersionId: p.methodologyVersionId,
+      knowledgeVersion: p.reportKind === "dossier" ? p.knowledgeVersion : null,
+    }));
+
+  deps.out(options.json ? toJson(rows) : formatReportHistoryHuman(rows, ind.canonicalName));
   return 0;
 }
 

@@ -421,3 +421,32 @@ export function formatPlanHuman(view: ResearchPlanView): string {
   }
   return lines.join("\n");
 }
+
+// ---- C4-B: report-snapshot history ---------------------------------------------------------
+
+/** One persisted report/dossier snapshot, as METADATA only (sections are never re-expanded). */
+export interface ReportHistoryRow {
+  /** `reportId` (kind="report") or `dossierId` (kind="dossier"). */
+  projectionRef: string;
+  reportKind: string;
+  generatedAt: string;
+  methodologyVersionId: string;
+  /** Only dossiers carry a knowledge version; `null` for plain reports (persisted field, not derived). */
+  knowledgeVersion: number | null;
+}
+
+/** ★ C4-B: the read-only human formatter over PERSISTED snapshot metadata. */
+export function formatReportHistoryHuman(rows: ReportHistoryRow[], industry: string): string {
+  if (rows.length === 0) {
+    return `研究报告历史（${industry}）：暂无。请先执行 tiancha research report ${industry}。`;
+  }
+  const lines: string[] = [`研究报告历史（${industry}，共 ${rows.length}，最新在前）`];
+  for (const row of rows) {
+    const knowledge = row.knowledgeVersion === null ? "" : ` · 知识 v${row.knowledgeVersion}`;
+    lines.push(
+      `  - ${row.generatedAt} · ${row.reportKind} · ${row.projectionRef} · 方法论 ${row.methodologyVersionId}${knowledge}`,
+    );
+  }
+  lines.push("（只读历史：以上仅为已持久化的快照元数据，不会重新生成报告）");
+  return lines.join("\n");
+}
