@@ -120,7 +120,11 @@ describe("Phase C · C1 · Knowledge Projection Semantic Alignment", () => {
       result.beliefId,
       repo.findBeliefByKnowledgeAndClaim(knowledgeId, `artifact:claim/${claim.claimId}`)!.beliefId,
     );
-    assert.ok(!/\d{10,}/.test(result.beliefId), "no timestamp fragment in the id");
+    // ★ flaky fix (C1-02, same class as C1-29): `/\\d{10,}/` also fires when a random hex UUID
+    // happens to contain ten digits in a row (~1% of runs). Assert the REAL invariant instead:
+    // the id must not embed the current wall clock.
+    const wallClockFragment = String(Date.now()).slice(0, 10);
+    assert.ok(!result.beliefId.includes(wallClockFragment), "no wall-clock fragment in the id");
   });
 
   test("C1-03: exact replay — projecting the same claim three times keeps ONE belief", () => {

@@ -569,3 +569,199 @@ describe("C-MVP-R1 · concurrency with TWO independent processes (§29.5a)", () 
 after(() => {
   rmSync(probeDir, { recursive: true, force: true });
 });
+
+
+// ---------------------------------------------------------------------------
+// T-R1-13/14/15 — the two acceptance gaps found in review: FENCING (a stale holder must never
+// overwrite the new one) and the ORPHAN CLAIM SCAN a残骸 retry must run before writing anything.
+// ---------------------------------------------------------------------------
+
+import type { DatabaseSync } from "node:sqlite";
+
+/** Simulates a SECOND process taking the lease over while the first one is still working. */
+class LeaseStealingStore implements ArtifactStore {
+  private calls = 0;
+  constructor(
+    private readonly inner: ArtifactStore,
+    private readonly db: DatabaseSync,
+    private readonly stealAt: number,
+  ) {}
+  async put(record: ArtifactRecord): Promise<ArtifactRef> {
+    const ref = await this.inner.put(record);
+    this.calls += 1;
+    if (this.calls === this.stealAt) {
+      // A new holder claims the row: owner changes AND the fencing generation moves on.
+      this.db
+        .prepare(
+          "UPDATE material SET ingest_owner = 'thief', ingest_lease_until = ?, " +
+            "ingest_generation = ingest_generation + 1",
+        )
+        .run(new Date(Date.now() + 60_000).toISOString());
+    }
+    return ref;
+  }
+  get(id: string) {
+    return this.inner.get(id);
+  }
+  listByRun(id: string) {
+    return this.inner.listByRun(id);
+  }
+  listByTask(id: string) {
+    return this.inner.listByTask(id);
+  }
+  close() {
+    return this.inner.close();
+  }
+}
+
+describe("C-MVP-R1 · fencing: a stale holder can never overwrite the new one (§29.5a)", () => {
+  test("T-R1-13: after a take-over, the OLD generation's write is refused", async () => {
+    const t = await setup("R1 行业 fence");
+    try {
+      const done = await submit(t.healthy(), t.sid);
+      const id = done.material.materialId;
+
+      // Re-open the row so it can be claimed again, keeping the ledger.
+      const current = t.repo.getMaterial(id)!;
+      assert.equal(
+        t.repo.updateMaterialProgress(
+          id,
+          {
+            ingestStatus: "received",
+            ingestStage: null,
+            ingestError: null,
+            ingestBlocks: current.ingestBlocks,
+            claimRefs: [],
+            ingestOwner: null,
+            ingestLeaseUntil: null,
+          },
+          current.ingestGeneration,
+        ),
+        true,
+      );
+
+      const past = new Date(Date.now() - 60_000).toISOString();
+      const future = new Date(Date.now() + 60_000).toISOString();
+      const now = new Date().toISOString();
+
+      const generationA = t.repo.claimMaterialIngest(id, "A", future, "received", now);
+      assert.equal(typeof generationA, "number", "A gets the lease");
+
+      // A's lease EXPIRES (a long block), and B takes over.
+      t.repo.db.prepare("UPDATE material SET ingest_lease_until = ? WHERE material_id = ?").run(past, id);
+      const generationB = t.repo.claimMaterialIngest(id, "B", future, "received", now);
+      assert.equal(typeof generationB, "number", "B takes over the expired lease");
+      assert.notEqual(generationB, generationA, "taking over bumps the fencing generation");
+
+      const patch = {
+        ingestStatus: "projecting" as const,
+        ingestStage: "projecting" as const,
+        ingestError: null,
+        ingestBlocks: current.ingestBlocks,
+        claimRefs: [] as string[],
+        ingestOwner: "A",
+        ingestLeaseUntil: future,
+      };
+      assert.equal(
+        t.repo.updateMaterialProgress(id, patch, generationA!),
+        false,
+        "T-R1-13: the STALE generation is REFUSED (A cannot resume writing)",
+      );
+      assert.equal(t.repo.getMaterial(id)!.ingestOwner, "B", "A did not overwrite B's ownership");
+      assert.equal(
+        t.repo.updateMaterialProgress(id, { ...patch, ingestOwner: "B" }, generationB!),
+        true,
+        "the CURRENT generation still writes",
+      );
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+
+  test("T-R1-14: losing the lease mid-run ⇒ in_progress, and NOTHING is overwritten", async () => {
+    const t = await setup("R1 行业 steal");
+    try {
+      // Steal the lease right after the FIRST artifact write of the material pipeline.
+      const stealing = new LeaseStealingStore(t.inner, t.db.db, 1);
+      const service = new MaterialIngestService(t.repo, new EchoDataProvider(), stealing, {
+        ownerId: "A",
+        leaseMs: 30_000,
+      });
+      const outcome = await service.ingest({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        title: "纪要",
+        text: MATERIAL,
+      });
+
+      assert.equal(
+        outcome.outcome,
+        "in_progress",
+        "T-R1-14: the stale holder reports in_progress — never `created`",
+      );
+      const stored = t.repo.getMaterial(outcome.material.materialId)!;
+      assert.equal(stored.ingestOwner, "thief", "A never overwrote the new holder");
+      assert.notEqual(stored.ingestStatus, "completed", "A did not close the row out");
+      assert.equal(stored.claimRefs.length, 0, "A's claim refs were never committed");
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+});
+
+describe("C-MVP-R1 · the orphan Claim scan of a残骸 retry (§29.2 (c))", () => {
+  test("T-R1-15: retry REUSES the Claims a previous attempt already wrote", async () => {
+    const t = await setup("R1 行业 orphan");
+    try {
+      const knowledge = new KnowledgeRepository(t.db.db);
+      // 1) a normal import writes the claims + beliefs …
+      const first = await submit(t.healthy(), t.sid);
+      const originalRefs = first.material.claimRefs.slice();
+      assert.equal(originalRefs.length, VALID_BLOCKS);
+
+      // 2) … then the row is turned into exactly what the one-shot migration produces for a残骸:
+      //    no ledger, no refs, status legacy_failed (the pre-R1 shape).
+      t.db.db
+        .prepare(
+          `UPDATE material
+              SET ingest_status = 'legacy_failed', ingest_stage = 'parsed',
+                  ingest_error = 'LEGACY_PARTIAL_IMPORT', ingest_blocks_json = '[]',
+                  claim_refs_json = '[]', ingest_generation = 0, ingest_owner = NULL,
+                  ingest_lease_until = NULL
+            WHERE material_id = ?`,
+        )
+        .run(first.material.materialId);
+
+      // 3) the retry runs the orphan scan FIRST (knowledge is wired here) …
+      const materials = new MaterialIngestService(t.repo, new EchoDataProvider(), t.inner, {
+        ownerId: "orphan-scan",
+        knowledge,
+      });
+      const retried = await materials.retry(first.material.materialId, { acceptOrphanRisk: true });
+      assert.equal(retried.outcome, "resumed");
+      assert.deepEqual(
+        retried.material.claimRefs,
+        originalRefs,
+        "T-R1-15: the pre-existing Claims were REUSED, not written a second time",
+      );
+      assert.equal(
+        retried.material.ingestBlocks.every((b) => b.state === "projected"),
+        true,
+        "every block is marked projected ⇒ the ledger reports them as already done",
+      );
+      const runId = `ingest-${ingestIdFor("industry", t.sid, retried.material.contentHash)}`;
+      assert.equal((await t.inner.listByRun(runId)).length, VALID_BLOCKS, "still one artifact per block");
+      const k = knowledge.findKnowledgeBySubject("industry", t.sid)!;
+      assert.equal(
+        knowledge.listBeliefs(k.knowledgeId).length,
+        VALID_BLOCKS,
+        "no duplicate beliefs — content was reused, not re-projected",
+      );
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+});
