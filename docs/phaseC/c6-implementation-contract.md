@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev11 — 第 ①–⑤ 片全部交付，并完成收口复核修订（§C6.18–§C6.24）**。仍未实现/未授权：原文切片（位置映射）· 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+> 状态：**rev12 — 第 ①–⑤ 片全部交付，收口复核修订（§C6.18–§C6.24）与独立复核后的三项修复（§C6.25）均已闭环**。仍未实现/未授权：原文切片（位置映射）· 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -11,6 +11,7 @@
 
 | 版本 | 变更 |
 |---|---|
+| **rev12** | **独立复核后的三项修复**（`4b74862` / `67f72a8` / `455b31d`）：① **演化目标（SUPERSEDE / REVISE）决定期 + 投影前双重校验**，知识侧 `SKIPPED` 时**不再**收口为 `finalized`（投影后验证真实 belief）· ② T-C6-10 改为**把定位解析回材料原文** + 新增 **T-C6-13b**（跨材料版本证据）· ③ **决定与审计行同一事务**（`applyAndAudit`）。新增 T-C6-14…T-C6-20。全量 **461/461**（124 suites）+ smoke PASS。详见 §C6.25 |
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
 | **rev11** | **C6 收口复核修订**（`8e617c6`）：① 报告/审核面**展示证据与定位**（含端到端验收）· ② P3/P4 恢复窗口下**分类回退 `reservedClaimId`** 且半成品候选仍可见 · ③ **`sourceRef` 类型修正**（不再传 evidence id）· ④ **SUPERSEDE 目标进入决定**（新增列 + 预留前校验 + 不可改）· ⑤ 重复文本**合并 Evidence** · ⑥ `evidenceRef` **存在性/版本校验** · 文档同步。全量 **453/453** + smoke PASS。详见 §C6.24 |
 | **rev10** | **第 ⑤ 片（报告接入）实现并交付 → C6 实现全部完成**（`0e5a92a`）：按 D-C6-D 用候选行**反查** `contentKind` 分流 `keyFacts`/`mainJudgments`（无候选的历史 `[CLAIM]` 保持原行为）· `pendingCandidates` 收**判别联合** （不新增 section key）· 渲染摘录标注 `nfkc-lf-v1` · 2 例验收 · 全量 **449/449** + smoke PASS。**仍留后续：原文切片（位置映射）未做**。详见 §C6.23 |
@@ -770,4 +771,65 @@ Markdown:
 * **模型提取器**（`CandidateExtractor` 的模型实现）：**未授权**（`HANDOFF` §10）；
 * U-1/U-2/U-3 可用性小步 · Wind · 自动发现 · Phase D：**未授权**。
 
-**End of contract（rev11: §C6.24 C6 收口复核修订）.**
+## §C6.25 独立复核后的三项修复（2026-09-28，**验收者第二轮复核 → 3 项闭环**）
+
+> 独立验收者对 C6 收口后的实现再次复核，确认 ②③⑤ 已闭合，**①⑥ 的"证明"不足**，**④ 存在会把无效 SUPERSEDE 记成"已完成"的真实缺陷**，并指出文档仍互相矛盾。逐项核实后 **全部成立**。
+
+### §C6.25.1 缺陷 ④（P1，必修）：无效 SUPERSEDE 被记成"已完成"
+
+**根因链**：`KnowledgeProjectionService.projectFromClaim` 用**返回值** `SKIPPED / INVALID_EVOLUTION_TARGET` 表达拒绝（**不是异常**，见其步骤 ②）→ `OpportunityDiscoveryService.ingestClaims` **丢弃**该返回值 → `CandidateProjectionService` 无条件把候选写成 `finalized` ⇒ 候选"成功"了，但**没有任何 belief 被替代**。旧 `T-C6-9` 用不存在的 `artifact:claim/claim-old` 且只断言 `projected`，恰好**掩盖**了它。
+
+| 修法 | 说明 |
+|---|---|
+| **唯一判定** | 新增 `application/evolution-target.ts`：`checkEvolutionTarget()` —— 同 subject + 同 dimension + `isEvolvableBeliefState(confirmed \| conflicting)`；与 `projectFromClaim` 步骤 ② **同源**（否则又会出现"决定期通过、投影期跳过"） |
+| **决定期校验** | `CandidateReviewService.confirm`：SUPERSEDE 必须给出**可演化的真实目标**，否则抛错 —— 且校验在 `apply()` **之前** ⇒ 被拒的决定**不留状态、不留决定、不留预留** |
+| **投影前再次校验** | `CandidateProjectionService.project`：在 **P1 预留之前**再校验一次（知识可能在"决定"与"投影"之间移动）；失败记 `projectionError` 并抛错 |
+| **投影后验证** | 写入后**必须**存在一条 claimRef = 本候选 `artifact:claim/<reserved>` 的 belief，否则 ⇒ `projectionStatus = claim_written` + `projectionError`，返回 `failed`，**绝不** `finalized`；`ALREADY_PROJECTED` 的真幂等不受影响（能查到 belief） |
+| **测试** | `T-C6-9` 修正（不存在目标 ⇒ 决定期拒绝）· `T-C6-14` 有效目标**真的演化**（目标离开 current + 新 belief 建立 + 续跑不可换目标）· `T-C6-15` 跨维度拒绝 · `T-C6-16` 状态不可演化拒绝 · `T-C6-17` 决定后目标被消耗 ⇒ `failed` 且**非** `finalized` · `T-C6-18` **被知识侧拒绝的关系（裸 `REVISE`）如实报 `failed`** |
+
+**★ 暴露的既有缺口（未在本次扩大范围修复）**：`relationHintFor` 对 `REVISE` **不产生目标**，而 `projectFromClaim` 要求 `REVISE` 必须带目标 ⇒ **裸 `REVISE` 必然被拒绝**。现在它会**诚实失败**（不再假成功），但该关系**无法真正完成演化**。修它需要 CLI/契约层裁决（是否要求 `--revises-claim`），**未授权前不改**。
+
+### §C6.25.2 缺陷 ①/⑥（证明不足，行为本就正确）
+
+| # | 问题 | 修法 |
+|---|---|---|
+| ① | `T-C6-10` 取出了 `material` **却从未使用**：断言只把已存的 Fragment/Evidence 元数据**与自身**比较 ⇒ 一个错误定位也能通过 | 改为对**每一条** evidence 用 `resolveLocator(normalizeText(version.rawText), fragment.locator)` **解析回材料原文**，断言解析结果**就是**该片段、上报定位**就是**该片段位置、摘录确实是材料中存在的段落 |
+| ⑥ | `T-C6-13` 只覆盖"证据**不存在**" | 新增 `T-C6-13b`："证据**存在**但属于**另一材料版本**" ⇒ 整 run `failed`（错误含两个版本 id）、该版本零候选、**另一版本的候选与证据不受影响** |
+
+**mutation 反证（证明测试有牙齿）**：把 `sourceLocators` 改成伪造 `paragraph:999` ⇒ **T-C6-10 失败**；删掉版本校验 ⇒ **T-C6-13b 失败**（其余 14 例通过）。
+
+### §C6.25.3 缺陷 ③（原子性）：决定与审计必须同生共死
+
+`confirm` / `revise` / `reject` 过去**先更新候选行、再插审计行**（两次独立写）⇒ 审计失败时候选会停在 `confirmed`、**却没有"谁决定、为什么"的记录**（审计正是人工闸门的全部意义）。
+
+**修法**：新增私有 `applyAndAudit()`，把状态更新与审计插入包进 `ResearchRepository.transaction()`（**嵌套安全**：已在事务内则直接加入，不重复 `BEGIN`）。新增 `T-C6-19`（三种动作各自回滚：状态 / 关系 / 内容 / 审阅人 / 审计行全部回退，候选仍不可投影；审计恢复后重试落地）与 `T-C6-20`（失败后 `isTransaction === false`，连接可用，重试两次写入均落地）。
+
+### §C6.25.4 文档校准
+
+**原因**：C6 收口轮只同步了文档**末尾若干处**，头部、§0.1 状态表、能力矩阵仍是旧状态 ⇒ **同一文件自相矛盾**（HANDOFF 头部写 411 项、§0.1 写 449 项；README 同段既说"尚未实现 Material→Fragment→Evidence→Claim"又说"C6 五片已交付"）。
+
+**修法（本轮 `docs:` 提交）**：`HANDOFF.md`（头部 / §0.1 全表 / §7 表清单 + 加列 / §9.1 / §9.3 / §9.4 / §10 / §11 / §12 / §13 / §14 能力矩阵）· `README.md` · 本契约 **rev12 + §C6.25** 统一为：
+**"C6 五片 + 独立复核三项修复已交付；仍未实现/未授权：原文切片 · 模型提取器（须另立契约 + 单独授权）· U-1/U-2/U-3 · Wind · 自动发现 · Phase D/E"**。
+
+### §C6.25.5 验证与真实证据
+
+**验证**：root `tsc` **0** · research typecheck **0** · **461 tests / 461 pass / 0 fail**（124 suites）· `research smoke` **PASS**。
+
+**真实路径证据**（隔离库 `D:\reasonix-data\tiancha-c6-*`，探针脚本用后即删）：
+
+| 场景 | 观察 |
+|---|---|
+| `confirm(SUPERSEDE, 不存在目标)` | 抛错 `... does not exist for this subject`；候选仍 `draft`、无 `decisionRelation`、无 `supersededClaimRef`、`projectionStatus = none` |
+| `confirm(SUPERSEDE, 跨维度目标)` | 抛错 `... belongs to a DIFFERENT dimension ...` |
+| `confirm + project`（真实目标） | `projected`；目标 belief `confirmed → superseded`；新 belief `confirmed`；候选 `finalized` + `confirmedClaimRef` |
+| `project(REVISE, 无目标)` | `status = "failed"`；候选 `projectionStatus = claim_written`、`confirmedClaimRef = null`、`projectionError` 非空；**Claim artifact 确实已写**（失败在投影而非写入） |
+| 审计插入失败（三种动作） | 抛错；`reviewStatus` 仍 `draft`、内容未改、`reviewedBy` 未写、审计 0 行；`isTransaction = false`；恢复后重试**两次写入均落地** |
+
+### §C6.25.6 仍然未实现（保持诚实，承接 §C6.24.1）
+
+* **原文切片**（§C6.3 的"规范化位置 → 原文位置"映射）：**仍未做** —— 当前是**规范化摘录 + 版本标注**（`nfkc-lf-v1`）；
+* **模型提取器**（`CandidateExtractor` 的模型实现）：**未授权**（`HANDOFF` §10）⇒ 当前**必须人工整理候选输入**（`[CANDIDATE]` 块）；
+* **裸 `REVISE` 关系当前不可用**（见 §C6.25.1 末）—— 需 `--revises-claim` 之类的契约裁决；
+* U-1/U-2/U-3 · Wind · 自动发现 · Phase D：**未授权**。
+
+**End of contract（rev12: §C6.25 独立复核后的三项修复）.**

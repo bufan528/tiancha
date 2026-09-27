@@ -1,8 +1,8 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **Phase C · C5-D 与 C-MVP-R1 均已实现并发布（含八轮复核修正与 5a 落地）** · **代码验证基线 `5fa0ca3`**（= 本轮最后一个 `test:` 提交，含 T-R1-28 ⇒ 与 411 项测试相符；**基线的取法**：`git log --oneline` 中第一个非 `docs:` 提交） · 其后的 `docs:` 同步提交即发布 HEAD，`origin/main` 与本地 **1:1**（ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对（2026-09-26，第十一轮）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **411 tests / 411 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修） · `research smoke` PASS · 表 **26 张**。
-> 取代此前所有版本的 HANDOFF。README.md 已同步。**C6 / Phase C 完整版仍未授权**（本文件 §0.1 已同步实现与授权状态）。
+> **Phase C · C5-D · C-MVP-R1 · C6 均已实现并发布**（C6 含五片 + 独立复核后的三项修复，见契约 §C6.25） · **代码验证基线 `455b31d`**（= 最后一个 `fix:` / `test:` 提交；**基线的取法**：`git log --oneline` 中第一个非 `docs:` 提交） · 其后的 `docs:` 同步提交即发布 HEAD，`origin/main` 与本地 **1:1**（ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对（2026-09-28，第十二轮）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **461 tests / 461 pass / 0 fail**（124 suites） · `research smoke` PASS · 表 **32 张**。
+> 取代此前所有版本的 HANDOFF。README.md 已同步。**C6（资料闭环）五片已实现并交付**，独立复核后的三项修复亦已落地（`4b74862` / `67f72a8` / `455b31d`，见契约 **§C6.25**）；**仍未授权**：原文切片 · 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D/E（本文件 §0.1 已同步实现与授权状态）。
 
 ---
 
@@ -12,13 +12,13 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **Phase C · C1→C5-D 与 C-MVP-R1 全部 FINAL LOCK 且已实现发布**；**C6 / Phase C 完整版未授权** |
-| 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影）—— 已实现并发布（`dc64c33` + `aa4dc95`）** · **C-MVP-R1（材料导入可靠性：状态机 + 续跑 + 并发原子认领 + 块级账本 + 五态返回）—— 已实现并发布（`e0fe004` … `709447e`）** |
+| 当前阶段 | **Phase C · C1→C5-D · C-MVP-R1 · C6（五片 + 独立复核后的三项修复）全部已实现发布**；**未授权**：原文切片 · 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D/E |
+| 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影）—— 已实现并发布（`dc64c33` + `aa4dc95`）** · **C-MVP-R1（材料导入可靠性：状态机 + 续跑 + 并发原子认领 + 块级账本 + 五态返回）—— 已实现并发布（`e0fe004` … `709447e`）** · **C6（资料闭环：材料版本/Fragment/Evidence · 候选层 · 人工审阅闸门 · 投影**复用既有** `ingestClaims` · 报告按 `contentKind` 分流并展示证据定位）—— 五片已实现并交付，独立复核后的三项修复已落地（`4b74862` / `67f72a8` / `455b31d`）** |
 | 验收状态 | C1–C5-D 与 **C-MVP-R1** 全部**已实现、已发布**；C5-D 闭环见 `c5-implementation-contract.md` §21.11；C-MVP-R1 闭环见 **`phaseC/implementation-contract.md` §29.12**，复核修正见 **§29.13**（fencing）、**§29.14**（5a 汇总排除）、**§29.15**（5a 崩溃窗口 + 残骸保守降级 + 扫描范围与歧义）、**§29.16**（取消按内容复用；歧义须保持 `legacy_failed`）、**§29.17**（Agent 入口与 CLI 同一装配；单个无法归属的重叠也触发保守降级）、**§29.18**（overlap 标记只增不减，仅 `--force` 重算；扫描排除本材料自己的 Claim）、**§29.19**（人工归属查看与确认流程：`material list` 展示未归属重叠 + `material attribute … --to <materialId>`）、**§29.20**（`attribute` 补存在性与 subject 归属校验）、**§29.21**（`attribute` 再补 **artifact kind = claim** 校验）—— **无剩余未满足条款** |
-| HEAD / 远端 | **代码验证基线 `5fa0ca3`**（= 本轮最后一个 `test:` 提交）；**基线取法**：`git log --oneline` 中第一个非 `docs:` 提交；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不把 `docs:` 提交的 hash 写进本表**（它每次同步都会变，写了必然很快失准） |
-| 验证基线 | root `tsc` 0 · research typecheck 0 · **449 tests / 449 pass / 0 fail**（121 suites；含 C6 五片共 38 例）· `research smoke` PASS |
+| HEAD / 远端 | **代码验证基线 `455b31d`**（= 本轮最后一个 `fix:` 提交）；**基线取法**：`git log --oneline` 中第一个非 `docs:` 提交；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不把 `docs:` 提交的 hash 写进本表**（它每次同步都会变，写了必然很快失准） |
+| 验证基线 | root `tsc` 0 · research typecheck 0 · **461 tests / 461 pass / 0 fail**（124 suites；C6 五片 38 例 + 独立复核修复：T-C6-9 修正 / T-C6-10 / T-C6-13b / T-C6-14…T-C6-20）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 32 张表**（C6 第 ① 片 +3：`material_version` / `fragment` / `fragment_evidence`；第 ② 片 +3：`claim_candidate` / `candidate_review` / `extraction_run`），但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev16**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，§29.22 = 基线维护规则，§29.23 = 状态文档一致性校准）—— **无剩余未满足条款**。**C6（资料闭环）五片已全部实现并交付**（材料版本/Fragment/Evidence · 候选层 · 人工审阅闸门 · 投影**复用既有** `ingestClaims` · 报告按 `contentKind` 分流并展示证据与定位；见契约 §C6.18–§C6.24）。**仍未实现 / 未授权**：原文切片（规范化位置→原文位置映射）· 模型提取器（需另立契约）· U-1/U-2/U-3 可用性小步 · Wind · 自动发现 · Phase D |
+| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev16**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，§29.22 = 基线维护规则，§29.23 = 状态文档一致性校准）—— **无剩余未满足条款**。**C6（资料闭环）五片已全部实现并交付**（材料版本/Fragment/Evidence · 候选层 · 人工审阅闸门 · 投影**复用既有** `ingestClaims` · 报告按 `contentKind` 分流并展示证据与定位；见契约 §C6.18–§C6.24）。**独立复核后的三项修复已落地**（`4b74862` / `67f72a8` / `455b31d`，见契约 **§C6.25**）：① 演化目标（SUPERSEDE / REVISE）在**决定期与投影前**双重校验，知识侧拒绝时**不再**收口为 `finalized`；② 定位解析回材料原文 + 跨材料版本证据校验的测试补强；③ 决定与审计行**同一事务**。**仍未实现 / 未授权**：原文切片（规范化位置→原文位置映射）· 模型提取器（需另立契约）· U-1/U-2/U-3 可用性小步 · Wind · 自动发现 · Phase D |
 | 之后 | Phase D（外环：Experience → Pattern → 方法论候选）· Phase E（Wind + 自动发现）—— 未授权 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
@@ -236,14 +236,15 @@
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 383 tests / 383 pass / 0 fail
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 461 tests / 461 pass / 0 fail（124 suites）
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
 > **flaky（已知、非回归）**：`C1-29`（"confirming moves the CURRENT projection version; rejecting does not"）
 > 用两个 `new Date().toISOString()` 断言**互不相等**，同一毫秒内会偶发失败。
 > 2026-09-26 四次全量运行：**3 次 383/383 pass，1 次 382/383（仅 `C1-29` 失败）**；重跑即绿。
-> 它**不是** C5-D 或本轮改动引入的。修法（另立小步）：改用单调计数 / 注入时钟，而不是比较 wall-clock 字符串。
+> **2026-09-28（C6 复核修复后）连续全量：461/461 pass**（已多次复跑）。
+> 它**不是** C5-D 或后续改动引入的。修法（另立小步）：改用单调计数 / 注入时钟，而不是比较 wall-clock 字符串。
 
 ---
 
@@ -419,6 +420,10 @@ node --import tsx src/cli/tiancha.ts research smoke
 
 **C-MVP（1）**：material（**自带 `subject_kind`/`subject_id`**；`content_hash` 为幂等键；`claim_refs_json` 双向可追溯）
 
+**C6 ①（3）**：material_version（`nfkc-lf-v1`：`raw_hash` + `normalized_hash` 双 hash；版本不可变）· fragment（结构化 `locator_json`，v1 仅 `char_range` / `paragraph`）· fragment_evidence（`quote_hash` + `stance`）
+
+**C6 ②（3）**：claim_candidate（唯一索引 `(material_version_id, block_hash, dimension, extraction_config_key)`；`content_kind` / `review_status` / `decision_relation` / `superseded_claim_ref` / `projection_status` / `reserved_claim_id` / `confirmed_claim_ref`）· candidate_review（append-only 人工审计）· extraction_run
+
 **B1（1）**：research_position（**模板实例**：`chain_template_id` + `chain_version` 参与身份，I-B7）
 
 **B2（1）**：research_target（**Human-confirmed subject**：`subject_key` 由人提供；`created_by` 恒 `user`）
@@ -431,7 +436,7 @@ node --import tsx src/cli/tiancha.ts research smoke
 
 **（B5 / C5-C / C5-D 均不新增任何表）**：B5 只暴露 B1–B4 已存在的产物；C5-C 是 `ResearchPlan` 的**只读投影**（新增 `orphanProposals` / `positions[].proposals` 字段）；**C5-D 同样只读**（`New tables = 0, Migration = 0`）。`ResearchNeed` / `QuestionTargetFit` 仍是**派生值对象**，不落表。
 
-**加列（PRAGMA 预检查）**：`industry.current_knowledge_id`、`methodology.dimensions_json`、`information_requirement.{confirmed,uncertain,unknown}_condition` + `preferred_position_kinds_json` + `sufficiency_policy_ref`（S4.5）、`research_gap.gap_type`（S4.5）、`investment_evaluation.{evaluation,aggregation}_policy_version_id`（S4.5）
+**加列（PRAGMA 预检查）**：`industry.current_knowledge_id`、`methodology.dimensions_json`、`information_requirement.{confirmed,uncertain,unknown}_condition` + `preferred_position_kinds_json` + `sufficiency_policy_ref`（S4.5）、`research_gap.gap_type`（S4.5）、`investment_evaluation.{evaluation,aggregation}_policy_version_id`（S4.5）、**`claim_candidate.superseded_claim_ref`（C6 复核修复：SUPERSEDE 的目标属于"决定"，见 §C6.25）**
 
 **Claim / Evidence blob** 存 `artifacts.sqlite`。
 
@@ -491,6 +496,8 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **C-MVP** | 最小材料入口（`Material` 自带 subject provenance + 规则解析 + 复用 `ingestClaims` + 幂等） |
 | **Phase B v1 · B1–B5** | `ChainTemplate`/`Position`/`Need` · `ResearchTarget` · `QuestionTargetFit` · `DiligencePreparation` · CLI/Agent 暴露 |
 | **Phase C · C1–C5-D** | Knowledge Projection 语义对齐 · Gap-driven Research Planning（含 Phase 2 Step 2-B/2-C）· Priority/NextAction 验证 · Report/Dossier 只读投影 · **C5-A 推荐 → C5-B 人工决定 → C5-C Plan 只读消费 → C5-D Preparation 边界冻结 + 只读摘要（已实现并发布 `dc64c33` + `aa4dc95`）** |
+| **C-MVP-R1** | 材料导入可靠性（状态机 + 续跑 + 并发原子认领 + fencing token + 块级账本 + 五态返回 + 重叠检测 + 人工登记归属）—— 已实现并发布（`e0fe004` … `5fa0ca3`，契约 §29.12–§29.21） |
+| **C6（资料闭环）** | 材料版本 + Fragment/Evidence（`nfkc-lf-v1` 双 hash）· 候选层（确定性身份 / `extractionConfigKey` / lineage）· 人工审阅闸门 · 投影**复用既有** `ingestClaims()` · 报告按 `contentKind` 分流并展示证据定位与摘录 —— 五片已交付；**独立复核后三项修复**（演化目标双重校验 / 定位端到端与跨版本证据测试 / 决定与审计原子化）已落地（契约 §C6.18–§C6.25） |
 
 ### 9.2 代码实现进度（S1–S7 / DATA-R1 / C-MVP / Phase B v1）
 
@@ -530,7 +537,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 |---|---|---|
 | **A** | 单行业研究闭环 | **S1–S7 已完成**（含 DATA-R1 legacy 修复、C-MVP 材料入口） |
 | **B** | Research Planning / 调研准备链 | **B1–B5 已全部实现**（`docs/phaseB/implementation-contract.md` §12：无剩余 Step） |
-| **C** | 调研回填闭环 | C1–C5-D 与 **C-MVP-R1** 已实现并发布；**C6 五片已实现并交付**（材料版本/Fragment/Evidence · 候选层 · 人工审阅 · 投影复用既有 `ingestClaims` · 报告按 `contentKind` 分流 + 证据定位；见契约 §C6.18–§C6.24）—— **仍未实现**：原文切片（位置映射）· 模型提取器 |
+| **C** | 调研回填闭环 | C1–C5-D 与 **C-MVP-R1** 已实现并发布；**C6 五片已实现并交付**（材料版本/Fragment/Evidence · 候选层 · 人工审阅 · 投影复用既有 `ingestClaims` · 报告按 `contentKind` 分流 + 证据定位；见契约 §C6.18–§C6.25），**独立复核后的三项修复亦已落地** —— **仍未实现**：原文切片（位置映射）· 模型提取器（需另立契约 + 单独授权） |
 | **D** | 双体系协同闭环（外环） | Research Experience → Pattern → Methodology Candidate → Human Gate |
 | **E** | 自动化与规模化 | 自动搜集 + 赛道识别 + Wind 接入（**入口能力**） |
 | F（横向） | Report（投影） | 任何阶段可生成；不占 Phase |
@@ -543,7 +550,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 - **`caliber_differs` / `complements` 未启用**：Belief 不带 caliber（Phase C/E）。
 - **Migration 假设 legacy `evidence_refs` = Claim refs**（**S3-NOTE**）。
 - **`poolItemId` 编码可能非 injective**（不同 claimRef 归一成同一 id，**S3-FOLLOWUP**）。
-- ~~（全链路验收）缺少「真实材料 → Claim」入口~~ **已由 C-MVP 解决**：`tiancha research material add` / `research_material_add` 让真实材料进入**既有** `ingestClaims`。**仍未解决**：真实数据源仍是 Echo 占位（**Phase E**）；完整的 `Material → Fragment → Evidence → Claim` 链未建（**Phase C 完整版**）。
+- ~~（全链路验收）缺少「真实材料 → Claim」入口~~ **已由 C-MVP 解决**：`tiancha research material add` / `research_material_add` 让真实材料进入**既有** `ingestClaims`。**其中 `Material → MaterialVersion → Fragment → Evidence → Claim` 的规则路径已由 C6 建立**（`[CANDIDATE]` 块 + 人工审阅闸门 + 投影复用既有 `ingestClaims`，**无 LLM**）。**仍未解决**：真实数据源仍是 Echo 占位（**Phase E**）；**原文切片**（规范化位置 → 原文位置）与**模型提取器**（需另立契约 + 单独授权）未建 ⇒ 普通报告仍需人工整理候选输入。
 - **S2-NOTE：stable identity ≠ immutable content** —— 方法论版本变化后，已存在的 Requirement 哪些字段应重投影，需在后续生命周期设计中明确。
 - **S4-FOLLOWUP（independentSources 口径）**：`sufficiencyFacts` 目前用 `sourceRef ?? claimRef` 计独立来源。Evidence 层（Phase C）落地后必须改为经 `Claim → Evidence → Source` 解析，否则"一份研报抽出 10 个 Claim"会被误算成 10 个独立来源。
 - **S4.5-NOTE（Policy 仍是代码常量）**：`eval-v1` / `agg-v1` / `suf-v1` 已版本化且不可变，但**仍定义在代码中**（未落 DB）；"改评分口径 = 改方法论版本"要等 Policy 可配置化。
@@ -596,6 +603,11 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
   2. **禁止**：用 LLM 替代 C-MVP 的**规则解析**（`[CLAIM]` 块）—— 该语义已冻结，不得改写；
   3. **允许但需另立契约 + 单独授权**：模型**起草"候选"**（Draft Claim / 候选观点 / 报告草稿），条件是**每条候选必须带来源定位**（页码 / 段落 / 录音时间戳）且**必须经人工确认**才进入既有 Claim → Knowledge 投影；自动生成的报告只是**产物**，不是新的事实来源；
   4. 该"候选层"属 **C6 / Phase C 完整版**契约内容，**在裁决前不动 C-MVP 语义**；`model_version` 一类预留字段**不代表**已引入模型（见 `phaseC/implementation-contract.md` §29.2）。
+- **（C6，2026-09-28 独立复核后的三项修复）**：C6 交付后由独立验收者复核，认定 3 项必修（详见 `docs/phaseC/c6-implementation-contract.md` §C6.25）：
+  1. **演化目标要在"决定期"校验、并在"投影前"再次校验**：`projectFromClaim` 用**返回值** `SKIPPED / INVALID_EVOLUTION_TARGET`（**不是异常**）表达拒绝，而 `ingestClaims` **不传播**该返回值 ⇒ 过去一个不可能的 SUPERSEDE 会被记成 `finalized`（"假成功"）。现由 `application/evolution-target.ts` 提供唯一判定（同 subject / 同 dimension / `confirmed` | `conflicting`），**决定与投影共用**；投影后再**验证**该 claimRef 的 belief 确实存在，否则回退 `claim_written` 并记 `projectionError`，**绝不用 `finalized` 掩盖**（`4b74862`）。
+  2. **测试必须证明真实不变量**：T-C6-10 过去把已存的 Fragment/Evidence 元数据与**自身**比较（取出的 material 变量根本没被使用 ⇒ 一个错误定位也能通过），现改为用 `resolveLocator` 把上报定位**解析回材料原文**并断言解析结果**就是**该片段；新增 **T-C6-13b** 覆盖"证据存在但属于**另一材料版本**"；另加 T-C6-14…T-C6-20（有效目标真的演化 / 跨维度 / 状态不可演化 / 决定后目标被消耗 ⇒ 失败而非 `finalized` / 被拒绝的关系如实报失败 / 审计失败回滚 + 连接不残留事务）（`4b74862`、`67f72a8`、`455b31d`）。
+  3. **人工决定与其审计行是同一事务**：过去状态更新与审计插入是两次独立写，审计失败会让候选停在 `confirmed` 却**没有"谁决定、为什么"的记录**（审计正是人工闸门的意义）；现由 `applyAndAudit()` 把两者包在同一事务内（`455b31d`）。
+  - **仍未授权（不变）**：原文切片 · 模型提取器（须另立契约 + 单独授权）。
 
 ---
 
@@ -607,7 +619,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | ~~**调研准备链完全缺失**（链条/对象/适配/提纲）~~ **已由 Phase B v1 的 B1–B5 全部实现**：链条+位置+需求（B1）· 对象（B2）· 适配（B3）· 提纲（B4）· CLI/Agent 暴露（B5） | **无剩余 Step** | ✅ Phase B 收尾 |
 | **Agent 受控写权限**（`project chain` / `record target`）：**已裁决 —— v1 不给**；Agent 只读已生成的规划产物，未生成时提示由研究者执行 CLI | Agent 不能自行制造研究计划事实（Human Gate 保持） | **已裁决**（非债务） |
 | **B4：`requestedMaterials` / `risks` 恒为 `[]`** —— 无真实来源时**不臆造** | 提纲中"要哪些材料 / 风险提示"暂时为空 | Phase C（真实材料链落地后填） |
-| **Field Research 缺失**（Material/Fragment/Evidence） | 碎片无法进入研究系统 | Phase C |
+| **Field Research 缺失**（Material/Fragment/Evidence）—— **规则路径已由 C6 建立**（材料版本 + Fragment/Evidence + 候选 + 人工审阅闸门 + 投影复用既有 `ingestClaims`） | **仍未建**：原文切片（规范化位置 → 原文位置）· 模型提取器 ⇒ 普通报告仍需人工整理候选输入 | C6 未授权部分（模型提取器需另立契约 + 单独授权） |
 | `company` 表零调用（链条位置是**模板实例**，未与真实公司数据关联） | 无"这家公司属于哪个位置"的数据基础 | Phase C/E |
 | `ingest` 幂等已修（S2）；**但 Claim/Source 每次新增**（设计如此） | — | — |
 | Agent Session 用 `SessionManager.inMemory` | 对话历史不跨进程 | Phase A 后续 (2D) |
@@ -635,14 +647,14 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 383 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 461 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
-**下一步功能**：**Phase C** —— 调研回填闭环（Material → Fragment → Evidence → Claim → Pool/Knowledge/Evaluation 更新），待用户授权。
-> Phase B v1 的 **B1–B5 已全部完成**（契约 §12 无剩余 Step）；B5 仅暴露既有能力，未新增表/未改语义。
+**下一步功能**：**C6 未授权部分** —— 原文切片（规范化位置 → 原文位置）· **模型提取器**（须先立契约 + 单独授权）。
+> Phase B v1 的 **B1–B5 已全部完成**（契约 §12 无剩余 Step）；**C6 五片 + 独立复核三项修复**亦已完成（契约 §C6.18–§C6.25）。
 
-> **历史提醒（避免误判）**：`S1–S7`、`DATA-R1`、`C-MVP`、`Phase B v1 的 B1–B5` **均已完成**。
+> **历史提醒（避免误判）**：`S1–S7`、`DATA-R1`、`C-MVP`、`Phase B v1 的 B1–B5`、`C-MVP-R1`、`C1–C5-D`、**`C6（五片 + 复核修复）`** **均已完成**。
 > 若你看到旧版文档写着「S5 HOLD」「Phase B 待冻结」「B5 待授权」，那是**过时**信息。
 
 **踩坑**：
@@ -667,7 +679,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/phaseB/implementation-contract.md` | **Phase B v1 实现契约（B1–B5 已全部实现，见其 §12）**：Need → Position → Target → Fit → Diligence 的字段/identity/不变量/写入边界/T-B 验收 |
 | `docs/phaseC/implementation-contract.md` | **Phase C 总契约**（C1 语义 / SoT 边界 / 演化 / Human Gate / 幂等 / 不变量 / 验收场景）+ **§29 = C-MVP-R1（材料导入可靠性）—— 已实现并发布**；§29.12–§29.22 为实现闭环与八轮复核修正（**检测重叠但不推断来源**、**人工登记归属**、§29.22 = 基线维护规则） |
 | `docs/phaseC/c5-implementation-contract.md` | **C5-A → C5-D 单文件谱系契约**（§19 C5-B · §20 C5-C · §21 C5-D；**§21.11 = 实现与验收闭环**） |
-| `docs/phaseC/c6-implementation-contract.md` | **C6 资料闭环契约（已实现，rev11）**：材料版本 / Fragment + 结构化定位 / Evidence / 候选 / 人工审阅 / 投影复用既有 `ingestClaims` / 报告按 `contentKind` 分流并展示证据与定位；**§C6.24 = 收口复核修订** |
+| `docs/phaseC/c6-implementation-contract.md` | **C6 资料闭环契约（已实现，rev12）**：材料版本 / Fragment + 结构化定位 / Evidence / 候选 / 人工审阅 / 投影复用既有 `ingestClaims` / 报告按 `contentKind` 分流并展示证据与定位；**§C6.24 = 收口复核修订**，**§C6.25 = 独立复核后的三项修复** |
 | `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
 | `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
 | `docs/architecture-review/01/02/03-*` | 早期 Gap Report / Blueprint v2 / v2.1-final-lock / rebaseline v3.1（**历史，部分过时**） |
@@ -676,11 +688,11 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/PROJECT_STATUS.md` | 旧状态报告（**已过时**） |
 | `docs/ARCHITECTURE.md`、`docs/CORE_CUSTOMIZATION.md` | **legacy 工作台文档**，非当前架构 |
 
-**待更新**：~~`README.md`（仍写 Phase 2C / 6 个工具）~~ **已随每次 Step 同步**（B5 更新 `chain/need/diligence`；C5-C 后 Agent 工具共 **19** 个）。
+**待更新**：~~`README.md`（仍写 Phase 2C / 6 个工具）~~ **已随每次 Step 同步**（B5 更新 `chain/need/diligence`；C5-C 后 19 个；C6 新增只读 `research_candidate_list` 后共 **21** 个）。
 
 ---
 
-## 14. 当前能力矩阵（2026-09-26 核对）
+## 14. 当前能力矩阵（2026-09-28 核对）
 
 **四态定义**：**设计** = 有契约 / 设计文档；**实现** = 生产代码有真实路径；**测试** = 有自动化测试覆盖；**真实路径** = 在**真实数据路径**上验证过（非 Echo 占位、非测试 fixture）。
 
@@ -704,7 +716,8 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | C5-A / C5-B（推荐 / 人工决定） | ✅ | ✅ | ✅ | ❌ | **真实库尚无 `target_proposal*` 两张表** |
 | C5-C / C5-D（Plan 只读消费 / Preparation 摘要） | ✅ | ✅ | ✅ | ❌ | — |
 | **C-MVP-R1**（材料导入可靠性） | ✅ 契约 §29 rev16 | ✅ | ✅（T-R1-1…T-R1-28 + **Agent 工具面**：两进程并发、fencing、同文不合并、artifact-only 重叠、歧义失败且可识别、单条无法归属重叠的保守降级、标记粘性、人工归属闭环及其 5 项写入前校验、5a 证据拆分、5a 崩溃窗口） | ❌ | **真实库仍未用过材料导入**（`material` = 0 行） |
-| C6 / Phase C 完整版（Material → Fragment → Evidence → Claim） | ⛔ 未授权 | ❌ | ❌ | ❌ | `DocumentFragment` 仅类型；`evidence/evidence-engine.ts` 返回 `[]` |
+| C6（资料闭环：Material → MaterialVersion → Fragment → Evidence → 候选 → Claim；**规则路径，无 LLM**） | ✅ | ✅ | ✅ | ❌ | 真实库 `material` = 0 行 ⇒ 从未在真实库用过；**五片已交付 + 独立复核三项修复**（契约 §C6.18–§C6.25） |
+| **C6 未授权部分**：原文切片（规范化位置 → 原文位置）· 模型提取器 | ⛔ 未授权 | ❌ | ❌ | ❌ | 模型提取器需按 §10 **另立契约 + 单独授权**；当前必须人工整理候选输入（`[CANDIDATE]` 块） |
 | Phase D（外环：Experience → Pattern → 方法论候选） | ⛔ 未授权 | ❌ | ❌ | ❌ | 红线 9：不预造空壳表 |
 | Phase E（Wind / 自动发现行业） | ⛔ 未授权 | ❌ | ❌ | ❌ | `echo-data-provider.ts` 仍是占位（`isRealExternalData=false`） |
 
