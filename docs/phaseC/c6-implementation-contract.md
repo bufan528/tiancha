@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev6 — 第 ① 片已实现、修订并交付（§C6.18 / §C6.19）；片 ②–⑤ 仍未授权。**
+> 状态：**rev7 — 第 ① / ② 片已授权实现并交付（§C6.18–§C6.20）；片 ③–⑤ 仍未授权。**
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -12,6 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
+| **rev7** | **第 ② 片（候选生成与身份，W3）实现并交付**（`fb93e4c`）：新增 `claim_candidate` / `candidate_review` / `extraction_run`（29 → **32**）· `extractionConfigKey` 纳入身份 · insert-only 保护人工编辑 · `isProjectable` 落实 I-C6-8 · **LLM-free 参考提取器 + 可注入接口**（模型提取器仍未授权）· 9 例验收 · 全量 **433/433** + smoke PASS。**片 ③–⑤ 未授权**。详见 §C6.20 |
 | **rev6** | **第 ① 片修订（slice-1 review 闭环，§C6.19）**：W1 **真正原子**（单事务，嵌套安全）· 版本**必须属于既有 Material** 且 subject 从 Material 读取 · 版本**不可变**（insert-only，同 id 不同内容**报错**）· locator 合法性校验（整数/非空/范围内）· **完整性与定位检查分离**（`verifyVersionIntegrity` vs `verifyFragmentLocation`）· 分段规则与**引用口径**写入契约 · 表名同步为 `fragment_evidence`。测试 9 → **13** 例；全量 **424/424** |
 | **rev5** | **第 ① 片（材料版本 + Fragment/Evidence，W1–W2）实现并交付**（`6407d49`）：新增 3 表（26 → 29）· 独立类型而非扩展既有类型 · 双 hash · v1 定位 · 确定性身份与幂等 · 9 例验收全绿 · 全量 420/420 + smoke PASS。**片 ②–⑤ 未授权**。详见 §C6.18 |
 | **rev4** | **验收者第二轮契约审查后的 4 处校准确认**（**不改 scope**）：① **版本头/基线**修正（头部 rev2→rev4；起始基线不再写作"当前 HEAD"）；② **表数修正为 6 张**（`candidate_review` **独立成表**、append-only、与 `extraction_run` 生命周期不同）；③ **D-C6-D = 反查方案**（`confirmedClaimRef` 作分类关联；补数据流、落库、按 subject 查询与"历史 `[CLAIM]` 无 `contentKind`"的展示规则）；④ **D-C6-E = 联合类型**（保留 `KnowledgeLine` 的身份字段必填；新增 `ClaimCandidateLine`，`pendingCandidates` 收判别联合；并修正"零破坏"说法）；⑤ **D-C6-F 补审计参数**（`--operator` 必填、`--relation` 必填、`revise` 只记录修改并保持 draft）；⑥ **新增 §C6.17 候选级恢复协议**（W4 细化：预留/进度/并发/回填前崩溃）并据此改写 T-C6-8 |
@@ -578,4 +579,29 @@ P4 回填【主库】confirmedClaimRef = reservedClaimId；projectionStatus = fi
 | 全量 | root `tsc` **0** · research typecheck **0** · **424 tests / 424 pass / 0 fail**（117 suites）· `research smoke` **PASS** |
 | 真实证据（隔离库） | 缺 Material ⇒ **报错**；W1 `created=true` + `integrity` 三项全 true + 两个 locator `locationOk=true`；**坏 locator ⇒ 版本回滚**（versions 1 → 1）；**覆盖版本 ⇒ 报错**；W2 evidence quote 取自片段；`TABLES: 29` |
 
-**End of contract（rev6: §C6.19 第 ① 片修订记录）.**
+---
+
+## §C6.20 第 ② 片实现记录（2026-09-27，**已授权并交付**）
+
+| 项 | 内容 |
+|---|---|
+| Commit | **`fb93e4c`**（代码 + 测试；文档单独提交） |
+| 范围 | **W3**：候选数据模型 + 确定性身份 + 提取运行生命周期 + **可注入的提取器接口** |
+| 新表 | **3 张 ⇒ 代码 schema 29 → 32**：`claim_candidate` · `candidate_review`（**append-only**）· `extraction_run` |
+| ★ LLM 边界 | 参考提取器 `ExplicitBlockExtractor` **确定性、无 LLM**（读显式 `[CANDIDATE]` 块）。**模型提取器仍未授权**（`HANDOFF` §10：模型起草候选须另立契约 + 单独授权）—— `CandidateExtractor` 接口**就是那个接口位**，填入模型实现即可，无需改本片其余部分 |
+| 身份（§C6.7） | `extractionConfigKey = hash(modelVersion|promptVersion|parserVersion|schemaVersion)` **纳入** `candidateId` ⇒ **同配置重跑复用身份**（实测 `created=0 / reused=1 / sameIds=true`）；**新配置 ⇒ 新候选** + `supersedesCandidateRef` **lineage**（实测指向旧配置的同块同维候选） |
+| I-C6-1 | 候选**只写自己的表**；本片**不存在**任何投影路径 ⇒ 实测 `knowledge_belief = 0` · `information_pool_item = 0` |
+| I-C6-4 | 实测**下游指纹不变**（`industry_knowledge` / `knowledge_belief` / `knowledge_conflict` / pool slot+item / `research_gap` / `next_action` / `investment_evaluation` / `report_snapshot` 在候选生成前后**逐表行数一致**） |
+| I-C6-5 | `insertClaimCandidate` = **insert-only**（`DO NOTHING`）⇒ 人工编辑 / 审阅过的候选**永不被重跑覆盖**（测试用"改写 + `revised` + relation"模拟人工动作后，行内容与 `reviewStatus` 均**未变**） |
+| I-C6-8 | `isProjectable()` = **非 draft 且显式 relation**；实测 `confirmed` **无 relation** ⇒ `false` ✓（`rejected` + relation 亦为 `false`） |
+| I-C6-3 | `contentKind` **仅 `fact` \| `judgment`**；与 `reviewStatus` / 领域关系（Conflict · Gap）**正交** |
+| §C6.17 预留 | `projectionStatus` / `reservedClaimId` / `projectionError` **三列本片已建但完全不使用**（④ 片启用 ⇒ 避免二次迁移）；新候选恒为 `projectionStatus = none` |
+| 提取运行 | `extraction_run` 记录 model / prompt / parser / schema 版本 + config key + `running → completed/failed`；**失败留痕**（`status=failed` + `error` + `candidateIds=[]`，且**不产生候选**） |
+| 契约校验 | 无 evidence / 空 statement / 空 dimension 的 draft **一律拒绝**（整run 失败，不落半条） |
+| 验收 | `phase-c6-candidate.test.ts` **9 例**：T-C6-6a 同配置幂等 · 6b 新配置 + lineage · 6c 不覆盖 · 6d 默认 draft/无 relation · **6e I-C6-4 下游指纹** · 6f run 失败留痕 · 6g 非法 draft · 6h I-C6-8 · §C6.7 身份 + append-only 审计 |
+| 既有断言适配 | `phase-c3-b.test.ts` 基线 **29 → 32** |
+| 收口 | root `tsc` **0** · research typecheck **0** · **433 tests / 433 pass / 0 fail**（118 suites）· `research smoke` **PASS** |
+| 真实证据（隔离库） | RUN-1 `created=1` ⇒ RUN-2 同配置 `created=0 / reused=1 / sameIds=true` ⇒ 新配置 `created=1` + `lineage -> cand-…`；候选 `draft` / `projectionStatus=none` / `contentKind=fact` / `evidenceRefs=1` / `relation=undefined`；`isProjectable` false →(`confirmed`+`SUPPORT`) true；**beliefs 0 / pool items 0**；`TABLES: 32` |
+| 未做（按授权边界） | 人工审阅入口（片 ③）· 投影到既有 `ingestClaims`（片 ④）· 报告接入（片 ⑤）· CLI / Agent 面 —— **全部未授权** |
+
+**End of contract（rev7: §C6.20 第 ② 片实现记录）.**
