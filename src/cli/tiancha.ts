@@ -59,6 +59,7 @@ import {
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
 import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runMaterialList, runMaterialRetry, runResearchCommand, runTargetAdd, runTargetList, type ResearchCliDeps } from "./research-commands.js";
+import { KnowledgeRepository } from "@tiancha/research";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -476,7 +477,10 @@ async function run(): Promise<void> {
         evaluation: new EvaluationService(db.db),
         priority: new PriorityService(db.db),
         reports: new ReportService(db.db),
-        materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
+        // ★ §29.2 (c): `knowledge` powers the orphan-Claim scan of a残骸 retry.
+        materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts, {
+          knowledge: new KnowledgeRepository(db.db),
+        }),
         targets: new TargetService(db.db),
         chain: new ChainProjectionService(db.db),
         needs: new ResearchNeedService(db.db),

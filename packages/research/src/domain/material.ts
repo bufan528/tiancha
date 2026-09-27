@@ -90,6 +90,12 @@ export interface Material {
   modelVersion?: string;
   /** Resume counter (audit). */
   ingestAttempts: number;
+  /**
+   * ★ §29.5a fencing token: bumped by every successful ownership claim. A writer must present the
+   * generation it was issued; a stale one is refused, so an expired holder cannot overwrite the
+   * process that took over.
+   */
+  ingestGeneration: number;
   /** Lease holder / expiry of the atomic ownership claim (§29.5a). */
   ingestOwner?: string;
   ingestLeaseUntil?: string;

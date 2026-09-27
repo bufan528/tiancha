@@ -341,6 +341,9 @@ export class ResearchDb {
         ingest_attempts INTEGER NOT NULL DEFAULT 0,
         ingest_owner TEXT,
         ingest_lease_until TEXT,
+        -- ★ §29.5a FENCING: bumped on every successful ownership claim; every later write must
+        -- present the generation it was issued, so a stale holder cannot overwrite the new one.
+        ingest_generation INTEGER NOT NULL DEFAULT 0,
         ingest_blocks_json TEXT NOT NULL DEFAULT '[]'
       );
       CREATE INDEX IF NOT EXISTS idx_material_subject ON material(subject_kind, subject_id);
@@ -620,6 +623,7 @@ export class ResearchDb {
     this.addColumnIfMissing("material", "ingest_attempts", "ALTER TABLE material ADD COLUMN ingest_attempts INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("material", "ingest_owner", "ALTER TABLE material ADD COLUMN ingest_owner TEXT");
     this.addColumnIfMissing("material", "ingest_lease_until", "ALTER TABLE material ADD COLUMN ingest_lease_until TEXT");
+    this.addColumnIfMissing("material", "ingest_generation", "ALTER TABLE material ADD COLUMN ingest_generation INTEGER NOT NULL DEFAULT 0");
     this.addColumnIfMissing("material", "ingest_blocks_json", "ALTER TABLE material ADD COLUMN ingest_blocks_json TEXT NOT NULL DEFAULT '[]'");
   }
 

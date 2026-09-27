@@ -571,8 +571,8 @@ export class ResearchRepository {
          (material_id, subject_kind, subject_id, kind, title, filename, content_hash,
           raw_text, locator, claim_refs_json, received_at, created_at,
           ingest_status, ingest_stage, ingest_error, parser_version, model_version,
-          ingest_attempts, ingest_owner, ingest_lease_until, ingest_blocks_json)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          ingest_attempts, ingest_owner, ingest_lease_until, ingest_generation, ingest_blocks_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(material_id) DO UPDATE SET
            subject_kind       = excluded.subject_kind,
            subject_id         = excluded.subject_id,
@@ -592,6 +592,7 @@ export class ResearchRepository {
            ingest_attempts    = excluded.ingest_attempts,
            ingest_owner       = excluded.ingest_owner,
            ingest_lease_until = excluded.ingest_lease_until,
+           ingest_generation  = excluded.ingest_generation,
            ingest_blocks_json = excluded.ingest_blocks_json`,
       )
       .run(
@@ -615,6 +616,7 @@ export class ResearchRepository {
         m.ingestAttempts,
         m.ingestOwner ?? null,
         m.ingestLeaseUntil ?? null,
+        m.ingestGeneration,
         JSON.stringify(m.ingestBlocks),
       );
   }
@@ -657,10 +659,18 @@ export class ResearchRepository {
   }
 
   /**
-   * ★ C-MVP-R1 (§29.5a): the ATOMIC ownership claim. The lease is the ONLY admission condition
-   * (`NULL` or expired) and the status is advanced to `projecting` in the SAME statement, so a
-   * second caller can never also see `changes() = 1`.
-   * Returns false when somebody else holds a LIVE lease ⇒ the caller reports `in_progress`.
+   * ★ C-MVP-R1 (§29.5a): the ATOMIC ownership claim + FENCING TOKEN in one statement.
+   *
+   * The lease is the ONLY admission condition (`NULL` or expired); the status advances to
+   * `projecting`, the attempt counter increments and `ingest_generation` is bumped — the new
+   * generation is returned and must be presented by EVERY subsequent write of that holder
+   * (`updateMaterialProgress`). A holder whose lease expired therefore cannot overwrite the
+   * process that took over.
+   *
+   * `allowTerminal` widens the status whitelist to `completed` / `legacy_failed`; only the
+   * EXPLICIT human retry path passes it (§29.2 (c)/§29.5 — "入口受限").
+   *
+   * @returns the new generation, or `null` when somebody else holds a LIVE lease.
    */
   claimMaterialIngest(
     materialId: string,
@@ -668,34 +678,39 @@ export class ResearchRepository {
     leaseUntil: string,
     resumeStage: string,
     now: string,
-  ): boolean {
-    const res = this.db
+    options: { allowTerminal?: boolean } = {},
+  ): number | null {
+    const statusList = options.allowTerminal
+      ? "('received','parsed','failed','projecting','completed','legacy_failed')"
+      : "('received','parsed','failed','projecting')";
+    const row = this.db
       .prepare(
         `UPDATE material
             SET ingest_status      = 'projecting',
                 ingest_stage       = ?,
                 ingest_owner       = ?,
                 ingest_lease_until = ?,
-                ingest_attempts    = ingest_attempts + 1
+                ingest_attempts    = ingest_attempts + 1,
+                ingest_generation  = ingest_generation + 1
           WHERE material_id = ?
             AND (ingest_lease_until IS NULL OR ingest_lease_until < ?)
-            AND ingest_status IN ('received','parsed','failed','projecting')`,
+            AND ingest_status IN ${statusList}
+        RETURNING ingest_generation`,
       )
-      .run(resumeStage, owner, leaseUntil, materialId, now);
-    return Number(res.changes) === 1;
-  }
-
-  /** ★ C-MVP-R1 (§29.5a): renew the lease — only its current holder may do this. */
-  renewMaterialLease(materialId: string, owner: string, leaseUntil: string): boolean {
-    const res = this.db
-      .prepare("UPDATE material SET ingest_lease_until = ? WHERE material_id = ? AND ingest_owner = ?")
-      .run(leaseUntil, materialId, owner);
-    return Number(res.changes) === 1;
+      .get(resumeStage, owner, leaseUntil, materialId, now) as { ingest_generation: number } | undefined;
+    return row ? Number(row.ingest_generation) : null;
   }
 
   /**
-   * ★ C-MVP-R1 (§29.5b): persist the per-block ledger + status/stage/error/lease for one material.
-   * The caller always passes the COMPLETE ingest state, so a partial write cannot half-update it.
+   * ★ C-MVP-R1 (§29.5b + §29.5a fencing): persist the per-block ledger + status/stage/error/lease
+   * for one material. The caller always passes the COMPLETE ingest state, so a partial write cannot
+   * half-update it.
+   *
+   * `generation` is the fencing token issued by `claimMaterialIngest`. The write is applied ONLY
+   * if the row still carries that generation, so a holder whose lease expired (and whose row was
+   * taken over) cannot overwrite the new holder's progress.
+   *
+   * @returns true when the write was applied, false when it was refused by the fence.
    */
   updateMaterialProgress(
     materialId: string,
@@ -708,13 +723,15 @@ export class ResearchRepository {
       ingestOwner: string | null;
       ingestLeaseUntil: string | null;
     },
-  ): void {
-    this.db
+    generation: number,
+  ): boolean {
+    const res = this.db
       .prepare(
         `UPDATE material
             SET ingest_status = ?, ingest_stage = ?, ingest_error = ?, ingest_blocks_json = ?,
                 claim_refs_json = ?, ingest_owner = ?, ingest_lease_until = ?
-          WHERE material_id = ?`,
+          WHERE material_id = ?
+            AND ingest_generation = ?`,
       )
       .run(
         patch.ingestStatus,
@@ -725,7 +742,9 @@ export class ResearchRepository {
         patch.ingestOwner,
         patch.ingestLeaseUntil,
         materialId,
+        generation,
       );
+    return Number(res.changes) === 1;
   }
 
   // ---- ResearchPosition (Phase B v1) ----
@@ -1394,6 +1413,7 @@ function rowToMaterial(row: any): Material {
     ingestAttempts: row.ingest_attempts ?? 0,
     ingestOwner: row.ingest_owner ?? undefined,
     ingestLeaseUntil: row.ingest_lease_until ?? undefined,
+    ingestGeneration: row.ingest_generation ?? 0,
     ingestBlocks: row.ingest_blocks_json ? JSON.parse(row.ingest_blocks_json) : [],
   };
 }

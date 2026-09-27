@@ -37,6 +37,10 @@ export class SqliteArtifactStore implements ArtifactStore {
       mkdirSync(dirname(this.path), { recursive: true });
     }
     this.db = new DatabaseSync(this.path);
+    // ★ C-MVP-R1 (§29.5a): two processes may ingest material into the SAME artifacts DB at the
+    // same time. Without a busy timeout the losing writer fails with a bare `database is locked`,
+    // which the material pipeline would report as a `failed` import.
+    this.db.exec("PRAGMA busy_timeout = 10000");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS research_artifact (
         artifact_id    TEXT PRIMARY KEY,

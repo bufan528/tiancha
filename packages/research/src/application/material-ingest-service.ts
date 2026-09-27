@@ -9,23 +9,22 @@
  *   2. extract claims with the RULE-BASED parser (still no model, no Fragment, no Evidence);
  *   3. hand those claims to the EXISTING `OpportunityDiscoveryService.ingestClaims()`.
  *
- * Three things the old implementation could not do (§29.1 documents the defect):
- *   - a failure AFTER the material row was written made the material permanently un-completable
- *     (the dedupe gate saw "a row exists" and answered `created: false` forever);
- *   - one boolean could not distinguish "fully duplicated" from "left-over残骸";
- *   - nothing coordinated two concurrent imports of the same content.
- *
  * Invariants this file owns:
- *   - §29.2 a one-shot migration triages historical rows (completed / completed / legacy_failed);
+ *   - §29.2 the one-shot migration triages historical rows (completed / completed / legacy_failed);
  *   - §29.3 the dedupe gate only counts a row whose `ingestStatus === "completed"`;
  *   - §29.4 the outcome is a five-value union — never a boolean;
- *   - §29.5a ownership = ONE atomic UPDATE whose only admission condition is a free lease;
- *   - §29.5b `claimId` is allocated in P1 and persisted, so a cross-DB resume never duplicates.
+ *   - §29.5a ownership = ONE atomic UPDATE whose only admission condition is a free lease, and the
+ *     SAME statement issues a **fencing generation**: every later write must present it, so a
+ *     process whose lease expired (or was taken over) can never overwrite the new holder;
+ *   - §29.5b `claimId` is allocated in P1 and persisted, so a cross-DB resume never duplicates;
+ *   - §29.2 (c) a `legacy_failed`残骸 is retried only after an **orphan Claim scan** that REUSES
+ *     the Claims a previous attempt already wrote, instead of writing the same content twice.
  */
 
 import { createHash, randomUUID } from "node:crypto";
 import type { ResearchRepository } from "../storage/research-repository.js";
 import type { ArtifactStore } from "../storage/artifact-store.js";
+import type { KnowledgeRepository } from "../storage/knowledge-repository.js";
 import type { DataProviderPort } from "../ports/data-provider.port.js";
 import { OpportunityDiscoveryService } from "./opportunity-discovery-service.js";
 import { PARSER_VERSION, parseClaims } from "../domain/material-parser.js";
@@ -54,8 +53,8 @@ export interface MaterialIngestInput {
    */
   force?: boolean;
   /**
-   * ★ §29.2 (c): explicitly accept that a `legacy_failed` row may leave orphan Claims behind.
-   * Required to retry such a row (see `retry()`); never implied by a plain re-submission.
+   * ★ §29.2 (c): allow retrying a `legacy_failed` row. The orphan-Claim scan still runs first —
+   * this flag authorises the human decision, it does not replace the detection.
    */
   acceptOrphanRisk?: boolean;
 }
@@ -65,6 +64,11 @@ export interface MaterialIngestOptions {
   leaseMs?: number;
   /** Opaque owner id (§29.5a) — never a user name, never PII. */
   ownerId?: string;
+  /**
+   * ★ §29.2 (c): required for the orphan-Claim scan (a残骸 retry must reuse what already exists).
+   * Injectable/probeable; tests may omit it when they do not exercise that path.
+   */
+  knowledge?: KnowledgeRepository;
 }
 
 type MaterialSourceType =
@@ -75,9 +79,28 @@ type MaterialSourceType =
   | "third_party"
   | "user_judgment";
 
+/** Thrown when a progress write is refused because the fencing generation no longer matches. */
+export class IngestLeaseLost extends Error {
+  constructor() {
+    super("lost the C-MVP-R1 ingest lease: another holder owns this material now");
+    this.name = "IngestLeaseLost";
+  }
+}
+
+interface MaterialProgressPatch {
+  ingestStatus: Material["ingestStatus"];
+  ingestStage: MaterialIngestStage | null;
+  ingestError: string | null;
+  ingestBlocks: MaterialIngestBlock[];
+  claimRefs: string[];
+  ingestOwner: string | null;
+  ingestLeaseUntil: string | null;
+}
+
 export class MaterialIngestService {
   private readonly ownerId: string;
   private readonly leaseMs: number;
+  private readonly knowledge?: KnowledgeRepository;
 
   constructor(
     private readonly repo: ResearchRepository,
@@ -87,6 +110,7 @@ export class MaterialIngestService {
   ) {
     this.ownerId = options.ownerId ?? `owner-${randomUUID()}`;
     this.leaseMs = options.leaseMs ?? 60_000;
+    this.knowledge = options.knowledge;
   }
 
   /**
@@ -110,22 +134,35 @@ export class MaterialIngestService {
     // §29.3: a migration残骸 is NEVER auto-resumed — it needs a human decision first.
     const legacy = existing.find((m) => m.ingestStatus === "legacy_failed");
     if (legacy && !input.acceptOrphanRisk) {
-      return {
-        outcome: "failed",
-        material: legacy,
-        stage: "migration",
-        error: "LEGACY_PARTIAL_IMPORT",
-      };
+      return { outcome: "failed", material: legacy, stage: "migration", error: "LEGACY_PARTIAL_IMPORT" };
     }
 
     // A non-terminal row (received / parsed / failed / projecting) ⇒ resume it.
     const inFlight = existing.find(
       (m) => m.ingestStatus !== "completed" && m.ingestStatus !== "legacy_failed",
     );
-    if (inFlight) return this.run(inFlight, this.ledgerFor(inFlight, parsed.claims), parsed, input);
+    if (inFlight) {
+      return this.run(inFlight, this.ledgerFor(inFlight, parsed.claims), parsed, input, {
+        outcome: "resumed",
+        allowTerminal: false,
+      });
+    }
 
-    if (legacy) return this.run(legacy, this.ledgerFor(legacy, parsed.claims), parsed, input);
-    if (completed) return this.run(completed, this.ledgerFor(completed, parsed.claims), parsed, input);
+    if (legacy || completed) {
+      const terminal = (legacy ?? completed)!;
+      const base = this.ledgerFor(terminal, parsed.claims);
+      const ledger =
+        terminal.ingestBlocks.length === 0
+          ? await this.detectOrphans(terminal, parsed.claims, base)
+          : base;
+      return this.run(
+        terminal,
+        ledger,
+        parsed,
+        { ...input, acceptOrphanRisk: true, force: true },
+        { outcome: "resumed", allowTerminal: true },
+      );
+    }
 
     // ---- NEW row (§29.5b P1): the ledger AND its claim ids are persisted with the row itself.
     const nowIso = new Date().toISOString();
@@ -148,6 +185,7 @@ export class MaterialIngestService {
       parserVersion: PARSER_VERSION,
       modelVersion: undefined,
       ingestAttempts: 0,
+      ingestGeneration: 0,
       ingestOwner: undefined,
       ingestLeaseUntil: undefined,
       ingestBlocks: buildLedger(parsed.claims),
@@ -162,17 +200,29 @@ export class MaterialIngestService {
       const winner = raced.find((m) => m.ingestStatus === "completed");
       if (winner) return { outcome: "duplicate", material: winner };
       const other = raced[0];
-      if (other) return this.run(other, this.ledgerFor(other, parsed.claims), parsed, input);
+      if (other) {
+        return this.run(other, this.ledgerFor(other, parsed.claims), parsed, input, {
+          outcome: "resumed",
+          allowTerminal: false,
+        });
+      }
       throw err;
     }
 
-    return this.run(material, material.ingestBlocks, parsed, input, "created");
+    return this.run(material, material.ingestBlocks, parsed, input, {
+      outcome: "created",
+      allowTerminal: false,
+    });
   }
 
   /**
    * ★ §29.5 — the EXPLICIT human retry (`tiancha research material retry <materialId>`).
    * This is the only way to touch a `completed` row (`force`) or a `legacy_failed`残骸
    * (`acceptOrphanRisk`), which is why the Agent is not given a tool for it.
+   *
+   * ★ §29.2 (c): for a row WITHOUT a ledger (a pre-R1残骸) the orphan scan runs FIRST and any
+   * Claim that a previous attempt already wrote is REUSED (`state = projected`) instead of being
+   * written a second time.
    */
   async retry(
     materialId: string,
@@ -183,80 +233,75 @@ export class MaterialIngestService {
       return { outcome: "duplicate", material };
     }
     if (material.ingestStatus === "legacy_failed" && !options.acceptOrphanRisk) {
-      return {
-        outcome: "failed",
-        material,
-        stage: "migration",
-        error: "LEGACY_PARTIAL_IMPORT",
-      };
+      return { outcome: "failed", material, stage: "migration", error: "LEGACY_PARTIAL_IMPORT" };
     }
     const parsed = parseClaims(material.rawText);
-    return this.run(material, this.ledgerFor(material, parsed.claims), parsed, {
-      subjectKind: material.subjectKind,
-      subjectId: material.subjectId,
-      title: material.title,
-      text: material.rawText,
-      filename: material.filename,
-      locator: material.locator,
-    });
+    const base = this.ledgerFor(material, parsed.claims);
+    const ledger =
+      material.ingestBlocks.length === 0 ? await this.detectOrphans(material, parsed.claims, base) : base;
+    return this.run(
+      material,
+      ledger,
+      parsed,
+      {
+        subjectKind: material.subjectKind,
+        subjectId: material.subjectId,
+        title: material.title,
+        text: material.rawText,
+        filename: material.filename,
+        locator: material.locator,
+        force: options.force,
+        acceptOrphanRisk: options.acceptOrphanRisk,
+      },
+      { outcome: "resumed", allowTerminal: true },
+    );
   }
 
   /**
-   * ★ §29.5b — the resumable core. `P1` is already done (the ledger exists); this method does the
-   * atomic claim, then `P2` (idempotent artifact write) and `P3` (projection) block by block,
-   * recording progress in the ledger after every step so any crash point is re-enterable.
+   * ★ §29.5b — the resumable core. The atomic claim (which also issues the fencing generation)
+   * comes first; then `P2` (idempotent artifact write) and `P3` (projection) run block by block,
+   * and EVERY write carries the generation, so a stale holder stops instead of overwriting.
    */
   private async run(
     material: Material,
     ledger: MaterialIngestBlock[],
     parsed: { claims: ParsedClaim[]; errors: string[] },
     input: MaterialIngestInput,
-    outcome: "created" | "resumed" = "resumed",
+    options: { outcome: "created" | "resumed"; allowTerminal: boolean },
   ): Promise<MaterialIngestOutcome> {
-    // No valid block ⇒ there is nothing to project, and the import IS complete (§29.2 (b)).
-    if (ledger.length === 0) {
-      this.repo.updateMaterialProgress(material.materialId, {
-        ingestStatus: "completed",
-        ingestStage: null,
-        ingestError: null,
-        ingestBlocks: [],
-        claimRefs: [],
-        ingestOwner: null,
-        ingestLeaseUntil: null,
-      });
-      return { outcome, material: this.mustGet(material.materialId), claimIds: [] };
-    }
-
-    // Make the row claimable again when a HUMAN explicitly asked for a re-run of a terminal row.
-    if (material.ingestStatus === "completed" || material.ingestStatus === "legacy_failed") {
-      this.repo.updateMaterialProgress(material.materialId, {
-        ingestStatus: "received",
-        ingestStage: null,
-        ingestError: null,
-        ingestBlocks: ledger,
-        claimRefs: material.claimRefs,
-        ingestOwner: null,
-        ingestLeaseUntil: null,
-      });
-    }
-
-    // ★ §29.5a: the atomic ownership claim. Lease = the ONLY admission condition, and the status
-    // advances in the same statement ⇒ exactly one holder.
-    const resumeStage: MaterialIngestStage = "received";
-    const claimed = this.repo.claimMaterialIngest(
+    // ★ §29.5a (+ §29.2 (c) for terminal rows reached through an explicit retry): lease = the ONLY
+    // admission condition, status advances in the same statement, and the generation is returned.
+    const generation = this.repo.claimMaterialIngest(
       material.materialId,
       this.ownerId,
       this.leaseUntil(),
-      resumeStage,
+      "received",
       new Date().toISOString(),
+      { allowTerminal: options.allowTerminal },
     );
-    if (!claimed) return { outcome: "in_progress", material: this.mustGet(material.materialId) };
+    if (generation === null) {
+      return { outcome: "in_progress", material: this.mustGet(material.materialId) };
+    }
 
     let progress = ledger;
-    const skip = new Set(progress.filter((b) => b.state === "projected").map((b) => b.blockIndex));
-    const stableId = ingestIdFor(material.subjectKind, material.subjectId, material.contentHash);
-
     try {
+      // No valid block ⇒ nothing to project, and the import IS complete (§29.2 (b)).
+      if (progress.length === 0) {
+        this.write(material, generation, {
+          ingestStatus: "completed",
+          ingestStage: null,
+          ingestError: null,
+          ingestBlocks: [],
+          claimRefs: [],
+          ingestOwner: null,
+          ingestLeaseUntil: null,
+        });
+        return { outcome: options.outcome, material: this.mustGet(material.materialId), claimIds: [] };
+      }
+
+      const skip = new Set(progress.filter((b) => b.state === "projected").map((b) => b.blockIndex));
+      const stableId = ingestIdFor(material.subjectKind, material.subjectId, material.contentHash);
+
       const discovery = new OpportunityDiscoveryService(this.repo, this.provider, this.artifactStore);
       const { claimIds } = await discovery.ingestClaims({
         subjectKind: material.subjectKind,
@@ -266,7 +311,7 @@ export class MaterialIngestService {
         sourceTitle: material.title,
         // §29.5b: stable Source identity ⇒ a resume never adds a second Source row.
         sourceId: `src-${stableId}`,
-        // §29.5b: REUSE the ids reserved in P1 — this is what makes the retry idempotent.
+        // §29.5b: REUSE the ids reserved in P1 (or adopted from the orphan scan).
         claimIds: progress.map((b) => b.claimId),
         runId: `ingest-${stableId}`,
         skipBlocks: skip,
@@ -276,9 +321,9 @@ export class MaterialIngestService {
               ? { ...b, claimId, state: phase === "projected" ? "projected" : "artifact_written" }
               : b,
           );
-          // Ledger write + lease renewal AFTER each step (§29.5a: renew so a long material cannot
-          // lose its lease half-way).
-          this.repo.updateMaterialProgress(material.materialId, {
+          // Ledger write + lease renewal AFTER each step. `write()` is FENCED: if the lease moved
+          // on (expired and taken over), this throws and we stop writing immediately.
+          this.write(material, generation, {
             ingestStatus: "projecting",
             ingestStage: "projecting",
             ingestError: null,
@@ -292,7 +337,7 @@ export class MaterialIngestService {
 
       // ---- P4: close out. claim_refs == every block's id, in block order.
       const refs = progress.map((b) => b.claimId);
-      this.repo.updateMaterialProgress(material.materialId, {
+      this.write(material, generation, {
         ingestStatus: "completed",
         ingestStage: null,
         ingestError: null,
@@ -301,27 +346,74 @@ export class MaterialIngestService {
         ingestOwner: null,
         ingestLeaseUntil: null,
       });
-      return { outcome, material: this.mustGet(material.materialId), claimIds };
+      return { outcome: options.outcome, material: this.mustGet(material.materialId), claimIds };
     } catch (err) {
-      // An EXPLICIT failure (we are still alive) releases the lease, so a human retry does not
-      // have to wait for it to expire. A hard crash keeps the lease — that is what §29.5a is for.
+      if (err instanceof IngestLeaseLost) {
+        // Another holder owns the row now: report it honestly and write NOTHING (fencing).
+        return { outcome: "in_progress", material: this.mustGet(material.materialId) };
+      }
       const message = (err as Error)?.message ?? String(err);
-      this.repo.updateMaterialProgress(material.materialId, {
-        ingestStatus: "failed",
-        ingestStage: "projecting",
-        ingestError: message.slice(0, 500),
-        ingestBlocks: progress,
-        claimRefs: projectedRefs(progress),
-        ingestOwner: null,
-        ingestLeaseUntil: null,
-      });
-      return {
-        outcome: "failed",
-        material: this.mustGet(material.materialId),
-        stage: "projecting",
-        error: message,
-      };
+      try {
+        // An EXPLICIT failure (we are still alive) releases the lease, so a human retry does not
+        // have to wait for it to expire. A hard crash keeps the lease — that is what §29.5a is for.
+        this.write(material, generation, {
+          ingestStatus: "failed",
+          ingestStage: "projecting",
+          ingestError: message.slice(0, 500),
+          ingestBlocks: progress,
+          claimRefs: projectedRefs(progress),
+          ingestOwner: null,
+          ingestLeaseUntil: null,
+        });
+      } catch {
+        /* the lease moved on — the NEW holder's state must win (never overwrite it) */
+        return { outcome: "in_progress", material: this.mustGet(material.materialId) };
+      }
+      return { outcome: "failed", material: this.mustGet(material.materialId), stage: "projecting", error: message };
     }
+  }
+
+  /**
+   * ★ §29.5a fencing — every progress/lease write presents the generation it was issued.
+   * A refused write means we are no longer the holder ⇒ `IngestLeaseLost`.
+   */
+  private write(material: Material, generation: number, patch: MaterialProgressPatch): void {
+    const applied = this.repo.updateMaterialProgress(material.materialId, patch, generation);
+    if (!applied) throw new IngestLeaseLost();
+  }
+
+  /**
+   * ★ §29.2 (c) — the ORPHAN CLAIM SCAN required before retrying a残骸: a pre-R1 import wrote its
+   * Claims with RANDOM ids and no ledger, so we match by CONTENT (statement) against the Claims the
+   * subject's beliefs already point at, and REUSE those ids (marking the block `projected`, so the
+   * block is skipped entirely). Nothing is written here.
+   */
+  private async detectOrphans(
+    material: Material,
+    claims: ParsedClaim[],
+    ledger: MaterialIngestBlock[],
+  ): Promise<MaterialIngestBlock[]> {
+    const knowledge = this.knowledge;
+    if (!knowledge || ledger.length === 0) return ledger;
+    const k = knowledge.findKnowledgeBySubject(material.subjectKind, material.subjectId);
+    if (!k) return ledger;
+
+    const reusedByStatement = new Map<string, string>();
+    for (const belief of knowledge.listBeliefs(k.knowledgeId)) {
+      const claimId = claimIdFromRef(belief.claimRef);
+      if (!claimId) continue;
+      const record = await this.artifactStore.get(claimId);
+      const blob = record?.blob as { statement?: string } | undefined;
+      if (blob?.statement) reusedByStatement.set(blob.statement, claimId);
+    }
+    if (reusedByStatement.size === 0) return ledger;
+
+    return ledger.map((block) => {
+      const statement = claims[block.blockIndex]?.statement;
+      const existing = statement ? reusedByStatement.get(statement) : undefined;
+      // Only a REAL content match is reused, and it counts as already projected ⇒ skipped.
+      return existing ? { ...block, claimId: existing, state: "projected" as const } : block;
+    });
   }
 
   /**
@@ -347,6 +439,13 @@ export class MaterialIngestService {
 
 function projectedRefs(ledger: MaterialIngestBlock[]): string[] {
   return ledger.filter((b) => b.state === "projected").map((b) => b.claimId);
+}
+
+/** `artifact:claim/<claimId>` ⇒ `<claimId>` (the belief→claim hop of the orphan scan). */
+function claimIdFromRef(ref: string | undefined): string | undefined {
+  if (!ref) return undefined;
+  const matched = /^artifact:claim\/(.+)$/.exec(ref);
+  return matched?.[1];
 }
 
 /** §29.5b P1: one ledger entry per VALID block, with its claim id allocated right here. */
