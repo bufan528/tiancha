@@ -972,9 +972,9 @@ export class ResearchRepository {
          (candidate_id, material_version_id, subject_kind, subject_id, dimension, block_hash, statement,
           content_kind, confidence, evidence_refs_json, extraction_id, extraction_config_key,
           review_status, reviewed_by, reviewed_at, decision_relation, superseded_claim_ref,
-          confirmed_claim_ref, supersedes_candidate_ref, projection_status, reserved_claim_id,
-          projection_error, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          revised_claim_ref, confirmed_claim_ref, supersedes_candidate_ref, projection_status,
+          reserved_claim_id, projection_error, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(candidate_id) DO NOTHING`,
       )
       .run(
@@ -995,6 +995,7 @@ export class ResearchRepository {
         c.reviewedAt ?? null,
         c.decisionRelation ?? null,
         c.supersededClaimRef ?? null,
+        c.revisedClaimRef ?? null,
         c.confirmedClaimRef ?? null,
         c.supersedesCandidateRef ?? null,
         c.projectionStatus,
@@ -1088,6 +1089,8 @@ export class ResearchRepository {
       reviewStatus: CandidateReviewStatus;
       decisionRelation?: CandidateRelation;
       supersededClaimRef?: string;
+      /** ★ D-C6-G: the REVISE target, persisted with the decision (never re-chosen on a retry). */
+      revisedClaimRef?: string;
       reviewedBy?: string;
       reviewedAt?: string;
     },
@@ -1097,7 +1100,8 @@ export class ResearchRepository {
       .prepare(
         `UPDATE claim_candidate
             SET statement = ?, content_kind = ?, confidence = ?, review_status = ?,
-                decision_relation = ?, superseded_claim_ref = ?, reviewed_by = ?, reviewed_at = ?
+                decision_relation = ?, superseded_claim_ref = ?, revised_claim_ref = ?,
+                reviewed_by = ?, reviewed_at = ?
           WHERE candidate_id = ? AND review_status = ?`,
       )
       .run(
@@ -1107,6 +1111,7 @@ export class ResearchRepository {
         patch.reviewStatus,
         patch.decisionRelation ?? null,
         patch.supersededClaimRef ?? null,
+        patch.revisedClaimRef ?? null,
         patch.reviewedBy ?? null,
         patch.reviewedAt ?? null,
         candidateId,
@@ -1952,6 +1957,9 @@ function rowToClaimCandidate(row: any): ClaimCandidate {
   }
   if (row.superseded_claim_ref !== null && row.superseded_claim_ref !== undefined) {
     out.supersededClaimRef = row.superseded_claim_ref as string;
+  }
+  if (row.revised_claim_ref !== null && row.revised_claim_ref !== undefined) {
+    out.revisedClaimRef = row.revised_claim_ref as string;
   }
   if (row.confirmed_claim_ref !== null && row.confirmed_claim_ref !== undefined) {
     out.confirmedClaimRef = row.confirmed_claim_ref as string;

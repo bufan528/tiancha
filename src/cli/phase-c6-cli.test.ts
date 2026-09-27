@@ -148,6 +148,7 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
       reviewStatus: "confirmed",
       decisionRelation: "SUPPORT",
       supersededClaimRef: null,
+      revisedClaimRef: null,
     });
   });
 
@@ -193,7 +194,7 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     const e = env();
     const [a, b] = e.candidateIds;
     e.review.revise(a, { operator: "analyst", statement: "edit one" });
-    e.review.confirm(a, { operator: "analyst", relation: "REVISE" });
+    e.review.confirm(a, { operator: "analyst", relation: "SUPPORT" });
     e.review.reject(b, { operator: "analyst", comment: "no source" });
 
     const rowsA = e.repo.listCandidateReviews(a);
@@ -334,5 +335,44 @@ describe("a human decision and its audit row are atomic", () => {
     e.review.confirm(a, { operator: "analyst", relation: "SUPPORT" });
     assert.equal(e.repo.getClaimCandidate(a)?.reviewStatus, "confirmed");
     assert.equal(e.repo.listCandidateReviews(a).length, 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-C6-G through the CLI: the REVISE target flag is wired (contract §C6.26)
+// ---------------------------------------------------------------------------
+
+describe("`--revises-claim` reaches the decision", () => {
+  test("T-C6-27: the CLI refuses a REVISE without a target, and documents the flag", () => {
+    const home = mkdtempSync(join(tmpdir(), "tiancha-c6r-"));
+    try {
+      const run = (args: string[]) =>
+        spawnSync(process.execPath, ["--import", "tsx", "src/cli/tiancha.ts", ...args], {
+          encoding: "utf8",
+          env: { ...process.env, USERPROFILE: home },
+        });
+
+      // ★ the missing target is refused BEFORE anything is looked up or written
+      const noTarget = run([
+        "research",
+        "candidate",
+        "confirm",
+        "cand-x",
+        "--operator",
+        "analyst",
+        "--relation",
+        "REVISE",
+      ]);
+      assert.equal(noTarget.status, 1);
+      assert.match(noTarget.stderr, /--revises-claim/);
+
+      // ...and the usage line documents both explicit-evolution targets
+      const usage = run(["research", "candidate", "confirm"]);
+      assert.equal(usage.status, 1);
+      assert.match(usage.stderr, /--revises-claim/);
+      assert.match(usage.stderr, /--supersedes-claim/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

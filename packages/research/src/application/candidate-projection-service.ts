@@ -50,12 +50,25 @@ export interface ProjectionResult {
 function relationHintFor(
   relation: CandidateRelation,
   supersedesClaimRef: string | undefined,
-): { kind: "SUPPORT" } | { kind: "REVISE" } | { kind: "CONFLICT" } | { kind: "SUPERSEDE"; supersedesClaimRef: string } {
+  revisesClaimRef: string | undefined,
+):
+  | { kind: "SUPPORT" }
+  | { kind: "REVISE"; revisesClaimRef: string }
+  | { kind: "CONFLICT" }
+  | { kind: "SUPERSEDE"; supersedesClaimRef: string } {
   switch (relation) {
     case "SUPPORT":
       return { kind: "SUPPORT" };
     case "REVISE":
-      return { kind: "REVISE" };
+      // ★ D-C6-G: a REVISE must NAME its target. `projectFromClaim` refuses a REVISE without
+      // `revisesClaimRef` (it reports SKIPPED / INVALID_EVOLUTION_TARGET instead of throwing), and
+      // guessing "the latest belief of this dimension" is exactly what the contract forbids.
+      if (revisesClaimRef === undefined || revisesClaimRef.trim().length === 0) {
+        throw new CandidateProjectionError(
+          "relation REVISE needs an explicit revisesClaimRef — refusing to guess which belief is revised",
+        );
+      }
+      return { kind: "REVISE", revisesClaimRef };
     case "CONFLICT":
       return { kind: "CONFLICT" };
     case "SUPERSEDE":
@@ -89,7 +102,7 @@ export class CandidateProjectionService {
    */
   async project(
     candidateId: string,
-    input: ProjectInput & { supersedesClaimRef?: string },
+    input: ProjectInput & { supersedesClaimRef?: string; revisesClaimRef?: string },
   ): Promise<ProjectionResult> {
     if (typeof input.operator !== "string" || input.operator.trim().length === 0) {
       throw new CandidateProjectionError("--operator is required and must be non-empty");
@@ -112,6 +125,7 @@ export class CandidateProjectionService {
     // ★ Resolve the relation BEFORE reserving anything: an invalid decision must not leave a
     // half-projected candidate behind (it may not even have a `projectionError` yet).
     const storedSupersedes = candidate.supersededClaimRef;
+    const storedRevises = candidate.revisedClaimRef;
     if (
       input.supersedesClaimRef !== undefined &&
       storedSupersedes !== undefined &&
@@ -121,25 +135,33 @@ export class CandidateProjectionService {
         `candidate ${candidateId} was decided with supersedes=${storedSupersedes}; a retry may not change the decision`,
       );
     }
+    if (input.revisesClaimRef !== undefined && storedRevises !== undefined && input.revisesClaimRef !== storedRevises) {
+      throw new CandidateProjectionError(
+        `candidate ${candidateId} was decided with revises=${storedRevises}; a retry may not change the decision`,
+      );
+    }
     const hint = relationHintFor(
       candidate.decisionRelation as CandidateRelation,
       storedSupersedes ?? input.supersedesClaimRef,
+      storedRevises ?? input.revisesClaimRef,
     );
 
-    // ★ P1 fix ①: re-validate an EXPLICIT evolution target against the LIVE knowledge. The decision
-    // validated it too, but the knowledge may have moved since — and `projectFromClaim` reports a
-    // bad target by RETURNING `SKIPPED / INVALID_EVOLUTION_TARGET`, which is not an exception, so a
-    // stale target would otherwise be recorded as a successful projection.
-    if (hint.kind === "SUPERSEDE") {
+    // ★ P1 fix ① + D-C6-G: re-validate an EXPLICIT evolution target against the LIVE knowledge. The
+    // decision validated it too, but the knowledge may have moved since — and `projectFromClaim`
+    // reports a bad target by RETURNING `SKIPPED / INVALID_EVOLUTION_TARGET`, which is not an
+    // exception, so a stale target would otherwise be recorded as a successful projection. BOTH
+    // REVISE and SUPERSEDE go through the SAME predicate the knowledge side uses.
+    if (hint.kind === "SUPERSEDE" || hint.kind === "REVISE") {
+      const targetClaimRef = hint.kind === "SUPERSEDE" ? hint.supersedesClaimRef : hint.revisesClaimRef;
       const check = checkEvolutionTarget({
         knowledge: this.knowledge,
         subjectKind: candidate.subjectKind,
         subjectId: candidate.subjectId,
         dimension: candidate.dimension,
-        targetClaimRef: hint.supersedesClaimRef,
+        targetClaimRef,
       });
       if (!check.ok) {
-        const message = `cannot project SUPERSEDE: ${evolutionTargetRefusalMessage(check.reason, hint.supersedesClaimRef)}`;
+        const message = `cannot project ${hint.kind}: ${evolutionTargetRefusalMessage(check.reason, targetClaimRef)}`;
         // keep the reason on the row for the operator, but never close it as done
         this.repo.updateCandidateProjection(candidateId, { projectionError: message });
         throw new CandidateProjectionError(message);

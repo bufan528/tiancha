@@ -539,7 +539,15 @@ async function run(): Promise<void> {
         } else if (sub === "confirm") {
           process.exitCode = await runCandidateConfirm(
             id,
-            { json, operator, relation: flagValue(args, "--relation"), comment },
+            {
+              json,
+              operator,
+              relation: flagValue(args, "--relation"),
+              comment,
+              // ★ both explicit evolution targets must reach the DECISION (the target is part of it)
+              supersedes: flagValue(args, "--supersedes-claim"),
+              revises: flagValue(args, "--revises-claim"),
+            },
             deps,
           );
         } else if (sub === "revise") {
@@ -553,7 +561,12 @@ async function run(): Promise<void> {
         } else if (sub === "project") {
           process.exitCode = await runCandidateProject(
             id,
-            { json, operator, supersedes: flagValue(args, "--supersedes-claim") },
+            {
+              json,
+              operator,
+              supersedes: flagValue(args, "--supersedes-claim"),
+              revises: flagValue(args, "--revises-claim"),
+            },
             deps,
           );
         } else {

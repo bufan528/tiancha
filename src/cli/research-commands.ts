@@ -1198,6 +1198,8 @@ export interface CandidateReviewOptions {
   confidence?: number;
   /** Only for `SUPERSEDE`: which existing claim is superseded. */
   supersedes?: string;
+  /** ★ D-C6-G: only for `REVISE` — which existing claim is revised. Never guessed. */
+  revises?: string;
 }
 
 function toCandidateView(c: ClaimCandidate, repo?: ResearchRepository): CandidateView {
@@ -1229,6 +1231,9 @@ function toCandidateView(c: ClaimCandidate, repo?: ResearchRepository): Candidat
     excerpt,
     projectionStatus: c.projectionStatus,
     ...(c.supersedesCandidateRef === undefined ? {} : { supersedesCandidateRef: c.supersedesCandidateRef }),
+    // ★ the explicit evolution targets — part of the DECISION, so the CLI prints what was decided
+    ...(c.supersededClaimRef === undefined ? {} : { supersededClaimRef: c.supersededClaimRef }),
+    ...(c.revisedClaimRef === undefined ? {} : { revisedClaimRef: c.revisedClaimRef }),
     ...(c.reviewedBy === undefined ? {} : { reviewedBy: c.reviewedBy }),
   };
 }
@@ -1307,7 +1312,10 @@ export async function runCandidateConfirm(
   deps: ResearchCliDeps,
 ): Promise<number> {
   if (candidateId === undefined) {
-    return fail(deps, "usage: tiancha research candidate confirm <candidateId> --operator <名> --relation <SUPPORT|REVISE|CONFLICT|SUPERSEDE>");
+    return fail(
+      deps,
+      "usage: tiancha research candidate confirm <candidateId> --operator <名> --relation <SUPPORT|REVISE|CONFLICT|SUPERSEDE> [--supersedes-claim <claimRef> | --revises-claim <claimRef>]",
+    );
   }
   if (opts.operator === undefined) return fail(deps, "--operator is required (every human decision must be attributable)");
   if (opts.relation === undefined) return fail(deps, "--relation is required (I-C6-8: no relation ⇒ no confirmation)");
@@ -1316,6 +1324,7 @@ export async function runCandidateConfirm(
       operator: opts.operator,
       relation: opts.relation as never,
       ...(opts.supersedes === undefined ? {} : { supersedesClaimRef: opts.supersedes }),
+      ...(opts.revises === undefined ? {} : { revisesClaimRef: opts.revises }),
       ...(opts.comment === undefined ? {} : { comment: opts.comment }),
     });
     if (opts.json) {
@@ -1355,7 +1364,10 @@ export async function runCandidateProject(
   deps: ResearchCliDeps,
 ): Promise<number> {
   if (candidateId === undefined) {
-    return fail(deps, "usage: tiancha research candidate project <candidateId> --operator <名> [--supersedes-claim <claimRef>]");
+    return fail(
+      deps,
+      "usage: tiancha research candidate project <candidateId> --operator <名> [--supersedes-claim <claimRef> | --revises-claim <claimRef>]",
+    );
   }
   if (opts.operator === undefined) return fail(deps, "--operator is required (every human decision must be attributable)");
   if (deps.projection === undefined) {
@@ -1365,6 +1377,7 @@ export async function runCandidateProject(
     const result = await deps.projection.project(candidateId, {
       operator: opts.operator,
       ...(opts.supersedes === undefined ? {} : { supersedesClaimRef: opts.supersedes }),
+      ...(opts.revises === undefined ? {} : { revisesClaimRef: opts.revises }),
     });
     if (opts.json) {
       deps.out(toJson({ status: result.status, claimRef: result.claimRef, error: result.error }));

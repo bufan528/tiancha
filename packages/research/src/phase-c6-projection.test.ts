@@ -419,13 +419,11 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
 
   test("T-C6-18: a relation the knowledge side REFUSES is reported as failed, not as a success", async () => {
     const e = env();
-    await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
-
+    // A CONFLICT needs an existing current cognition to be in conflict with. With none, the knowledge
+    // projection REFUSES it by RETURNING `SKIPPED / INVALID_EVOLUTION_TARGET` — a return value, not an
+    // exception. The projection must surface that instead of closing the candidate `finalized`.
     const id = e.candidateIds[0];
-    // A bare REVISE carries no revises-claim target, so the knowledge projection REFUSES it by
-    // returning `SKIPPED / INVALID_EVOLUTION_TARGET` — a return value, not an exception. The
-    // projection must surface that instead of closing the candidate `finalized`.
-    e.review.confirm(id, { operator: "analyst", relation: "REVISE" });
+    e.review.confirm(id, { operator: "analyst", relation: "CONFLICT" });
 
     const result = await e.projection.project(id, { operator: "analyst" });
     assert.equal(result.status, "failed", "the refusal is surfaced");
@@ -437,6 +435,160 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
     assert.ok((await e.artifacts.get(String(row?.reservedClaimId))) !== undefined);
     // ★ and the candidate is still visible as unfinished work, never closed as done
     assert.notEqual(String(row?.projectionStatus), "finalized");
+  });
+
+  // -------------------------------------------------------------------------
+  // D-C6-G — a REVISE must name its target (contract §C6.26)
+  // -------------------------------------------------------------------------
+
+  test("T-C6-21: a REVISE without a target is refused at DECISION time — the target is never guessed", async () => {
+    const e = env();
+    await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
+    const id = e.candidateIds[0];
+
+    // ★ D-C6-G: a bare REVISE is not a decision — a candidate exists that COULD be revised, and the
+    // system still refuses to pick one.
+    assert.throws(
+      () => e.review.confirm(id, { operator: "analyst", relation: "REVISE" }),
+      /requires --revises-claim/,
+    );
+    const row = e.repo.getClaimCandidate(id);
+    assert.equal(row?.reviewStatus, "draft", "a refused decision leaves the candidate a draft");
+    assert.equal(row?.decisionRelation, undefined, "no relation is recorded");
+    assert.equal(row?.revisedClaimRef, undefined, "no target is persisted");
+    assert.equal(row?.reservedClaimId, undefined, "nothing may be reserved");
+    assert.equal(row?.projectionError, undefined);
+    assert.equal(e.repo.listCandidateReviews(id).length, 0, "no audit row either");
+  });
+
+  test("T-C6-22: a REVISE target that does not exist is refused", async () => {
+    const e = env();
+    const id = e.candidateIds[0];
+    assert.throws(
+      () =>
+        e.review.confirm(id, {
+          operator: "analyst",
+          relation: "REVISE",
+          revisesClaimRef: "artifact:claim/does-not-exist",
+        }),
+      /TARGET_NOT_FOUND|does not exist/,
+    );
+    const row = e.repo.getClaimCandidate(id);
+    assert.equal(row?.reviewStatus, "draft");
+    assert.equal(row?.revisedClaimRef, undefined);
+    assert.equal(row?.reservedClaimId, undefined);
+  });
+
+  test("T-C6-23: a REVISE target living on ANOTHER dimension is refused", async () => {
+    const e = env();
+    const foreign = await seedClaim(e, "claim-demand-1", "demand", "需求侧：客户开始采购");
+    const id = e.candidateIds[0]; // dimension: market
+    assert.throws(
+      () => e.review.confirm(id, { operator: "analyst", relation: "REVISE", revisesClaimRef: foreign }),
+      /TARGET_DIMENSION_MISMATCH|DIFFERENT dimension/,
+    );
+    assert.equal(e.repo.getClaimCandidate(id)?.reviewStatus, "draft");
+    assert.equal(e.repo.getClaimCandidate(id)?.revisedClaimRef, undefined);
+  });
+
+  test("T-C6-24: a REVISE target that is no longer evolvable is refused", async () => {
+    const e = env();
+    const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
+    await e.discovery.ingestClaims({
+      subjectKind: "industry",
+      subjectId: "ind-c6",
+      claims: [
+        {
+          statement: "更新结论：市场规模约 120 亿元",
+          dimension: "market",
+          relationHint: { kind: "SUPERSEDE", supersedesClaimRef: oldRef },
+        },
+      ],
+      claimIds: ["claim-new-1"],
+      sourceId: "src-claim-new-1",
+      runId: "run-claim-new-1",
+    });
+    const knowledgeId = e.knowledge.findKnowledgeBySubject("industry", "ind-c6")?.knowledgeId ?? "";
+    assert.notEqual(e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, oldRef)?.state, "confirmed");
+
+    const id = e.candidateIds[0];
+    assert.throws(
+      () => e.review.confirm(id, { operator: "analyst", relation: "REVISE", revisesClaimRef: oldRef }),
+      /TARGET_STATE_NOT_EVOLVABLE|not in an evolvable state/,
+    );
+    assert.equal(e.repo.getClaimCandidate(id)?.reviewStatus, "draft");
+  });
+
+  test("T-C6-25: a REVISE against a REAL target really REVISES it (never supersedes it)", async () => {
+    const e = env();
+    const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
+    const knowledgeId = e.knowledge.findKnowledgeBySubject("industry", "ind-c6")?.knowledgeId ?? "";
+    assert.equal(e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, oldRef)?.state, "confirmed");
+
+    const id = e.candidateIds[0];
+    const confirmed = e.review.confirm(id, { operator: "analyst", relation: "REVISE", revisesClaimRef: oldRef });
+    assert.equal(confirmed.revisedClaimRef, oldRef, "the target is persisted WITH the decision");
+    assert.equal(confirmed.decisionRelation, "REVISE");
+
+    // the audit row answers "which cognition was revised"
+    const audit = e.repo.listCandidateReviews(id);
+    assert.equal(audit.length, 1);
+    assert.equal((audit[0].after ?? {})["revisedClaimRef"], oldRef);
+    assert.equal((audit[0].after ?? {})["decisionRelation"], "REVISE");
+
+    const result = await e.projection.project(id, { operator: "analyst" });
+    assert.equal(result.status, "projected");
+
+    // ★ the target became `revised` (NOT `superseded`) and the new belief carries this claim ref
+    const target = e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, oldRef);
+    assert.equal(target?.state, "revised", "a REVISE marks the target revised, not superseded");
+    const fresh = e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, result.claimRef ?? "");
+    assert.ok(fresh !== undefined, "a belief carrying this candidate's claim ref was written");
+    assert.equal(fresh.state, "confirmed");
+
+    const row = e.repo.getClaimCandidate(id);
+    assert.equal(row?.projectionStatus, "finalized");
+    assert.equal(row?.confirmedClaimRef, result.claimRef);
+    assert.equal(row?.revisedClaimRef, oldRef);
+  });
+
+  test("T-C6-26: after a failed projection the ORIGINAL target is reused — and may never be replaced", async () => {
+    const e = env();
+    const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
+    const id = e.candidateIds[0];
+    e.review.confirm(id, { operator: "analyst", relation: "REVISE", revisesClaimRef: oldRef });
+
+    // ★ the knowledge moves BETWEEN the decision and the projection: the target is consumed
+    await e.discovery.ingestClaims({
+      subjectKind: "industry",
+      subjectId: "ind-c6",
+      claims: [
+        {
+          statement: "更新结论：市场规模约 120 亿元",
+          dimension: "market",
+          relationHint: { kind: "SUPERSEDE", supersedesClaimRef: oldRef },
+        },
+      ],
+      claimIds: ["claim-new-1"],
+      sourceId: "src-claim-new-1",
+      runId: "run-claim-new-1",
+    });
+
+    // a DIFFERENT target is refused outright — the target belongs to the decision
+    await assert.rejects(
+      () => e.projection.project(id, { operator: "analyst", revisesClaimRef: "artifact:claim/claim-other" }),
+      /may not change the decision/,
+    );
+
+    // the ORIGINAL target now fails: reported, never hidden as success
+    await assert.rejects(() => e.projection.project(id, { operator: "analyst" }), /cannot project REVISE/);
+    const row = e.repo.getClaimCandidate(id);
+    assert.notEqual(String(row?.projectionStatus), "finalized", "an impossible revision is never closed as done");
+    assert.equal(row?.confirmedClaimRef, undefined);
+    assert.match(row?.projectionError ?? "", /TARGET_STATE_NOT_EVOLVABLE|not in an evolvable state/);
+    // ★ the decision (and therefore the target) is untouched by the failed attempt
+    assert.equal(row?.revisedClaimRef, oldRef);
+    assert.equal(row?.decisionRelation, "REVISE");
   });
 
   test("a rejected candidate is never projectable, and two candidates project independently", async () => {

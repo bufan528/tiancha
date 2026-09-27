@@ -44,6 +44,12 @@ export interface ConfirmInput extends ReviewContext {
    * later retry can never quietly pick a different target.
    */
   supersedesClaimRef?: string;
+  /**
+   * ★ D-C6-G: Required when — and only meaningful for — `REVISE`. The knowledge projection REFUSES a
+   * REVISE that names no target, so the decision must state WHICH belief it revises. It is never
+   * guessed from "the latest one", and like the SUPERSEDE target it is stored WITH the decision.
+   */
+  revisesClaimRef?: string;
 }
 
 export interface ReviseInput extends ReviewContext {
@@ -102,29 +108,44 @@ export class CandidateReviewService {
         `--relation must be one of ${RELATIONS.join(" | ")} (I-C6-8: a confirmation without an explicit relation is not a confirmation)`,
       );
     }
-    // ★ validate BEFORE touching the row: a SUPERSEDE without a target is not a decision, and it
-    // must fail here rather than half-way through a projection.
-    if (input.relation === "SUPERSEDE" && (input.supersedesClaimRef ?? "").trim().length === 0) {
+    // ★ validate BEFORE touching the row: an explicit-evolution relation without a target is not a
+    // decision, and it must fail here rather than half-way through a projection. D-C6-G extends the
+    // SUPERSEDE rule to REVISE — the projection refuses a REVISE that names no target, and guessing
+    // "the latest belief of this dimension" is precisely what the contract forbids.
+    const targetFlag =
+      input.relation === "SUPERSEDE"
+        ? "--supersedes-claim"
+        : input.relation === "REVISE"
+          ? "--revises-claim"
+          : undefined;
+    const explicitTarget =
+      input.relation === "SUPERSEDE"
+        ? input.supersedesClaimRef
+        : input.relation === "REVISE"
+          ? input.revisesClaimRef
+          : undefined;
+    if (targetFlag !== undefined && (explicitTarget ?? "").trim().length === 0) {
       throw new CandidateReviewError(
-        "relation SUPERSEDE requires --supersedes-claim <claimRef> — the target is part of the decision",
+        `relation ${input.relation} requires ${targetFlag} <claimRef> — the target is part of the decision`,
       );
     }
     const before = this.requireDraft(candidateId, "confirm");
-    // ★ P1 fix: a SUPERSEDE decision is only a decision if the target can really be superseded.
-    // Validating HERE keeps `confirm` honest (and — because this runs before `apply` — leaves the
-    // candidate a draft with nothing reserved when it is refused). The projection re-validates
-    // before writing, because the knowledge may move between the decision and the projection.
-    if (input.relation === "SUPERSEDE" && input.supersedesClaimRef !== undefined) {
+    // ★ P1 fix + D-C6-G: an explicit evolution decision is only a decision if the target can really be
+    // evolved. BOTH relations judge it through the SAME predicate the projection uses — validating
+    // HERE keeps `confirm` honest (and, because this runs before `apply`, leaves the candidate a draft
+    // with nothing reserved when it is refused). The projection re-validates before writing, because
+    // the knowledge may move between the decision and the projection.
+    if (targetFlag !== undefined && explicitTarget !== undefined) {
       const check = checkEvolutionTarget({
         knowledge: this.knowledge,
         subjectKind: before.subjectKind,
         subjectId: before.subjectId,
         dimension: before.dimension,
-        targetClaimRef: input.supersedesClaimRef,
+        targetClaimRef: explicitTarget,
       });
       if (!check.ok) {
         throw new CandidateReviewError(
-          `cannot confirm SUPERSEDE: ${evolutionTargetRefusalMessage(check.reason, input.supersedesClaimRef)}`,
+          `cannot confirm ${input.relation}: ${evolutionTargetRefusalMessage(check.reason, explicitTarget)}`,
         );
       }
     }
@@ -135,6 +156,9 @@ export class CandidateReviewService {
       decisionRelation: input.relation,
       ...(input.relation === "SUPERSEDE" && input.supersedesClaimRef !== undefined
         ? { supersededClaimRef: input.supersedesClaimRef }
+        : {}),
+      ...(input.relation === "REVISE" && input.revisesClaimRef !== undefined
+        ? { revisedClaimRef: input.revisesClaimRef }
         : {}),
       reviewedBy: input.operator,
       reviewedAt: at,
@@ -147,11 +171,13 @@ export class CandidateReviewService {
         reviewStatus: before.reviewStatus,
         decisionRelation: before.decisionRelation ?? null,
         supersededClaimRef: before.supersededClaimRef ?? null,
+        revisedClaimRef: before.revisedClaimRef ?? null,
       },
       after: {
         reviewStatus: after.reviewStatus,
         decisionRelation: after.decisionRelation ?? null,
         supersededClaimRef: after.supersededClaimRef ?? null,
+        revisedClaimRef: after.revisedClaimRef ?? null,
       },
     });
     return this.requireCandidate(candidateId);
@@ -250,6 +276,7 @@ export class CandidateReviewService {
         reviewStatus: after.reviewStatus,
         decisionRelation: after.decisionRelation,
         ...(after.supersededClaimRef === undefined ? {} : { supersededClaimRef: after.supersededClaimRef }),
+        ...(after.revisedClaimRef === undefined ? {} : { revisedClaimRef: after.revisedClaimRef }),
         reviewedBy: after.reviewedBy,
         reviewedAt: at,
       },

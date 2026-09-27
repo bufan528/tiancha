@@ -437,6 +437,9 @@ export class ResearchDb {
         -- ★ review decision: the claim this candidate supersedes (SUPERSEDE only). Persisted with the
         -- decision so a retry never has to (and never may) invent a different target.
         superseded_claim_ref TEXT,
+        -- ★ D-C6-G: the claim this candidate REVISES (REVISE only). Same rule as SUPERSEDE — the
+        -- target is part of the decision, persisted with it, and a retry may not replace it.
+        revised_claim_ref TEXT,
         -- §C6.17: declared now, USED in slice ④ (avoids a second migration later)
         projection_status TEXT NOT NULL DEFAULT 'none',
         reserved_claim_id TEXT,
@@ -601,6 +604,7 @@ export class ResearchDb {
     // ★ C5-B last: it may FAIL FAST on legacy duplicate active proposals (see the method).
     this.ensureProposalActiveUniqueness();
     this.ensureCandidateSupersedesColumn();
+    this.ensureCandidateRevisedColumn();
   }
 
   /**
@@ -740,6 +744,15 @@ export class ResearchDb {
    */
   private ensureCandidateSupersedesColumn(): void {
     this.addColumnIfMissing("claim_candidate", "superseded_claim_ref", "TEXT");
+  }
+
+  /**
+   * ★ D-C6-G: add `claim_candidate.revised_claim_ref`. The REVISE target belongs to the REVIEW
+   * DECISION for the same reason the SUPERSEDE target does — a resume must reuse the ORIGINAL target
+   * instead of being free to pick another one.
+   */
+  private ensureCandidateRevisedColumn(): void {
+    this.addColumnIfMissing("claim_candidate", "revised_claim_ref", "TEXT");
   }
 
   /** PRAGMA-prechecked ALTER; try/catch is only a concurrency safety net. */

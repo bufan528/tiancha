@@ -58,6 +58,12 @@ export interface ClaimCandidate {
   decisionRelation?: CandidateRelation;
   /** ★ The claim a `SUPERSEDE` decision replaces — part of the DECISION (persisted, not re-chosen). */
   supersededClaimRef?: string;
+  /**
+   * ★ D-C6-G: the claim a `REVISE` decision revises. Same rule as `supersededClaimRef` — the target
+   * belongs to the DECISION and is persisted with it; the projection must state it explicitly and may
+   * never guess ("the latest belief of this dimension").
+   */
+  revisedClaimRef?: string;
   /** The real Claim this candidate became (filled in slice ④). */
   confirmedClaimRef?: string;
   /** Lineage: the same (blockHash, dimension) under a PREVIOUS extraction config. */

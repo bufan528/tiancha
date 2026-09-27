@@ -717,6 +717,10 @@ export interface CandidateView {
   excerpt?: string;
   projectionStatus?: string;
   supersedesCandidateRef?: string;
+  /** ★ the SUPERSEDE target carried by the DECISION (part of the decision, never of one CLI call). */
+  supersededClaimRef?: string;
+  /** ★ D-C6-G: the REVISE target carried by the DECISION. */
+  revisedClaimRef?: string;
   reviewedBy?: string;
 }
 
@@ -756,6 +760,10 @@ export function formatCandidateHuman(v: CandidateView): string {
     lines.push(`  摘录（规范化 nfkc-lf-v1）：${v.excerpt}`);
   }
   if (v.supersedesCandidateRef !== undefined) lines.push(`  取代（lineage）：${v.supersedesCandidateRef}`);
+  // ★ the explicit evolution target carried by the DECISION (D-C6-G / §C6.24 item 4) — shown here so
+  // `candidate show` answers "which cognition will be revised / superseded" on its own.
+  if (v.supersededClaimRef !== undefined) lines.push(`  替代目标：${v.supersededClaimRef}`);
+  if (v.revisedClaimRef !== undefined) lines.push(`  修订目标：${v.revisedClaimRef}`);
   if (v.reviewedBy !== undefined) lines.push(`  审核人：${v.reviewedBy}`);
   lines.push("");
   return lines.join("\n");
@@ -777,10 +785,17 @@ export function formatCandidateReviewHuman(
       : projection === "not_wired"
         ? "  ⚠ 尚未投影：此处未配置投影服务；请在 CLI 执行 tiancha research candidate project <id> --operator <名>。"
         : "  投影：本动作不触发投影（候选保持待确认）。";
+  const targetLine =
+    v.supersededClaimRef !== undefined
+      ? `  替代目标：${v.supersededClaimRef}（属于本次决定，续跑不得更换）`
+      : v.revisedClaimRef !== undefined
+        ? `  修订目标：${v.revisedClaimRef}（属于本次决定，续跑不得更换）`
+        : undefined;
   const lines = [
     "",
     `已记录人工动作：${action} · 候选 ${v.candidateId}`,
     `  审核状态：${v.reviewStatus}${v.decisionRelation === undefined ? "" : ` · relation=${v.decisionRelation}`}`,
+    ...(targetLine === undefined ? [] : [targetLine]),
     projectionLine,
   ];
   for (const n of notes) lines.push(`  ${n}`);
