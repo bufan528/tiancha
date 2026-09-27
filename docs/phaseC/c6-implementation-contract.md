@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev13 — 第 ①–⑤ 片全部交付；收口复核（§C6.18–§C6.24）与独立复核三项修复（§C6.25）已闭环；§C6.26 = `REVISE` 目标契约（D-C6-G 已裁决，**实现未授权**，DESIGN ONLY）**。仍未实现/未授权：`REVISE` 目标管线的实现 · 原文切片（位置映射）· 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+> 状态：**rev14 — 第 ①–⑤ 片全部交付；收口复核（§C6.18–§C6.24）· 独立复核三项修复（§C6.25）· D-C6-G `REVISE` 目标管线（§C6.26，**已实现**）· 多来源证据展示（§C6.27，**已实现**）均已闭环**。仍未实现/未授权：原文切片（位置映射）· 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -11,7 +11,8 @@
 
 | 版本 | 变更 |
 |---|---|
-| **rev13** | **§C6.26 `REVISE` 目标契约（D-C6-G，用户裁决；实现未授权，DESIGN ONLY）**：`confirm --relation REVISE` **必须**带 `--revises-claim <claimRef>`，**不得自动选择"最新一条"**；目标校验与 SUPERSEDE **同源**（复用 `checkEvolutionTarget`）；目标随决定持久化（新列 `claim_candidate.revised_claim_ref`）且**重试不得更换**；验收 T-C6-21…T-C6-26。**本轮纯契约，零代码改动** |
+| **rev14** | **D-C6-G 实现 + 多来源证据展示**（`4f969b5` / `0143ffd`）：① `REVISE` 目标管线落地（`revisedClaimRef` + 新列 `revised_claim_ref` + 决定期/投影前双重校验 + 重试不可更换 + CLI `--revises-claim`；验收 T-C6-21…T-C6-27）—— 顺带修好 **CLI `confirm --supersedes-claim` 从未接线**的既有缺陷；② `ClaimCandidateLine`/`CandidateView` 的 `excerpt` 改为逐条 `evidence[]`（`evidenceRef`+`locator`+`excerpt`），`candidate show` / 审核输出 / Markdown 逐条列出（T-C6-10 加强 + T-C6-28）。全量 **469/469**（125 suites）+ smoke PASS。详见 §C6.26.8 / §C6.27 |
+| **rev13** | **§C6.26 `REVISE` 目标契约（D-C6-G，用户裁决）**：`confirm --relation REVISE` **必须**带 `--revises-claim <claimRef>`，**不得自动选择"最新一条"**；目标校验与 SUPERSEDE **同源**（复用 `checkEvolutionTarget`）；目标随决定持久化且重试不得更换；验收 T-C6-21…T-C6-26 |
 | **rev12** | **独立复核后的三项修复**（`4b74862` / `67f72a8` / `455b31d`）：① **演化目标（SUPERSEDE / REVISE）决定期 + 投影前双重校验**，知识侧 `SKIPPED` 时**不再**收口为 `finalized`（投影后验证真实 belief）· ② T-C6-10 改为**把定位解析回材料原文** + 新增 **T-C6-13b**（跨材料版本证据）· ③ **决定与审计行同一事务**（`applyAndAudit`）。新增 T-C6-14…T-C6-20。全量 **461/461**（124 suites）+ smoke PASS。详见 §C6.25 |
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
 | **rev11** | **C6 收口复核修订**（`8e617c6`）：① 报告/审核面**展示证据与定位**（含端到端验收）· ② P3/P4 恢复窗口下**分类回退 `reservedClaimId`** 且半成品候选仍可见 · ③ **`sourceRef` 类型修正**（不再传 evidence id）· ④ **SUPERSEDE 目标进入决定**（新增列 + 预留前校验 + 不可改）· ⑤ 重复文本**合并 Evidence** · ⑥ `evidenceRef` **存在性/版本校验** · 文档同步。全量 **453/453** + smoke PASS。详见 §C6.24 |
@@ -833,9 +834,9 @@ Markdown:
 * **裸 `REVISE` 关系当前不可用**（见 §C6.25.1 末）—— 需 `--revises-claim` 之类的契约裁决；
 * U-1/U-2/U-3 · Wind · 自动发现 · Phase D：**未授权**。
 
-## §C6.26 D-C6-G：`REVISE` 必须显式指定目标（2026-09-28 用户裁决；**实现未授权，DESIGN ONLY**）
+## §C6.26 D-C6-G：`REVISE` 必须显式指定目标（2026-09-28 用户裁决；**已实现并交付**，见 §C6.26.8）
 
-> **⚠ 本节是契约，不是实现记录。** `REVISE` 目标管线的**实现尚未授权**（须单独授权后按片落地）。当前 `candidate confirm --relation REVISE` 仍会（**诚实地**）在投影期失败，见 §C6.25.1 末与 §C6.25.6。
+> **语义部分 = 契约，实现状态见 §C6.26.8（`4f969b5`，**已实现并交付**）。** 契约由用户于 2026-09-28 裁决，实现随后单独授权。
 
 **用户裁决原文**：「**`REVISE` 必须显式指定 `--revises-claim <claimRef>`，不能自动选择"最新一条"**。这和现有的 `SUPERSEDE` 规则、知识投影对演化目标的校验方式一致，也能让审计记录明确回答"哪条认知被修订"。」
 
@@ -898,9 +899,51 @@ Markdown:
 4. 展示层：`formatCandidateReviewHuman` / Markdown 是否展示 `revisedClaimRef`（**建议对称展示**，与 `supersededClaimRef` 一致）；
 5. `revisedClaimRef` 与 `projectionError` 的**共存**语义（决定已记、投影失败时两者可同时存在 —— 与 SUPERSEDE 同构）。
 
-### §C6.26.7 仍未授权（保持诚实）
+### §C6.26.7 仍未授权（承接 §C6.25.6）
 
-* **`REVISE` 目标管线的实现**：**未授权**（本节仅锁定契约）。在授权前，`candidate confirm --relation REVISE` 仍会在投影期**如实失败**；
-* 原文切片 · 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D：**未授权**（承接 §C6.25.6）。
+* 原文切片（规范化位置 → 原文位置）· 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D：**未授权**。
 
-**End of contract（rev13: §C6.26 D-C6-G `REVISE` 目标契约，实现未授权）.**
+### §C6.26.8 实现记录（2026-09-28，`4f969b5`，**已实现并交付**）
+
+| 层 | 改动 |
+|---|---|
+| domain | `ClaimCandidate.revisedClaimRef?: string` |
+| schema | `claim_candidate.revised_claim_ref TEXT` —— 建表列 + `ensureCandidateRevisedColumn()`（`addColumnIfMissing`，与 `superseded_claim_ref` 同法）；**表数仍 32** |
+| repository | `insertClaimCandidate` / `updateClaimCandidateForReview` / `rowToClaimCandidate` 携带新列 |
+| review | `confirm` 用统一的 `targetFlag` / `explicitTarget` 处理两个关系：`REVISE` 缺目标 ⇒ **抛错（在任何行操作之前）**；目标经 **`checkEvolutionTarget()`** 校验（同 subject · 同 dimension · `confirmed` / `conflicting`）；目标写入候选与审计行 `before` / `after` |
+| projection | `relationHintFor(relation, supersedesClaimRef, revisesClaimRef)` ⇒ `{ kind: "REVISE", revisesClaimRef }`；续跑换目标 ⇒ 抛错；**投影前**再校验；**投影后**仍验证真实 belief（§C6.25） |
+| CLI | `confirm` / `project` 的 `--revises-claim`；usage 行；`candidate show` 与审核输出打印"修订目标" |
+| 测试 | T-C6-21（无目标 ⇒ 拒绝且零副作用）· T-C6-22（目标不存在）· T-C6-23（跨维度）· T-C6-24（状态不可演化）· **T-C6-25（有效目标 ⇒ 目标变 `revised` 而**非** `superseded`，新 belief `confirmed`，审计行记目标）** · T-C6-26（决定后目标失效 ⇒ `failed` 而非 `finalized`，换目标被拒）· T-C6-27（CLI 接线）。`T-C6-18` 改用 `CONFLICT`（仍无自带目标的关系）以继续证明"知识侧拒绝 ⇒ 如实报失败" |
+
+**★ 顺带修复的既有缺陷**：`research candidate confirm --supersedes-claim <ref>` 的值此前**只被服务层解析、从未由 CLI 入口传入**（`tiancha.ts` 的 confirm 分支只传了 `relation`），因此 SUPERSEDE 的目标**只能**通过服务 API 设置。本次两个标志一并接线（T-C6-27 覆盖 usage 与拒绝路径）。
+
+**验证**：root `tsc` **0** · research typecheck **0** · **469/469**（125 suites）· `research smoke` **PASS**。
+**真实 CLI 证据**（隔离 `USERPROFILE`）：无目标 ⇒ **exit 1** + `relation REVISE requires --revises-claim <claimRef>`；目标不存在 ⇒ **exit 1**；真实目标 ⇒ **exit 0** + `修订目标：artifact:claim/claim-old-1（属于本次决定，续跑不得更换）` + `投影结果：projected`；目标 belief **`confirmed → revised`**；`candidate show` 回读 `审核状态：confirmed · relation=REVISE` + `修订目标：…`。
+**mutation 反证**：把 `REVISE` 从投影前的再校验中移除 ⇒ **T-C6-26 失败**。
+
+---
+
+## §C6.27 多来源证据展示（2026-09-28，`0143ffd`，**已实现并交付**）
+
+**问题**：候选行只有一个 `excerpt` 字段，而"**一个候选 = 一条陈述**、**Evidence 可以有多条**"（同一句出现在两处 ⇒ 一个候选 + 合并 Evidence，§C6.7 / T-C6-12）。因此报告与审核界面只显示**第一条**来源的摘录，第二条之后的来源只有 id 与定位、没有可读文本。
+
+**修法**：`ClaimCandidateLine`（报告）与 `CandidateView`（CLI）的 `evidenceRefs` + `sourceLocators` + `excerpt` **三个字段合并为**
+
+```ts
+evidence: Array<{ evidenceRef: string; locator: string; excerpt: string }>
+```
+
+逐条来源一个条目，各带**自己的**定位与摘录；`candidate show`、审核输出与 Markdown dossier 都**逐条**列出（`证据 i：<id> @ <locator>` + `摘录（规范化 nfkc-lf-v1）：…`）。
+
+**验收**：`T-C6-10` 加强 —— 断言**每一条**来源都能解析回材料原文，且**每条的摘录前缀的是它自己**那一段（此前只检查第一条）；新增 **`T-C6-28`** 用重复文本样例（同句两段 ⇒ 一个候选两条来源）断言两条条目的定位与摘录**彼此不同**，且各自与自己那段片段一致。
+
+**验证**：root `tsc` 0 · research typecheck 0 · **469/469**（125 suites）· smoke PASS。
+**真实证据**（重复文本材料）：
+```
+candidate show：证据 1：ev-be8f… @ paragraph:0 / 摘录：第一段:市场规模约 500 亿元。
+                证据 2：ev-8d95… @ paragraph:1 / 摘录：第二段:另一份口径也指向同一个数字。
+Markdown      ：- 证据 1：`ev-be8f…` @ `paragraph:0`  → 摘录：第一段…
+                - 证据 2：`ev-8d95…` @ `paragraph:1`  → 摘录：第二段…
+```
+
+**End of contract（rev14: §C6.27 多来源证据展示 + §C6.26.8 `REVISE` 实现记录）.**
