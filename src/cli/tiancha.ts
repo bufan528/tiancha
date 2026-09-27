@@ -484,6 +484,8 @@ async function run(): Promise<void> {
     const artifacts = new SqliteArtifactStore({ path: artifactDbPath });
     try {
       const repo = new ResearchRepository(db.db);
+      // ★ P1 fix: ONE knowledge view shared by the human gate and the projection.
+      const knowledge = new KnowledgeRepository(db.db);
       const deps: ResearchCliDeps = {
         repo,
         evaluation: new EvaluationService(db.db),
@@ -491,7 +493,7 @@ async function run(): Promise<void> {
         reports: new ReportService(db.db),
         // ★ §29.2 (c): `knowledge` powers the orphan-Claim scan of a残骸 retry.
         materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts, {
-          knowledge: new KnowledgeRepository(db.db),
+          knowledge,
         }),
         targets: new TargetService(db.db),
         chain: new ChainProjectionService(db.db),
@@ -508,11 +510,13 @@ async function run(): Promise<void> {
         // ★ C-MVP-R1 (§29.2): the one-shot historical-material triage summary of THIS run.
         materialMigration: db.materialMigrationSummary,
         // ★ C6 slice ③: candidate review; confirmation is recorded, PROJECTION is slice ④.
-        candidates: new CandidateReviewService(repo),
+        // ★ P1 fix: the human gate judges an explicit evolution target against this same knowledge.
+        candidates: new CandidateReviewService(repo, knowledge),
         // ★ C6 slice ④: projection goes through the SAME ingestClaims path field research uses.
         projection: new CandidateProjectionService(
           repo,
           new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts),
+          knowledge,
         ),
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),

@@ -27,6 +27,7 @@ import { MaterialVersionService } from "./application/material-version-service.j
 import { CandidateExtractionService, ExplicitBlockExtractor } from "./application/candidate-extraction-service.js";
 import { CandidateReviewService } from "./application/candidate-review-service.js";
 import { CandidateProjectionService } from "./application/candidate-projection-service.js";
+import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
 import { CLAIM_ARTIFACT_TASK_ID } from "./application/opportunity-discovery-service.js";
 import { sha256Hex } from "./domain/material-source.js";
@@ -58,6 +59,8 @@ interface Env {
   db: ResearchDb;
   artifacts: ArtifactStore;
   repo: ResearchRepository;
+  knowledge: KnowledgeRepository;
+  discovery: OpportunityDiscoveryService;
   review: CandidateReviewService;
   projection: CandidateProjectionService;
   candidateIds: string[];
@@ -96,13 +99,16 @@ function env(): Env {
     .version;
   const run = new CandidateExtractionService(repo, new ExplicitBlockExtractor(repo)).run(version, AT);
   const discovery = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+  const knowledge = new KnowledgeRepository(db.db);
   const e: Env = {
     dir,
     db,
     artifacts,
     repo,
-    review: new CandidateReviewService(repo, () => AT2),
-    projection: new CandidateProjectionService(repo, discovery, () => AT3),
+    knowledge,
+    discovery,
+    review: new CandidateReviewService(repo, knowledge, () => AT2),
+    projection: new CandidateProjectionService(repo, discovery, knowledge, () => AT3),
     candidateIds: run.candidateIds,
     close() {
       const closable = artifacts as unknown as { close?: () => void };
@@ -234,6 +240,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
     const broken = new CandidateProjectionService(
       e.repo,
       new OpportunityDiscoveryService(e.repo, new EchoDataProvider(), brokenArtifacts),
+      e.knowledge,
       () => AT3,
     );
     const failed = await broken.project(id, { operator: "analyst" });
@@ -252,7 +259,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
 
   });
 
-  test("T-C6-9: SUPERSEDE cannot guess a target, and a retry may not change it", async () => {
+  test("T-C6-9: SUPERSEDE cannot guess a target — and a target that does not exist is not a decision", async () => {
     const e = env();
     const id = e.candidateIds[0];
 
@@ -266,23 +273,170 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
     assert.equal(untouched?.reservedClaimId, undefined, "nothing may be reserved by a refused decision");
     assert.equal(untouched?.projectionError, undefined);
 
-    // ★ the target is part of the DECISION: it is persisted with it...
-    e.review.confirm(id, {
-      operator: "analyst",
-      relation: "SUPERSEDE",
-      supersedesClaimRef: "artifact:claim/claim-old",
-    });
-    assert.equal(e.repo.getClaimCandidate(id)?.supersededClaimRef, "artifact:claim/claim-old");
+    // ★ P1 fix: a non-empty but NON-EXISTENT target is refused as well. Before this check the
+    // decision was accepted, the projection "succeeded", and the candidate was closed as
+    // `finalized` while no belief had ever been replaced.
+    assert.throws(
+      () =>
+        e.review.confirm(id, {
+          operator: "analyst",
+          relation: "SUPERSEDE",
+          supersedesClaimRef: "artifact:claim/claim-old",
+        }),
+      /TARGET_NOT_FOUND|does not exist/,
+    );
+    const after = e.repo.getClaimCandidate(id);
+    assert.equal(after?.reviewStatus, "draft", "an impossible evolution leaves the candidate undecided");
+    assert.equal(after?.decisionRelation, undefined, "no relation is recorded");
+    assert.equal(after?.supersededClaimRef, undefined, "no target is persisted");
+  });
 
-    // ...and a retry may not quietly re-choose it
+  /** Build a REAL, confirmed belief on the subject through the SAME `ingestClaims` path. */
+  async function seedClaim(e: Env, claimId: string, dimension: string, statement: string): Promise<string> {
+    await e.discovery.ingestClaims({
+      subjectKind: "industry",
+      subjectId: "ind-c6",
+      claims: [{ statement, dimension }],
+      claimIds: [claimId],
+      sourceId: `src-${claimId}`,
+      runId: `run-${claimId}`,
+    });
+    return `artifact:claim/${claimId}`;
+  }
+
+  test("T-C6-14: a SUPERSEDE against a REAL target really evolves it, and the target may not be re-pointed", async () => {
+    const e = env();
+    const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
+    const knowledgeId = e.knowledge.findKnowledgeBySubject("industry", "ind-c6")?.knowledgeId ?? "";
+    const target = e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, oldRef);
+    assert.ok(target !== undefined, "the seeded target exists");
+    assert.equal(target.state, "confirmed", "and it is current");
+
+    const id = e.candidateIds[0];
+    e.review.confirm(id, { operator: "analyst", relation: "SUPERSEDE", supersedesClaimRef: oldRef });
+    assert.equal(e.repo.getClaimCandidate(id)?.supersededClaimRef, oldRef);
+
+    // ★ the target is part of the DECISION: a retry may not quietly re-choose it
     await assert.rejects(
       () => e.projection.project(id, { operator: "analyst", supersedesClaimRef: "artifact:claim/claim-other" }),
       /may not change the decision/,
     );
 
-    // using the STORED target works
     const result = await e.projection.project(id, { operator: "analyst" });
     assert.equal(result.status, "projected");
+    assert.equal(e.repo.getClaimCandidate(id)?.projectionStatus, "finalized");
+
+    // ★ the evolution REALLY happened: the target left the current set, and the new belief carries
+    // exactly this candidate's claim ref (not merely "nothing threw").
+    const afterTarget = e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, oldRef);
+    assert.ok(afterTarget !== undefined);
+    assert.notEqual(afterTarget.state, "confirmed", "the superseded belief is no longer current");
+    const fresh = e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, result.claimRef ?? "");
+    assert.ok(fresh !== undefined, "a belief carrying this candidate's claim ref was written");
+    assert.equal(fresh.state, "confirmed");
+  });
+
+  test("T-C6-15: a target living on ANOTHER dimension is refused at decision time", async () => {
+    const e = env();
+    const wrongDimensionRef = await seedClaim(e, "claim-demand-1", "demand", "需求侧：客户开始采购");
+
+    const id = e.candidateIds[0]; // its dimension is `market`
+    assert.throws(
+      () =>
+        e.review.confirm(id, {
+          operator: "analyst",
+          relation: "SUPERSEDE",
+          supersedesClaimRef: wrongDimensionRef,
+        }),
+      /TARGET_DIMENSION_MISMATCH|DIFFERENT dimension/,
+    );
+    assert.equal(e.repo.getClaimCandidate(id)?.reviewStatus, "draft");
+  });
+
+  test("T-C6-16: a target that is no longer evolvable is refused at decision time", async () => {
+    const e = env();
+    const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
+    // consume the target: another claim supersedes it ⇒ its state stops being evolvable
+    await e.discovery.ingestClaims({
+      subjectKind: "industry",
+      subjectId: "ind-c6",
+      claims: [
+        {
+          statement: "更新结论：市场规模约 120 亿元",
+          dimension: "market",
+          relationHint: { kind: "SUPERSEDE", supersedesClaimRef: oldRef },
+        },
+      ],
+      claimIds: ["claim-new-1"],
+      sourceId: "src-claim-new-1",
+      runId: "run-claim-new-1",
+    });
+    const knowledgeId = e.knowledge.findKnowledgeBySubject("industry", "ind-c6")?.knowledgeId ?? "";
+    const consumed = e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, oldRef);
+    assert.ok(consumed !== undefined);
+    assert.notEqual(consumed.state, "confirmed", "the target has already been evolved away");
+
+    const id = e.candidateIds[0];
+    assert.throws(
+      () => e.review.confirm(id, { operator: "analyst", relation: "SUPERSEDE", supersedesClaimRef: oldRef }),
+      /TARGET_STATE_NOT_EVOLVABLE|not in an evolvable state/,
+    );
+    assert.equal(e.repo.getClaimCandidate(id)?.reviewStatus, "draft");
+  });
+
+  test("T-C6-17: if the target stops being evolvable AFTER the decision, the projection fails — never 'finalized'", async () => {
+    const e = env();
+    const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
+
+    const id = e.candidateIds[0];
+    // legal AT DECISION TIME
+    e.review.confirm(id, { operator: "analyst", relation: "SUPERSEDE", supersedesClaimRef: oldRef });
+    assert.equal(e.repo.getClaimCandidate(id)?.projectionStatus, "none");
+
+    // ★ the knowledge moves AFTER the decision: someone else supersedes the target first
+    await e.discovery.ingestClaims({
+      subjectKind: "industry",
+      subjectId: "ind-c6",
+      claims: [
+        {
+          statement: "更新结论：市场规模约 120 亿元",
+          dimension: "market",
+          relationHint: { kind: "SUPERSEDE", supersedesClaimRef: oldRef },
+        },
+      ],
+      claimIds: ["claim-new-1"],
+      sourceId: "src-claim-new-1",
+      runId: "run-claim-new-1",
+    });
+
+    await assert.rejects(() => e.projection.project(id, { operator: "analyst" }), /cannot project SUPERSEDE/);
+
+    const row = e.repo.getClaimCandidate(id);
+    assert.notEqual(row?.projectionStatus, "finalized", "an impossible evolution is never closed as done");
+    assert.equal(row?.confirmedClaimRef, undefined, "no claim ref is recorded");
+    assert.match(row?.projectionError ?? "", /TARGET_STATE_NOT_EVOLVABLE|not in an evolvable state/);
+  });
+
+  test("T-C6-18: a relation the knowledge side REFUSES is reported as failed, not as a success", async () => {
+    const e = env();
+    await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
+
+    const id = e.candidateIds[0];
+    // A bare REVISE carries no revises-claim target, so the knowledge projection REFUSES it by
+    // returning `SKIPPED / INVALID_EVOLUTION_TARGET` — a return value, not an exception. The
+    // projection must surface that instead of closing the candidate `finalized`.
+    e.review.confirm(id, { operator: "analyst", relation: "REVISE" });
+
+    const result = await e.projection.project(id, { operator: "analyst" });
+    assert.equal(result.status, "failed", "the refusal is surfaced");
+    const row = e.repo.getClaimCandidate(id);
+    assert.equal(row?.projectionStatus, "claim_written", "it stops before the P4 backfill");
+    assert.equal(row?.confirmedClaimRef, undefined);
+    assert.match(row?.projectionError ?? "", /produced no belief/);
+    // ★ the Claim artifact itself WAS written — the failure is about the projection, not the write
+    assert.ok((await e.artifacts.get(String(row?.reservedClaimId))) !== undefined);
+    // ★ and the candidate is still visible as unfinished work, never closed as done
+    assert.notEqual(String(row?.projectionStatus), "finalized");
   });
 
   test("a rejected candidate is never projectable, and two candidates project independently", async () => {

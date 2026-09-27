@@ -24,6 +24,7 @@ import { MaterialVersionService } from "./application/material-version-service.j
 import { CandidateExtractionService, ExplicitBlockExtractor } from "./application/candidate-extraction-service.js";
 import { CandidateReviewService } from "./application/candidate-review-service.js";
 import { CandidateProjectionService } from "./application/candidate-projection-service.js";
+import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
 import { EvaluationService } from "./application/evaluation-service.js";
 import { ReportService } from "./application/report-service.js";
@@ -113,8 +114,8 @@ async function env(): Promise<Env> {
     dir,
     db,
     repo,
-    review: new CandidateReviewService(repo, () => AT2),
-    projection: new CandidateProjectionService(repo, discovery, () => AT3),
+    review: new CandidateReviewService(repo, new KnowledgeRepository(db.db), () => AT2),
+    projection: new CandidateProjectionService(repo, discovery, new KnowledgeRepository(db.db), () => AT3),
     discovery,
     industryId: industry.industryId,
     candidateIds: run.candidateIds,

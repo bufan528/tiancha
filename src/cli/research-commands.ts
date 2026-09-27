@@ -80,6 +80,7 @@ import {
 import { renderDossierMarkdown, reportFileName } from "./report-markdown.js";
 // ★ C6 slice ③: the human gate for claim candidates (no projection lives here).
 import { CandidateReviewService, type ClaimCandidate } from "@tiancha/research";
+import { KnowledgeRepository } from "@tiancha/research";
 import { CandidateProjectionService } from "@tiancha/research";
 import { locatorKey } from "@tiancha/research";
 import {
@@ -1175,7 +1176,10 @@ function dimensionNames(deps: ResearchCliDeps): Record<string, string> {
 
 /** The review service: injected by the host, or constructed on demand (keeps test wiring unchanged). */
 function reviewOf(deps: ResearchCliDeps): CandidateReviewService {
-  return deps.candidates === undefined ? new CandidateReviewService(deps.repo) : deps.candidates;
+  return deps.candidates === undefined
+    ? // ★ P1 fix: the on-demand fallback needs the knowledge view too (evolution-target validation).
+      new CandidateReviewService(deps.repo, new KnowledgeRepository(deps.repo.db))
+    : deps.candidates;
 }
 
 export interface CandidateListOptions {

@@ -32,6 +32,7 @@ import { currentPreparationView, currentQuestions, retiredQuestions } from "@tia
 // constructs the same implementation when it is not injected).
 import { ActiveRequirementResolver, positionCoverages, ResearchPlanService } from "@tiancha/research";
 import { CandidateReviewService } from "@tiancha/research";
+import { KnowledgeRepository } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
@@ -101,7 +102,9 @@ export function buildResearchTools(deps: ResearchToolDeps) {
   } = deps;
 
   // ★ C6 slice ③: candidates are PROPOSALS; the Agent may only LOOK at them.
-  const candidateReview = new CandidateReviewService(repo);
+  // ★ P1 fix: the review service also needs the knowledge view (it validates an explicit
+  // evolution target when a human decides, before anything is written).
+  const candidateReview = new CandidateReviewService(repo, new KnowledgeRepository(repo.db));
 
   const research_industry_show = defineTool({
     name: "research_industry_show",

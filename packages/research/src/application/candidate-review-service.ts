@@ -24,6 +24,8 @@ import {
   type ClaimCandidate,
 } from "../domain/claim-candidate.js";
 import type { ResearchRepository } from "../storage/research-repository.js";
+import type { KnowledgeRepository } from "../storage/knowledge-repository.js";
+import { checkEvolutionTarget, evolutionTargetRefusalMessage } from "./evolution-target.js";
 
 export class CandidateReviewError extends Error {}
 
@@ -62,6 +64,13 @@ const RELATIONS: CandidateRelation[] = ["SUPPORT", "REVISE", "CONFLICT", "SUPERS
 export class CandidateReviewService {
   constructor(
     private readonly repo: ResearchRepository,
+    /**
+     * ★ P1 fix: the decision judges an explicit evolution target against the SAME knowledge the
+     * projection will evolve. A target that cannot evolve is refused HERE — the projection's
+     * `SKIPPED / INVALID_EVOLUTION_TARGET` is a return value, not an exception, so relying on it
+     * alone let an impossible SUPERSEDE be recorded as done.
+     */
+    private readonly knowledge: KnowledgeRepository,
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
@@ -101,6 +110,24 @@ export class CandidateReviewService {
       );
     }
     const before = this.requireDraft(candidateId, "confirm");
+    // ★ P1 fix: a SUPERSEDE decision is only a decision if the target can really be superseded.
+    // Validating HERE keeps `confirm` honest (and — because this runs before `apply` — leaves the
+    // candidate a draft with nothing reserved when it is refused). The projection re-validates
+    // before writing, because the knowledge may move between the decision and the projection.
+    if (input.relation === "SUPERSEDE" && input.supersedesClaimRef !== undefined) {
+      const check = checkEvolutionTarget({
+        knowledge: this.knowledge,
+        subjectKind: before.subjectKind,
+        subjectId: before.subjectId,
+        dimension: before.dimension,
+        targetClaimRef: input.supersedesClaimRef,
+      });
+      if (!check.ok) {
+        throw new CandidateReviewError(
+          `cannot confirm SUPERSEDE: ${evolutionTargetRefusalMessage(check.reason, input.supersedesClaimRef)}`,
+        );
+      }
+    }
     const at = input.at ?? this.now();
     const after: ClaimCandidate = {
       ...before,

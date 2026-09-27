@@ -23,6 +23,9 @@ import {
 } from "../domain/claim-candidate.js";
 import type { OpportunityDiscoveryService } from "./opportunity-discovery-service.js";
 import type { ResearchRepository } from "../storage/research-repository.js";
+import type { KnowledgeRepository } from "../storage/knowledge-repository.js";
+import { checkEvolutionTarget, evolutionTargetRefusalMessage } from "./evolution-target.js";
+import { normalizeClaimRef } from "./knowledge-projection-service.js";
 
 export class CandidateProjectionError extends Error {}
 
@@ -69,6 +72,14 @@ export class CandidateProjectionService {
   constructor(
     private readonly repo: ResearchRepository,
     private readonly discovery: OpportunityDiscoveryService,
+    /**
+     * ★ P1 fix: the knowledge side of the SAME DB. Two uses:
+     *   ① re-validate an explicit evolution target BEFORE reserving anything;
+     *   ② after the write, VERIFY the belief really exists — `projectFromClaim` reports a refusal
+     *      by RETURNING `SKIPPED` instead of throwing, so a missing check here used to close the
+     *      candidate as `finalized` while nothing had evolved.
+     */
+    private readonly knowledge: KnowledgeRepository,
     private readonly now: () => string = () => new Date().toISOString(),
   ) {}
 
@@ -114,6 +125,26 @@ export class CandidateProjectionService {
       candidate.decisionRelation as CandidateRelation,
       storedSupersedes ?? input.supersedesClaimRef,
     );
+
+    // ★ P1 fix ①: re-validate an EXPLICIT evolution target against the LIVE knowledge. The decision
+    // validated it too, but the knowledge may have moved since — and `projectFromClaim` reports a
+    // bad target by RETURNING `SKIPPED / INVALID_EVOLUTION_TARGET`, which is not an exception, so a
+    // stale target would otherwise be recorded as a successful projection.
+    if (hint.kind === "SUPERSEDE") {
+      const check = checkEvolutionTarget({
+        knowledge: this.knowledge,
+        subjectKind: candidate.subjectKind,
+        subjectId: candidate.subjectId,
+        dimension: candidate.dimension,
+        targetClaimRef: hint.supersedesClaimRef,
+      });
+      if (!check.ok) {
+        const message = `cannot project SUPERSEDE: ${evolutionTargetRefusalMessage(check.reason, hint.supersedesClaimRef)}`;
+        // keep the reason on the row for the operator, but never close it as done
+        this.repo.updateCandidateProjection(candidateId, { projectionError: message });
+        throw new CandidateProjectionError(message);
+      }
+    }
 
     // P1 — reserve a STABLE claim id (persisted before any cross-DB write, §C6.17)
     let reserved = candidate.reservedClaimId;
@@ -164,6 +195,25 @@ export class CandidateProjectionService {
       // ★ the stored ref uses the project-wide claimRef SHAPE (artifact:claim/<id>) so downstream
       // consumers can use it as-is; `reservedClaimId` keeps the bare artifact id.
       const claimRef = `${CLAIM_REF_PREFIX}${reserved}`;
+
+      // ★ P1 fix ②: VERIFY the projection really took effect before closing the candidate.
+      // `projectFromClaim` reports a refusal by RETURNING `SKIPPED / INVALID_EVOLUTION_TARGET` (or
+      // `SKIPPED / OPEN_CONFLICT_REQUIRES_REVIEW`) instead of throwing, and `ingestClaims` does not
+      // propagate that result. The only proof of a real projection is a belief that carries THIS
+      // candidate's claim ref — so a skip is surfaced as a failed projection and the candidate stops
+      // at `claim_written` (never `finalized`). A genuine re-run still resolves to `ALREADY_PROJECTED`
+      // and finds the belief ⇒ idempotent recovery is unaffected (§C6.17).
+      if (this.findProjectedBelief(candidate.subjectKind, candidate.subjectId, reserved) === undefined) {
+        const message =
+          `${claimRef} produced no belief — the knowledge side refused the claim ` +
+          `(decision relation ${String(candidate.decisionRelation)}); the candidate is NOT finalized`;
+        this.repo.updateCandidateProjection(candidateId, {
+          projectionStatus: "claim_written",
+          projectionError: message,
+        });
+        return { status: "failed", error: message, candidate: this.requireCandidate(candidateId) };
+      }
+
       this.repo.updateCandidateProjection(candidateId, {
         projectionStatus: "finalized",
         confirmedClaimRef: claimRef,
@@ -179,6 +229,17 @@ export class CandidateProjectionService {
   /** The real Claim ref this candidate became, if any (candidate → Claim traceability). */
   claimRefOf(candidateId: string): string | undefined {
     return this.repo.getClaimCandidate(candidateId)?.confirmedClaimRef;
+  }
+
+  /**
+   * ★ P1 fix: is the claim actually IN knowledge? `projectFromClaim` returns a skip instead of
+   * throwing, so the belief's existence — not the absence of an exception — is the evidence that a
+   * projection took effect.
+   */
+  private findProjectedBelief(subjectKind: string, subjectId: string, claimId: string) {
+    const knowledgeId = this.knowledge.findKnowledgeBySubject(subjectKind, subjectId)?.knowledgeId;
+    if (knowledgeId === undefined) return undefined;
+    return this.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, normalizeClaimRef(claimId));
   }
 
   private requireCandidate(candidateId: string): ClaimCandidate {

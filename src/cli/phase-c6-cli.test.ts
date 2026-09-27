@@ -23,6 +23,7 @@ import { ResearchRepository } from "@tiancha/research";
 import { MaterialVersionService } from "@tiancha/research";
 import { CandidateExtractionService, ExplicitBlockExtractor } from "@tiancha/research";
 import { CandidateReviewService, CandidateReviewError } from "@tiancha/research";
+import { KnowledgeRepository } from "@tiancha/research";
 import { isProjectable } from "@tiancha/research";
 import { sha256Hex } from "@tiancha/research";
 
@@ -84,7 +85,7 @@ function env(): Env {
   return {
     db,
     repo,
-    review: new CandidateReviewService(repo, () => AT4),
+    review: new CandidateReviewService(repo, new KnowledgeRepository(db.db), () => AT4),
     candidateIds: run.candidateIds,
     industryId: "ind-1",
   };
