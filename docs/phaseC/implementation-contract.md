@@ -2275,6 +2275,53 @@ unconfirmedClaimRefs(subjectId) =
 | mutation | 去掉 `unconfirmedClaimRefs` 过滤 | T-R1-16 必须转红 |
 | mutation | 把判断改成"一律过滤" | T-R1-17 必须转红 |
 
-**End of §29（rev7: §29.14 5a 落地）.**
+## §29.15 复核修正 2（2026-09-26，验收者指出后）
+
+> ⚠️ 追加记录。§29.0 – §29.14 原文**一字未改**。
+
+### §29.15.1 缺陷 3 — "已投影、账本尚未更新"的窗口会把 Claim 算成已确认（**已修**）
+
+`ingestClaims` 的顺序是 `put artifact → 回调(artifact_written) → projectFromClaim → 回调(projected)`；
+而 `claimRefs` 在回调里才写。因此"**投影成功、回调之前**崩溃"会让该 Claim 既在 Knowledge 里、又**不在** `claimRefs` 里 ⇒ `unconfirmedClaimRefs()` 看不见它 ⇒ 报告 / 评价把它算作**已确认证据**。
+
+**修正**：`material-confirmation.ts` 改为 `materialEvidenceIndex()`，未确认集合 = **未完成材料所拥有的全部 claim id**：
+
+```text
+unconfirmed = ∪_{m: status ≠ completed} ( m.claimRefs ∪ { b.claimId | b ∈ m.ingestBlocks } )
+confirmed   = ∪_{m: status = completed} m.claimRefs
+```
+
+* 账本（P1 预留）**从认领那一刻**就记录了该材料拥有的每个 `claimId` ⇒ 任何"投影成功但未记账"的 Claim 都已经是**未确认**，而不是"查不到 ⇒ 算已确认"。
+* 新增唯一判定谓词 `isUnconfirmedEvidence(index, claimRef)`，报告与评价**共用**它（避免两处口径漂移）。
+
+### §29.15.2 缺陷 4 — 残骸的遗留 Claim 无法归因时**保守降级**（**已修**）
+
+迁移残骸（`legacy_failed`）的旧 Claim 是**随机 id、无账本**，从材料侧**无法枚举**。若不管它，这些 Claim 会被算作已确认。
+
+**修正（保守）**：只要该 subject 存在 `legacy_failed` 残骸（`hasResidual = true`），则
+**"不能正面归因到某个 `completed` 材料"的 Claim 一律视为未确认**。
+代价（已知、可接受）：该 subject 上**非材料来源**（CLI 直接回填）的 Claim 也会被暂时排除在汇总之外 —— 方向是"宁可不计入"，不是"误计入"。残骸解决后（`completed` / 人工删除）即恢复。
+
+### §29.15.3 缺陷 5 — 孤儿扫描的两个漏洞（**已修**）
+
+| 漏洞 | 修正 |
+|---|---|
+| 只从 beliefs 找 ⇒ **"只写了 artifact、尚未投影"**的残骸发现不了（重试会新建重复 Claim、破坏独立来源） | 扫描源改为 **两份并集**：① `artifactStore.listByTask(CLAIM_ARTIFACT_TASK_ID)`（该 pipe 写下的**全部** Claim artifact，按 `blob.subjectId` 过滤）② 该 subject 的 beliefs 指向的 Claim。`CLAIM_ARTIFACT_TASK_ID` 提为导出常量，`ingestClaims` 与扫描**共用**同一值（避免漂移） |
+| 仅凭 `statement` 匹配 ⇒ 可能复用到**另一份材料**的同文 Claim，把两个独立来源合并成一个 | **唯一匹配才复用**；命中 ≥ 2 个候选 ⇒ 抛 `OrphanClaimAmbiguous` ⇒ `retry` 返回 `failed` + `error = "ORPHAN_CLAIM_AMBIGUOUS"`，**交给人工**（绝不猜） |
+
+### §29.15.4 验收（本次新增）
+
+| # | 场景 | 期望 |
+|---|---|---|
+| **T-R1-18** | 在 `artifact_written` 与 `projected` 之间注入失败（投影成功但账本未更新） | 该 Claim **不在** `recentEvidence` / `evidenceRefs`；仍在 `unconfirmedEvidenceRefs` 侧（或两桶都不含，但**绝不**算已确认） |
+| **T-R1-19** | subject 上存在 `legacy_failed` 残骸、其遗留 Claim 已进 belief | 该 Claim **不被**算作已确认（`hasResidual` 保守降级生效） |
+| **T-R1-20** | 残骸的 Claim **只写进 artifact、从未投影**（无 belief） | 重试时被**发现并复用**（`claim_refs` 等于那个既有 id；artifacts 仍一份） |
+| **T-R1-21** | 同一 subject 有**两份内容相同**的既有 Claim（歧义） | 重试**明确失败**（`ORPHAN_CLAIM_AMBIGUOUS`），**不**猜、**不**合并 |
+| mutation | 未确认集合退回只看 `claimRefs` | T-R1-18 必须转红 |
+| mutation | 去掉 `hasResidual` 降级 | T-R1-19 必须转红 |
+| mutation | 去掉 artifact-only 扫描源 | T-R1-20 必须转红 |
+| mutation | 歧义时取第一个候选 | T-R1-21 必须转红 |
+
+**End of §29（rev8: §29.15 复核修正 2）.**
 
 
