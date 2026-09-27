@@ -2322,6 +2322,46 @@ confirmed   = ∪_{m: status = completed} m.claimRefs
 | mutation | 去掉 artifact-only 扫描源 | T-R1-20 必须转红 |
 | mutation | 歧义时取第一个候选 | T-R1-21 必须转红 |
 
-**End of §29（rev8: §29.15 复核修正 2）.**
+## §29.16 复核修正 3（2026-09-26，验收者指出后）
+
+> ⚠️ 追加记录。§29.0 – §29.15 原文**一字未改**。本节**推翻** §29.15.3 的"按内容复用"。
+
+### §29.16.1 缺陷 6 — "同文候选"不是归属证据 ⇒ **取消按内容复用**（**已修**）
+
+§29.15.3 让孤儿扫描在"内容唯一匹配"时**采纳**既有 `claimId`。这是**错的**：
+两份**不同材料**完全可能写同一句话（"市场规模约 500 亿元"），它们仍是**两个独立来源**。
+采纳其一 ⇒ 另一份材料没有自己的 Claim ⇒ **静默破坏 `independentSources`**，而这正是本契约反复守护的口径。
+
+**修正**：孤儿扫描从"复用器"降级为**检测器**（`detectOrphanOverlap`）：
+
+* 扫描源不变（该 pipe 写下的**全部** Claim artifact ∪ 该 subject 的 beliefs）；
+* **从不改写账本**，**从不采纳**既有 id —— 材料始终使用**自己新预留**的 claim ids（provenance 诚实）；
+* 仅当同一内容存在 **≥ 2** 个既有 Claim（**歧义**）时才升级为错误，交人工判定（§29.16.2）。
+
+> 由此，§29.2 (c) 的"多护孤儿 Claim 并**复用**"措辞被本节**覆盖**为："检测重叠、**不推断归属**；歧义交人工"。
+
+### §29.16.2 缺陷 7 — 歧义失败后残骸失去保守过滤（**已修**）
+
+歧义在 `run()` 里抛出后，通用失败分支写的是 `failed`；而 `materialEvidenceIndex()` **只在 `legacy_failed` 时**置 `hasResidual`。
+于是"Artifact-only 残骸"（**没有旧 material 行**、旧 Claim 已有 belief）在失败后既不在 `unconfirmed`、也不触发降级 ⇒ **仍可能被算作已确认证据**。
+
+**修正**：歧义失败写 **`ingestStatus = 'legacy_failed'`**（`ingestStage = 'migration'`，`ingestError = ORPHAN_CLAIM_AMBIGUOUS…`）。
+⇒ 该 subject 立即进入"残骸保守降级"（§29.15.2）⇒ 一切**不能正面归因到 `completed` 材料**的 Claim（包括那些旧的、带 belief 的候选）**不再计入已确认汇总**，直到人工处理。
+
+**`legacy_failed` 的语义**（本节明确）：**"需要人工复核的失败残骸"**，来源两种 ——
+① 一次性迁移的三分判定 (c)；② 导入/重试时发现**无法归属的歧义重叠**。
+
+### §29.16.3 验收（本次新增/修订）
+
+| # | 场景 | 期望 |
+|---|---|---|
+| **T-R1-15（改写）** | 同一 subject 下**两份不同材料**含相同 statement，候选**仅一个** | **保留两个来源 ID**：两份材料各自持有自己的 claim ids（互不包含）；beliefs = 2×块数；**绝不合并** |
+| **T-R1-20（改写）** | 残骸的 Claim **只写进 artifact、从未投影** | 被发现（不误合并），但**不采纳**：新材料仍用自己的 ids；既有 artifact 未被改写 |
+| **T-R1-21（增强）** | 同内容 **≥2** 个既有 Claim（歧义） | 明确失败 `ORPHAN_CLAIM_AMBIGUOUS`；**失败后仍可识别**（`ingestStatus = legacy_failed`）⇒ 旧 Claim **不再**出现在 `recentEvidence` / `evidenceRefs` |
+| **T-R1-22（新增）** | 残骸（`legacy_failed`）retry 时遇到无法归属的同文候选 | **不采纳**（保留新材料自己的 id）；只有歧义才失败 |
+| mutation | 恢复"唯一匹配即采纳" | T-R1-15 必须转红 |
+| mutation | 歧义失败写 `failed` 而非 `legacy_failed` | T-R1-21 必须转红 |
+
+**End of §29（rev9: §29.16 复核修正 3）.**
 
 
