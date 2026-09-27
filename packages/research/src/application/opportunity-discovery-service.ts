@@ -40,6 +40,12 @@ import type { ResearchRepository } from "../storage/research-repository.js";
 import type { ArtifactStore } from "../storage/artifact-store.js";
 import type { DataProviderPort } from "../ports/data-provider.port.js";
 
+/**
+ * ★ §29.15: the artifact `taskId` under which this pipe writes EVERY claim. The orphan scan uses it
+ * to find Claims that reached `artifacts.sqlite` but were never projected into Knowledge.
+ */
+export const CLAIM_ARTIFACT_TASK_ID = "field-research-ingest";
+
 export interface IngestMaterialInput {
   materialText: string;
   industryName: string;
@@ -339,7 +345,7 @@ export class OpportunityDiscoveryService {
           schemaVersion: "2",
           ref: { artifactId: claim.claimId, kind: "claim", locator: { type: "sqlite", id: claim.claimId } },
           createdAt: nowIso,
-          taskId: "field-research-ingest",
+          taskId: CLAIM_ARTIFACT_TASK_ID,
           attemptId: "ingest-claims",
           runId,
         },

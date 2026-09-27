@@ -26,7 +26,7 @@ import type { ResearchRepository } from "../storage/research-repository.js";
 import type { ArtifactStore } from "../storage/artifact-store.js";
 import type { KnowledgeRepository } from "../storage/knowledge-repository.js";
 import type { DataProviderPort } from "../ports/data-provider.port.js";
-import { OpportunityDiscoveryService } from "./opportunity-discovery-service.js";
+import { CLAIM_ARTIFACT_TASK_ID, OpportunityDiscoveryService } from "./opportunity-discovery-service.js";
 import { PARSER_VERSION, parseClaims } from "../domain/material-parser.js";
 import { blockHash, ingestIdFor } from "../domain/material.js";
 import type {
@@ -78,6 +78,20 @@ type MaterialSourceType =
   | "public"
   | "third_party"
   | "user_judgment";
+
+/**
+ * ★ §29.15: thrown when a残骸's orphan scan cannot decide which existing Claim a block belongs to.
+ * We NEVER guess: merging two sources would silently break "independent sources".
+ */
+export class OrphanClaimAmbiguous extends Error {
+  constructor(materialId: string, statement: string, candidates: number) {
+    super(
+      `ORPHAN_CLAIM_AMBIGUOUS: material '${materialId}' has ${candidates} existing Claims that match ` +
+        `the same content (${JSON.stringify(statement.slice(0, 60))}); an operator must decide.`,
+    );
+    this.name = "OrphanClaimAmbiguous";
+  }
+}
 
 /** Thrown when a progress write is refused because the fencing generation no longer matches. */
 export class IngestLeaseLost extends Error {
@@ -150,11 +164,7 @@ export class MaterialIngestService {
 
     if (legacy || completed) {
       const terminal = (legacy ?? completed)!;
-      const base = this.ledgerFor(terminal, parsed.claims);
-      const ledger =
-        terminal.ingestBlocks.length === 0
-          ? await this.detectOrphans(terminal, parsed.claims, base)
-          : base;
+      const ledger = this.ledgerFor(terminal, parsed.claims);
       return this.run(
         terminal,
         ledger,
@@ -236,9 +246,7 @@ export class MaterialIngestService {
       return { outcome: "failed", material, stage: "migration", error: "LEGACY_PARTIAL_IMPORT" };
     }
     const parsed = parseClaims(material.rawText);
-    const base = this.ledgerFor(material, parsed.claims);
-    const ledger =
-      material.ingestBlocks.length === 0 ? await this.detectOrphans(material, parsed.claims, base) : base;
+    const ledger = this.ledgerFor(material, parsed.claims);
     return this.run(
       material,
       ledger,
@@ -285,6 +293,23 @@ export class MaterialIngestService {
 
     let progress = ledger;
     try {
+      // ★ §29.15 (review round 2): the orphan scan runs HERE, not at the call sites, and for ANY
+      // attempt whose ledger is still entirely `reserved` — which includes a BRAND-NEW material,
+      // because the pre-R1 pipe wrote Claims for a subject before any `material` row existed at all.
+      // (A resume, or a `--force` re-run, already holds ids it must reuse, so it is skipped.)
+      if (progress.length > 0 && progress.every((b) => b.state === "reserved")) {
+        progress = await this.detectOrphans(material, parsed.claims, progress);
+        this.write(material, generation, {
+          ingestStatus: "projecting",
+          ingestStage: "projecting",
+          ingestError: null,
+          ingestBlocks: progress,
+          claimRefs: projectedRefs(progress),
+          ingestOwner: this.ownerId,
+          ingestLeaseUntil: this.leaseUntil(),
+        });
+      }
+
       // No valid block ⇒ nothing to project, and the import IS complete (§29.2 (b)).
       if (progress.length === 0) {
         this.write(material, generation, {
@@ -395,24 +420,52 @@ export class MaterialIngestService {
   ): Promise<MaterialIngestBlock[]> {
     const knowledge = this.knowledge;
     if (!knowledge || ledger.length === 0) return ledger;
-    const k = knowledge.findKnowledgeBySubject(material.subjectKind, material.subjectId);
-    if (!k) return ledger;
 
-    const reusedByStatement = new Map<string, string>();
-    for (const belief of knowledge.listBeliefs(k.knowledgeId)) {
-      const claimId = claimIdFromRef(belief.claimRef);
-      if (!claimId) continue;
-      const record = await this.artifactStore.get(claimId);
-      const blob = record?.blob as { statement?: string } | undefined;
-      if (blob?.statement) reusedByStatement.set(blob.statement, claimId);
+    // ★ §29.15 (review finding): TWO sources, because a pre-R1 attempt could die between the
+    // artifact write and the projection — such a Claim has NO belief and would be missed.
+    //   (a) every Claim artifact this pipe wrote for THIS subject (covers artifact-only残骸);
+    //   (b) every Claim the subject's beliefs point at (covers the projected half).
+    const candidates = new Map<string, Set<string>>();
+    const addCandidate = (statement: string | undefined, claimId: string): void => {
+      if (!statement) return;
+      const bucket = candidates.get(statement) ?? new Set<string>();
+      bucket.add(claimId);
+      candidates.set(statement, bucket);
+    };
+
+    for (const artifact of await this.artifactStore.listByTask(CLAIM_ARTIFACT_TASK_ID)) {
+      const record = await this.artifactStore.get(artifact.artifactId);
+      const blob = record?.blob as { statement?: string; subjectId?: string } | undefined;
+      if (!blob || blob.subjectId !== material.subjectId) continue;
+      addCandidate(blob.statement, artifact.artifactId);
     }
-    if (reusedByStatement.size === 0) return ledger;
+    const k = knowledge.findKnowledgeBySubject(material.subjectKind, material.subjectId);
+    if (k) {
+      for (const belief of knowledge.listBeliefs(k.knowledgeId)) {
+        const claimId = claimIdFromRef(belief.claimRef);
+        if (!claimId) continue;
+        const record = await this.artifactStore.get(claimId);
+        const blob = record?.blob as { statement?: string } | undefined;
+        addCandidate(blob?.statement, claimId);
+      }
+    }
+    if (candidates.size === 0) return ledger;
 
+    // ★ §29.15: a match is reused ONLY when it is UNAMBIGUOUS. Two Claims with the same content
+    // are two independent sources — merging them would corrupt `independentSources`. Anything
+    // ambiguous fails loudly and goes to a human (never a guess).
+    const alreadyReused = new Set<string>();
     return ledger.map((block) => {
       const statement = claims[block.blockIndex]?.statement;
-      const existing = statement ? reusedByStatement.get(statement) : undefined;
-      // Only a REAL content match is reused, and it counts as already projected ⇒ skipped.
-      return existing ? { ...block, claimId: existing, state: "projected" as const } : block;
+      const matches = statement
+        ? [...(candidates.get(statement) ?? [])].filter((id) => !alreadyReused.has(id))
+        : [];
+      if (matches.length === 0) return block;
+      if (matches.length > 1) throw new OrphanClaimAmbiguous(material.materialId, statement!, matches.length);
+      const claimId = matches[0]!;
+      alreadyReused.add(claimId);
+      // A genuine, unique content match ⇒ reuse the id and count the block as already projected.
+      return { ...block, claimId, state: "projected" as const };
     });
   }
 

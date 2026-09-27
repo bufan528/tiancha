@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { ResearchRepository } from "../storage/research-repository.js";
 import { KnowledgeRepository } from "../storage/knowledge-repository.js";
-import { unconfirmedClaimRefs } from "./material-confirmation.js";
+import { isUnconfirmedEvidence, materialEvidenceIndex } from "./material-confirmation.js";
 import { ReportRepository } from "../storage/report-repository.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 import { PriorityService } from "./priority-service.js";
@@ -160,12 +160,12 @@ export class ReportService {
     // deliberately left out of this aggregation. The section set itself is C4-A frozen; only its
     // CONTENT is corrected here. (Pool / Gap / Sufficiency keep their projected view: 5a accepts
     // partial visibility there.)
-    const unconfirmed = unconfirmedClaimRefs(repo, subjectId);
+    const evidenceIndex = materialEvidenceIndex(repo, subjectId);
     const seen = new Set<string>();
     const recentEvidence: string[] = [];
     for (const b of [...allBeliefs].sort((x, y) => (x.createdAt < y.createdAt ? 1 : x.createdAt > y.createdAt ? -1 : x.beliefId < y.beliefId ? -1 : 1))) {
       if (seen.has(b.claimRef)) continue;
-      if (unconfirmed.has(b.claimRef)) continue;
+      if (isUnconfirmedEvidence(evidenceIndex, b.claimRef)) continue;
       seen.add(b.claimRef);
       recentEvidence.push(b.claimRef);
       if (recentEvidence.length >= MAX_RECENT) break;
