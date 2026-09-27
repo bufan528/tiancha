@@ -652,7 +652,7 @@ node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
-**下一步功能**：**模型提取器实现**（普通行业报告自动进入候选层）—— 契约已起草并定稿（`docs/phaseC/c6-model-extractor-contract.md` **rev3**，**DESIGN ONLY**）；**须单独授权后实现**，随后做受控试点（先用已有试点材料建立人工核对基准，再选真实普通报告验证漏提 / 误提 / 引用错位 / 重复口径处理；合成冲突继续只用于隔离库软件测试，不冒充真实业务证据）。
+**下一步功能**：**模型提取器实现**（普通行业报告自动进入候选层）—— 契约已起草并定稿（`docs/phaseC/c6-model-extractor-contract.md` **rev4**，**DESIGN ONLY**）；**须单独授权后实现**，随后做受控试点（先用已有试点材料建立人工核对基准，再选真实普通报告验证漏提 / 误提 / 引用错位 / 重复口径处理；合成冲突继续只用于隔离库软件测试，不冒充真实业务证据）。
 > Phase B v1 的 **B1–B5 已全部完成**；**C6 五片 + 复核三项修复 + `REVISE` 目标管线 + 多来源证据展示**亦已完成（契约 §C6.18–§C6.27）。剩余：原文切片 · 模型提取器（未授权）。
 
 > **历史提醒（避免误判）**：`S1–S7`、`DATA-R1`、`C-MVP`、`Phase B v1 的 B1–B5`、`C-MVP-R1`、`C1–C5-D`、**`C6（五片 + 复核修复 + REVISE + 多来源展示）`** **均已完成**。
@@ -681,7 +681,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/phaseC/implementation-contract.md` | **Phase C 总契约**（C1 语义 / SoT 边界 / 演化 / Human Gate / 幂等 / 不变量 / 验收场景）+ **§29 = C-MVP-R1（材料导入可靠性）—— 已实现并发布**；§29.12–§29.22 为实现闭环与八轮复核修正（**检测重叠但不推断来源**、**人工登记归属**、§29.22 = 基线维护规则） |
 | `docs/phaseC/c5-implementation-contract.md` | **C5-A → C5-D 单文件谱系契约**（§19 C5-B · §20 C5-C · §21 C5-D；**§21.11 = 实现与验收闭环**） |
 | `docs/phaseC/c6-implementation-contract.md` | **C6 资料闭环契约（已实现，rev15）**：材料版本 / Fragment + 结构化定位 / Evidence / 候选 / 人工审阅 / 投影复用既有 `ingestClaims` / 报告按 `contentKind` 分流并展示**逐条来源**；**§C6.24 = 收口复核修订**，**§C6.25 = 独立复核后的三项修复**，**§C6.26 = `REVISE` 目标契约与实现记录（D-C6-G）**，**§C6.27 = 多来源证据展示**，**§C6.28 = 模型提取器契约索引** |
-| `docs/phaseC/c6-model-extractor-contract.md` | **C6 模型提取器契约（rev3，DESIGN ONLY —— 实现未授权）**：D-C6-H 窗口分批（**分隔符归前窗、恰好覆盖全文**、单位 UTF-16 code unit、规则进身份）· D-C6-I 模型只给引用文本与位置、**引文即 Fragment**（精确 `char_range`）、ID 由天查生成、引用不成立则整次失败 · D-C6-J 异步 + 全成或全败单事务 + **已有成功运行则复用不重调** + 不覆盖已审核候选；含 §M9 改动清单与 T-C6-29…T-C6-37 验收 |
+| `docs/phaseC/c6-model-extractor-contract.md` | **C6 模型提取器契约（rev4，DESIGN ONLY —— 实现未授权）**：D-C6-H 窗口分批（**分隔符归前窗、恰好覆盖全文**、单位 UTF-16 code unit、规则进身份）· D-C6-I 模型只给引用文本与位置、**引文即 Fragment**（精确 `char_range`）、ID 由天查生成、引用不成立则整次失败 · D-C6-J 异步 + 全成或全败单事务 + **已有成功运行则复用不重调** + 不覆盖已审核候选；含 §M9 改动清单与 T-C6-29…T-C6-37 验收 |
 | `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
 | `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
 | `docs/architecture-review/01/02/03-*` | 早期 Gap Report / Blueprint v2 / v2.1-final-lock / rebaseline v3.1（**历史，部分过时**） |
@@ -720,7 +720,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | **C-MVP-R1**（材料导入可靠性） | ✅ 契约 §29 rev16 | ✅ | ✅（T-R1-1…T-R1-28 + **Agent 工具面**：两进程并发、fencing、同文不合并、artifact-only 重叠、歧义失败且可识别、单条无法归属重叠的保守降级、标记粘性、人工归属闭环及其 5 项写入前校验、5a 证据拆分、5a 崩溃窗口） | ❌ | **真实库仍未用过材料导入**（`material` = 0 行） |
 | C6（资料闭环：Material → MaterialVersion → Fragment → Evidence → 候选 → Claim；**规则路径，无 LLM**） | ✅ | ✅ | ✅ | ❌ | 真实库 `material` = 0 行 ⇒ 从未在真实库用过；**五片已交付 + 独立复核三项修复**（契约 §C6.18–§C6.25） |
 | C6 `REVISE` 目标管线（D-C6-G）+ **多来源证据展示** | ✅ | ✅ | ✅ | ❌ | 必须显式 `--revises-claim <claimRef>`，**不得自动选择**；目标变 `revised`（**非** `superseded`）；候选的**每个**来源各自带定位与摘录（契约 §C6.26.8 / §C6.27） |
-| **C6 模型提取器**（普通报告自动进候选层） | ✅ 契约 `c6-model-extractor-contract.md` **rev3** | ❌ | ❌ | ❌ | **实现未授权**；契约定稿后单独授权（改动清单见该契约 §M9：分块器/方法论/引文上限进身份 + `extraction_run` 审计加列 + `extract()`/`run()` 异步化 + 单事务收口 + 不再重调模型 + 不追加已审核候选 + 审核界面显示 `stance`）；**当前仍须人工整理候选输入** |
+| **C6 模型提取器**（普通报告自动进候选层） | ✅ 契约 `c6-model-extractor-contract.md` **rev4** | ❌ | ❌ | ❌ | **实现未授权**；契约定稿后单独授权（改动清单见该契约 §M9：分块器/方法论/引文上限进身份 + `extraction_run` 审计加列 + `extract()`/`run()` 异步化 + 单事务收口 + 不再重调模型 + 不追加已审核候选 + 审核界面显示 `stance`）；**当前仍须人工整理候选输入** |
 | **C6 未授权部分**：原文切片（规范化位置 → 原文位置） | ⛔ 未授权 | ❌ | ❌ | ❌ | **不阻塞**模型提取器首版；生产若需 PDF 页码 / 原始字符位置，须先完成它 |
 | Phase D（外环：Experience → Pattern → 方法论候选） | ⛔ 未授权 | ❌ | ❌ | ❌ | 红线 9：不预造空壳表 |
 | Phase E（Wind / 自动发现行业） | ⛔ 未授权 | ❌ | ❌ | ❌ | `echo-data-provider.ts` 仍是占位（`isRealExternalData=false`） |

@@ -1,6 +1,6 @@
 # Phase C6 · 模型提取器 Implementation Contract（D-C6-H / D-C6-I / D-C6-J）
 
-> 状态：**rev3 — DESIGN ONLY（实现未授权）**。本文档只锁定语义、边界、失败与恢复规则、验收；**模型适配器的实现须在本契约定稿后单独授权**。rev2 = 第一轮审查的四处补齐（§M2.1）；rev3 = 第二轮审查的收口（窗口覆盖规则拆分 · 同配置**并发互斥** · 运行身份 · **审计配置快照** · 可复现承诺修正，见 §M2.2）。
+> 状态：**rev4 — DESIGN ONLY（实现未授权）**。本文档只锁定语义、边界、失败与恢复规则、验收；**模型适配器的实现须在本契约定稿后单独授权**。rev2 = 第一轮审查的四处补齐（§M2.1）；rev3 = 第二轮审查的收口（§M2.2）；rev4 = 第三轮审查的收口（超长段落末片与分隔符边界 · 原子认领的可执行机制 · 调用次数承诺修正 · 快照记录生成参数 · 成本基准更正，见 §M2.3）。
 > 依据：用户 2026-09-27 的三项结构性裁决（§M2）。用户原话要点：**输入按可追溯片段分批**、**模型只提交引用文本与位置且 ID 由天查生成**、**模型调用异步且整次运行全部验证后再落候选**。
 > 前置契约：`docs/phaseC/c6-implementation-contract.md` §C6.18–§C6.27（资料闭环：材料版本 / Fragment / Evidence / 候选 / 人工闸门 / 投影；其中 `[CANDIDATE]` 确定性提取器 **已交付**）· `docs/HANDOFF.md` §10（**LLM 边界**：禁止 LLM 直接产生 `Claim` / `Fact` / `Knowledge` / `PoolItem` / `Evaluation` 或 0–100 分；模型只能**起草**带来源定位的候选且**必须人工确认**）。
 > 文件定位：**C6 模型提取器专项契约**（同 `c2-*` / `c5-*` / `c6-implementation-contract.md`）；总契约 `implementation-contract.md` §30 只做索引。
@@ -64,6 +64,17 @@
 | **`dimensionHints` 顺序未定**，而 hash 用排序后计算 ⇒ 身份可能与实际输入不一致 | §M3.4：顺序 = **方法论声明的原始顺序**（**不排序**），**按该顺序传给模型**；`dimensionSetHash = sha256Hex(dimensionHints.join("|"))`（**不 sort**）⇒ 传给模型的与进入身份的**逐位一致** |
 | **"同版本必须可复现"承诺过强**（外部服务有采样差异 / 服务端更新） | §M7.1 改为：配置身份覆盖**模型部署版本** + 提示词 + 生成参数；**成功运行被复用、不再调用模型**；**失败重试是新尝试**且实际版本写入审计快照；服务商无不可变版本号时**必须记录可获取的部署标识**（§M9 #10） |
 | **文档收尾**：§M10 标题仍写 T-C6-29…T-C6-36（下方已有 T-C6-37）· 决策日期写成 `2026-09-28` 而工作区为 `2026-09-27` | §M10 标题改为 **T-C6-29…T-C6-37**；全仓 13 处 `2026-09-28` 已按真实日期改为 **`2026-09-27`**（`Get-Date` 核实） |
+
+### §M2.3 rev4 的收口（第三轮审查意见 —— 逐条核实后**全部成立**，含审查者自行更正的一项）
+
+| 审查发现 | rev4 处理 |
+|---|---|
+| **超长段落后的分隔符仍无归属**：§M4.2 只说"普通窗口"吞分隔符，而超长段落切片按 `paragraph.end` 收尾 ⇒ 其后的 `\n{2,}` **无人覆盖**，区间并集**仍有缺口** | §M4.2 新增"**超长段落切片的最后一片也必须吞掉它后面的分隔符**"（末片 `end` = 下一个段落的 `start`；末段则到 `normalized.length`），并明确 **`maxChars` 只约束段落正文长度、分隔符不计入**（否则要么留缺口、要么造成重叠）；§M4.3 第 3 步同步；T-C6-29 增"超长段落 + 紧接普通段落"案例 |
+| **原子认领缺可执行的数据库机制**：`claimMaterialIngest()` 更新的是**已存在的 `material` 行**，而提取运行需**按尝试留多条痕迹** ⇒ 不能照搬；且**首次运行没有行可 `UPDATE`** | §M7.1a 重写为可执行机制：**INSERT 新尝试行**（不是 UPDATE）· **部分唯一索引** `UNIQUE(material_version_id, extraction_config_key) WHERE status = 'running'`（数据库层保证同配置最多一个 `running`；项目已有多处 `CREATE UNIQUE INDEX` 范式：`research-db.ts:377/392/452`）· 单事务内**固定顺序**的四步认领 · **三种情况的数据库结果表** · 提交带 **`generation`** 校验；§M9 新增 **#4b** |
+| **"模型调用恰好一次"与"租约接管"矛盾**：旧进程的请求可能仍在服务商处运行，接管会**再发一次**；fencing 只能阻止**旧结果提交**，**无法撤销已发出的请求** | §M7.1a ⑤ 改写承诺：**有效租约内只有一个持有者调用模型** · **接管后允许重复请求** · **但只有当前代次能提交结果** · **最终只有一条 `completed`**；远端严格去重**必须**依赖**服务商幂等键**（适配器可声明 `supportsIdempotencyKey`），**未声明时不得声称严格去重** |
+| **并发测试手段不足**（单进程只证明进程内串行化） | §M7.1a ⑥ + T-C6-37：**必须用两个独立进程，或至少两个独立数据库连接**；**租约接管**用例断言**旧代次零残留**（无候选 / 无 Evidence / 未 `completed`） |
+| **配置快照没记录生成参数本身**（`model` 只有版本串；把参数塞进 `promptVersion` 无法还原当时请求） | §M7.3 快照新增 **`generation` 对象**（`temperature` / `topP` / `maxOutputTokens` / `seed` / `toolConfig` / `extra`）；`promptVersion` **只标识提示词**（§M9 #10 改写）；`generation` **参与配置身份**（`generationHash`，§M9 #5）；T-C6-30 增参数身份用例 |
+| **成本提示算错**（审查者自行更正：`+43%` 的比较基准被混淆） | §M4.3 改为**写明两个基准**：`600` 相对**零重叠** = `2000/1400` = **+42.9%**；`600` 相对 **`500`** = `1500/1400` = **+7.1%**（真实代价）—— 并给出 `step = maxChars − overlapChars` 算式 |
 
 ---
 
@@ -166,6 +177,8 @@ export interface ModelBatchInput {
 * **超长段落切片之间按规则重叠** `overlapChars`（§M4.3 第 3 步）—— 它们**不是**首尾相接。
 * **全文覆盖按"区间并集"检查**：所有窗口区间的并集必须**恰好等于** `[0, normalized.length)`，即从 0 到全文长度**没有任何缺口**；**允许**超长段落切片之间的重叠（重复覆盖不算缺口）。
 * `window.text === normalized.slice(start, end)`（**含**尾部分隔符）。
+* **超长段落切片的最后一片也必须吞掉它后面的分隔符**：该片的 `end` = **下一个段落的 `start`**（若该段落是全文最后一段 ⇒ `end = normalized.length`）。★ rev4：rev3 只写了"普通窗口"吞分隔符，而超长段落切片按 `paragraph.end` 收尾 ⇒ 紧跟其后的 `\n{2,}` **无人覆盖**，**区间并集仍有缺口**（审查意见成立）。
+* **`maxChars` 只约束段落正文长度，分隔符不计入**。因此末片吞掉分隔符后，其原始字符跨度可能略大于 `maxChars`（最多多出一个 `\n{2,}`）—— 这是**允许且必要**的：否则要么留缺口，要么让下一段的窗口回退而造成重叠。切片内部的 `step = maxChars - overlapChars` 同样**只按正文**计算。
 * 模型**不被要求**引用分隔符。引文若落在分隔符上，V3 仍可能通过（文本一致），但这类引用没有信息价值 —— 由**人工审阅**发现（§M11.1 的诚实边界），契约不额外禁止。
 
 ### §M4.3 切分算法（`WINDOW_RULE_VERSION = "para-greedy-v1"`）
@@ -174,15 +187,23 @@ export interface ModelBatchInput {
 1) paragraphs := splitParagraphs(normalized)
 2) 贪心合并相邻段落，直到加入下一段会超过 maxChars ⇒ 一个"段落组窗口"（区间按 §M4.2 取）
 3) 若某段落自身长度 > maxChars ⇒ 该段落**单独**按 char_range 切分：
-     step = maxChars - overlapChars
-     以 step 步长推进直到覆盖该段落末尾（最后一片可短于 maxChars）
-     ⇒ 相邻片共享 overlapChars 个字符
+     step = maxChars - overlapChars            （★ 只按正文长度计算）
+     以 step 步长推进，直到覆盖该段落正文末尾（最后一片可短于 maxChars）
+     ⇒ 相邻片共享 overlapChars 个字符（仅在**同一段落内部**）
+     末片：end 再延伸到**下一个段落的 start**（吞掉尾部分隔符；末段则到 normalized.length）
 4) 窗口按 start 升序编号 index = 0,1,2,…
 ```
 
 **首版默认值**：`maxChars = 2000` · `overlapChars = 600` · `maxQuoteChars = 500`（三者皆为 UTF-16 code unit，且**全部进 `extractionConfigKey`**；§M9 #5）。`overlapChars` 取 **600 > `maxQuoteChars` = 500**，正是为了满足下面的第三条约束 —— 超长段落切分处的引文仍能在相邻片内**完整**出现。
 
-> **成本提示（rev3 补，审查意见）**：`overlapChars` 只作用于**超长段落**，但它越大，那类段落的窗口调用量越高 —— 600 相对 500 约 **+43%**。若只求满足契约约束，`500` 已经够；取 `600` 是为留一点余量。**该值属配置身份**，改动会使已有候选需要按新配置重新提取（§M7.1）。
+> **成本提示（★ rev4 修正基准 —— 上一版把两个基准混为一谈，审查意见成立）**：`overlapChars` 只作用于**超长段落**，它越大，那类段落被重复处理的文本越多。以 `maxChars = 2000` 计，步长 `step = maxChars - overlapChars`：
+>
+> | 比较基准 | 计算 | 处理量变化 |
+> |---|---|---|
+> | `600` 相对 **零重叠** | `2000 / (2000 − 600) = 2000/1400` | **+42.9%** |
+> | `600` 相对 **`500`**（契约允许的最小合法值） | `1500 / 1400` | **+7.1%** |
+>
+> ⇒ 取 `600` 的真实代价是**相对最小合法重叠多约 7%**（**不是 43%**），换来 `600 − maxQuoteChars(500) = 100` 字符的余量。若只求满足约束，`500` 即可。**该值属配置身份**，改动会使已有候选需按新配置重新提取（§M7.1）。
 
 **配置约束（不满足即拒绝该配置并抛错，不静默钳制）**：
 
@@ -394,18 +415,78 @@ running ──► completed      （全部批次返回且全部引用校验通�
   * 若服务商**不能提供不可变模型版本** ⇒ 适配器**必须**把可获取的**部署标识**（`deploymentId` / `snapshotDate` / 响应里的 model 字段等）编码进 `modelVersion`，并在实现注记里写明该标识的**来源与稳定性边界**；**不得**把一个会静默漂移的名字当版本号。
   * ⇒ 本契约保证的是"**同配置只调用一次、结果可复用地记录在审计里**"，**不是**"同配置跨时间逐次输出一致"。
 
-### §M7.1a 同配置的**并发**请求必须有互斥（rev3 新增，审查意见）
+### §M7.1a 同配置的**并发**请求必须有互斥（rev3 新增；★ rev4 落到可执行机制）
 
-rev2 只规定"已有 `completed` 则复用" —— 两个**同时**到达的同配置请求可能**都**没看到 `completed`，于是**都**调用模型并**都**写出结果（审查意见成立）。
+rev2 只规定"已有 `completed` 则复用" —— 两个**同时**到达的同配置请求可能**都**没看到 `completed`，于是**都**调用模型并**都**写出结果。
 
-**规则**（复用本项目已有原语 `ResearchRepository.claimMaterialIngest()` 的**同一思路**：一条**原子 UPDATE** + 租约 + 代际 token，见 `research-repository.ts:697-731`）：
+**rev4 更正**：rev3 直接照搬了 `ResearchRepository.claimMaterialIngest()` 的写法，但那个方法**更新的是已经存在的 `material` 行**（`UPDATE material ... WHERE material_id = ?`，带租约与 `RETURNING`），而提取运行需要**按尝试留多条痕迹** —— **数据结构不同，不能照搬**（审查意见成立）。下面给出可执行的机制。
 
-| 步骤 | 规则 |
+#### ① 数据结构
+
+* `extraction_run` 每 `(material_version_id, extraction_config_key, attempt_seq)` **一行**（`attempt_seq` 从 1 开始）。
+* **部分唯一索引**（SQLite 支持带 `WHERE` 的索引；本项目已有多处 `CREATE UNIQUE INDEX` 范式：`research-db.ts:377` / `:392` / `:452`）：
+
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS idx_extraction_run_single_active
+  ON extraction_run(material_version_id, extraction_config_key)
+  WHERE status = 'running';
+```
+
+⇒ 数据库层面保证**同一配置最多一个 `running`**，不依赖应用层自觉。
+
+#### ② 认领（**单事务**，顺序固定）
+
+```
+BEGIN IMMEDIATE
+  1) 该 (versionId, configKey) 已有 completed 运行 ⇒ 复用其 candidateIds（§M7.1）⇒ COMMIT（不新建行）
+  2) 存在 running 且 lease_until >= now
+       ⇒ 认领失败 ⇒ COMMIT（不新建行），返回 in_progress(owner, leaseUntil, attemptSeq)
+  3) 存在 running 但 lease_until < now（过期）
+       ⇒ 把该行标记为 failed / error='lease_expired'（★ 先让出唯一索引）
+  4) INSERT 新运行行：attempt_seq = (SELECT COALESCE(MAX(attempt_seq),0)+1
+                                      FROM extraction_run WHERE material_version_id=? AND extraction_config_key=?)
+                      status='running', owner=?, lease_until=?, generation=attempt_seq, started_at=?
+COMMIT
+```
+
+* **第一次运行时没有任何行可供 `UPDATE`** ⇒ 认领靠 **INSERT 新行**，**不是** `UPDATE` 已有行（这正是 rev3 照搬失败的根因）。
+* 第 3 步的"标 failed"在同一事务内**先于**第 4 步的 INSERT ⇒ 不会撞 `idx_extraction_run_single_active`。
+
+#### ③ 三种情况的**数据库结果**
+
+| 情况 | 新建 `extraction_run` 行 | 其它写入 |
+|---|---|---|
+| 认领成功 | **+1**（`status='running'`，新 `attempt_seq`） | 无 |
+| 已有 `completed` ⇒ 复用 | **0** | **0**（§M7.1：零副作用，指纹不变） |
+| 被有效租约占用 ⇒ `in_progress` | **0** | **0** |
+| 租约过期 ⇒ 接管 | **+1**（新 `attempt_seq`） | 过期行**行数不变**，仅改为 `status='failed'` / `error='lease_expired'` |
+
+#### ④ 提交结果必须带**代际校验**（fencing）
+
+```sql
+UPDATE extraction_run SET status='completed', finished_at=?, candidate_ids_json=?
+ WHERE extraction_id = ? AND status='running' AND generation = ?
+```
+
+* `changes() !== 1` ⇒ 本代次**已被接管** ⇒ **不得**写入任何候选/Evidence，本代次结果**整体丢弃**。
+* 候选 / Evidence 的写入与该 `UPDATE` 在**同一事务**内（§M6.3）⇒ 代际校验一旦失败，全部回滚。
+
+#### ⑤ "模型调用恰好一次"的**修正承诺**（★ rev4）
+
+rev3 说"任意并发下模型调用恰好一次"，这与"租约过期后可接管"**互相矛盾**：旧进程的请求可能**仍在服务商处运行**，新认领会**再发一次**请求；fencing 能阻止**旧结果提交**，但**无法撤销已发出的请求**（审查意见成立）。rev4 改为：
+
+| 承诺 | 内容 |
 |---|---|
-| 认领 | 以 `(materialVersionId, extractionConfigKey)` 为键**原子**写认领：`status = 'running'` + `owner` + `lease_until` + **`attempt_seq = MAX(attempt_seq) + 1`**；该语句必须**恰好生效一次**（`changes() === 1`） |
-| 未抢到的一方 | **不得**调用模型。两种允许语义（**必须显式**，不得静默重复调用）：<br>① 已有 `completed` ⇒ 走 §M7.1 复用；<br>② 否则返回明确的 **`in_progress`**（含 `owner` / `lease_until` / `attemptSeq`），或**等待**该运行结束后复用其结果（由 CLI 选择，契约两种都允许） |
-| 租约过期 | 认领方崩溃 ⇒ 租约到期后另一请求可**重新认领**（新 `attemptSeq`）；被抢方即使仍在跑，其写入**必须**带**代际 token** 校验而失败（fencing，同 `claimMaterialIngest`） |
-| 结果 | 同一 `(materialVersionId, extractionConfigKey)` 在任意并发下：**模型调用恰好一次**、**`completed` 运行恰好一条** |
+| **有效租约内** | 只由**一个持有者**调用模型；其余请求**不得**调用（复用或返回 `in_progress`） |
+| **租约接管后** | **允许**出现第二次（乃至更多次）模型请求 |
+| **但** | **只有当前代次能提交结果**；旧代次的结果一律丢弃（fencing） |
+| **最终收敛** | 同一 `(versionId, configKey)` 最终**只有一条 `completed`**，其候选集**唯一** |
+| **远端严格去重（可选）** | 若要求"连请求也不重复"，**必须**依赖**服务商支持的幂等键**：适配器可声明 `supportsIdempotencyKey: boolean` 并接受 `idempotencyKey`（建议值 = `extractionConfigKey + attemptSeq` 的确定性串）；**未声明支持时不得声称严格去重** |
+
+#### ⑥ 测试要求（★ rev4 加严）
+
+* **并发用例必须用两个独立进程**（或**至少两个独立数据库连接**）—— 单进程内的 `Promise.all` 只证明"进程内串行化"，**不足以**证明互斥（审查意见成立）。
+* **租约接管用例**必须断言旧代次**零残留**：无新增 `claim_candidate`、无新增 `fragment_evidence`、运行未被写成 `completed`；且新代次正常完成。
 
 **候选层面的不覆盖**（既有语义 + 本次收紧）：
 
@@ -439,10 +520,23 @@ interface ExtractionConfigSnapshot {
   windowRule: { version: string; maxChars: number; overlapChars: number; overlapAppliesTo: "long-paragraph-slices-only" };
   quotePolicy: { maxQuoteChars: number; allowedStances: ["supports"] };
   model: { modelVersion: string; promptVersion: string; parserVersion: string; schemaVersion: string };
+  /** ★ rev4：**实际请求参数本身**（不只靠版本标签）—— 审查意见成立：版本字符串无法还原当时发给模型的参数 */
+  generation: {
+    temperature?: number;
+    topP?: number;
+    maxOutputTokens?: number;
+    seed?: number;
+    toolConfig?: Record<string, unknown>;
+    /** 适配器自报的、会影响输出的其余参数；键值须可稳定 JSON 序列化 */
+    extra?: Record<string, unknown>;
+  };
   methodology: { methodologyVersionId: string; dimensionHints: string[] };  // ★ 有序，与传给模型的一致
-  run: { timeoutMs: number; batchCount: number };                           // batchCount = 窗口数
+  run: { timeoutMs: number; batchCount: number; attemptSeq: number; generation: number };  // batchCount = 窗口数
 }
 ```
+
+* ★ rev4：`generation` **既存下实际值，也参与配置身份** —— 参数变化 ⇒ `extractionConfigKey` 变化 ⇒ 新候选（§M7.2）。`promptVersion` 只标识**提示词**版本，**不再**充当生成参数的容器（§M9 #10 已改写）。
+* 注意 `generation`（模型生成参数）与 `run.generation`（运行**代际 token**，用于 fencing，§M7.1a）是**两个不同的东西** —— 快照里分开命名，避免混淆。
 
 * 快照在运行时**写入一次、此后不可变**；运行重试 = 新 `attemptSeq` = **新快照**（§M7.1a）。
 * `dimensionHints` 在快照里**保留实际顺序**（§M3.4）；`dimension_set_hash` 只是其派生值，**不替代**它。
@@ -469,13 +563,14 @@ interface ExtractionConfigSnapshot {
 | 1 | `CandidateExtractor.extract` → `Promise<CandidateDraft[]>` | D-C6-J；`ExplicitBlockExtractor` 加 `async`（行为不变） |
 | 2 | `CandidateExtractionService.run` → `async` + 接受 `{ timeoutMs }` | 同上；超时与取消见 §M6.2a |
 | 3 | `run()` **单事务收口** | 改为"先算后写 + 一个事务"；失败记录写在事务之外（§M6.3） |
-| 4 | `ExtractionRun` + `extraction_run` 增**审计与认领列**：`chunker_version` · `methodology_version_id` · `dimension_set_hash` · `max_quote_chars` · **`attempt_seq`** · **`config_snapshot_json`** · **`owner`** · **`lease_until`** · **`generation`** | 建表列 + `addColumnIfMissing`（PRAGMA 预检查，同 `superseded_claim_ref` 法）；**表数仍 32**（加列不加表）。★ 按审查意见：审计要能**逐字还原当时配置**（§M7.3 快照）；后四列服务 §M7.1a 的并发互斥与运行身份 |
-| 5 | `extractionConfigKeyFor` 增 **`chunkerVersion`**（含 `WINDOW_RULE_VERSION` + `maxChars` + `overlapChars`）· **`methodologyVersionId`** · **`dimensionSetHash`** · **`maxQuoteChars`** | 这些**都会改变哪些输出被产出 / 被接受** ⇒ 必须进身份（审查意见成立）。`dimensionSetHash = sha256Hex(dimensionHints.join("|"))`，其中 `dimensionHints` 取**方法论声明的原始顺序**（**不 sort**，§M3.4），与传给模型的有序列表**逐位一致** |
+| 4 | `ExtractionRun` + `extraction_run` 增**审计与认领列**：`chunker_version` · `methodology_version_id` · `dimension_set_hash` · `max_quote_chars` · **`attempt_seq`** · **`config_snapshot_json`** · **`owner`** · **`lease_until`** · **`generation`** | 建表列 + `addColumnIfMissing`（PRAGMA 预检查，同 `superseded_claim_ref` 法）；**表数仍 32**（加列不加表）。★ 审计要能**逐字还原当时配置**（§M7.3 快照）；后四列服务 §M7.1a 的并发互斥与运行身份 |
+| 4b | **部分唯一索引** `idx_extraction_run_single_active`：`UNIQUE(material_version_id, extraction_config_key) WHERE status = 'running'` | §M7.1a ①：在**数据库层**保证同一配置最多一个 `running`。项目已有多处 `CREATE UNIQUE INDEX` 范式（`research-db.ts:377` / `:392` / `:452`）。**不新增表** |
+| 5 | `extractionConfigKeyFor` 增 **`chunkerVersion`**（含 `WINDOW_RULE_VERSION` + `maxChars` + `overlapChars`）· **`methodologyVersionId`** · **`dimensionSetHash`** · **`maxQuoteChars`** · **`generationHash`**（`generation` 实际参数值的稳定 hash） | 这些**都会改变哪些输出被产出 / 被接受** ⇒ 必须进身份（审查意见成立）。`dimensionSetHash = sha256Hex(dimensionHints.join("|"))`，`dimensionHints` 取**方法论声明的原始顺序**（**不 sort**，§M3.4），与传给模型的有序列表**逐位一致**；`generationHash` 对**稳定序列化后的 `generation` 对象**计算（键序固定） |
 | 6 | Evidence 追加**仅限 `draft`** | §M7.1 |
 | 7 | `RunResult` 增 **`reused`**（§M7.1 复用）、**`skippedReviewed`**（§M7.1 表）与 **`in_progress`**（§M7.1a 未抢到认领时） | 让"复用 / 跳过已审核 / 正在跑"**可见**而非静默 |
 | 8 | 新增 §M3.2 的四个构件 | `extraction-window.ts` / `model-extraction.ts` |
 | 9 | 装配点注入 `ModelExtractionAdapter` + `AbortController` | CLI 侧；Research Core 不 import 任何模型 SDK |
-| 10 | 适配器**必须**把影响输出的东西编码进版本号：**生成参数**（温度 / topP / seed / 工具开关…）进 `promptVersion`；**模型部署版本**（服务商的不可变标识，或可获取的 `deploymentId` / `snapshotDate`）进 `modelVersion`；并**把该标识的来源与稳定性边界写进实现注记** | §M7.1（rev3 修正后）**不再**承诺"同版本逐次输出一致"，但要求：**同配置只调用一次 + 结果被复用 + 实际版本写入审计**（§M7.3 快照）。**不得**用会静默漂移的名字当版本号 |
+| 10 | 适配器**必须**：① `promptVersion` 标识**提示词版本**；② **模型部署版本**（服务商不可变标识，或可获取的 `deploymentId` / `snapshotDate`）进 `modelVersion`；③ **实际生成参数**（温度 / topP / maxOutputTokens / seed / 工具配置…）**单独作为值**写进 `config_snapshot_json.generation` 并**参与 `extractionConfigKey`**（`generationHash`），**不再**把它们塞进 `promptVersion`；④ 把该部署标识的**来源与稳定性边界**写进实现注记 | §M7.1 不承诺"同版本逐次输出一致"，但要求：**同配置只调用一次 + 结果被复用 + 实际版本与参数写入审计**（§M7.3）。**不得**用会静默漂移的名字当版本号 |
 | 11 | **实现前先枚举 `extract()` / `run()` 的全部调用点**（CLI / Agent / 全部测试）并逐一 `await` | 契约不代列清单，实现轮用 `grep` 产出并写进交付说明（审查意见要求） |
 | 12 | `candidate show` / 报告行在每条来源上显示 **`stance`** | §M5.5：审核界面必须能看到"模型声称此引文支持该候选"这一**未确认**关系 |
 
@@ -487,15 +582,15 @@ interface ExtractionConfigSnapshot {
 
 | 用例 | 必须断言的行为 |
 |---|---|
-| **T-C6-29 窗口确定性与覆盖（★ rev3 拆为三种情况）** | 两次生成**深比较完全相等**；**I1** `text === normalized.slice(start,end)`；**I2** `index` 连续；**I3** 首个窗口 `start === 0`；**I4 区间并集 = `[0, normalized.length)`（全文无缺口；允许切片重叠）**；**I5 仅段落组窗口之间** `end === 下一个 start`（不重叠）；**I6 仅同一超长段落的切片之间**共享 `overlapChars`；**I7** 末窗口 `end === normalized.length` |
-| **T-C6-30 窗口 / 引文规则进身份** | 分别改变 `maxChars` / `overlapChars` / `WINDOW_RULE_VERSION` / **`maxQuoteChars`** / **方法论维度集合** ⇒ `extractionConfigKey` **变化** ⇒ 生成**不同** `candidateId`（旧候选原样保留） |
+| **T-C6-29 窗口确定性与覆盖（★ rev3 拆分 · rev4 加案例）** | 两次生成**深比较完全相等**；**I1** `text === normalized.slice(start,end)`；**I2** `index` 连续；**I3** 首个窗口 `start === 0`；**I4 区间并集 = `[0, normalized.length)`（全文无缺口；允许切片重叠）**；**I5 仅段落组窗口之间** `end === 下一个 start`（不重叠）；**I6 仅同一超长段落的切片之间**共享 `overlapChars`；**I7** 末窗口 `end === normalized.length`。<br>★ **rev4 新增案例**：**"超长段落 + 紧随其后的普通段落"** ⇒ 断言 ① 无缺口（并集仍为全文）② 超长段落**末片**的 `end` **等于下一段的 `start`**（即吞掉了尾部分隔符）③ 该末片 `text` **以分隔符结尾** ④ 除该末片外，各窗口**正文长度** ≤ `maxChars` |
+| **T-C6-30 窗口 / 引文 / 生成参数进身份** | 分别改变 `maxChars` / `overlapChars` / `WINDOW_RULE_VERSION` / **`maxQuoteChars`** / **方法论维度集合** / ★ **`generation` 里的任一生成参数（温度 / seed 等）** ⇒ `extractionConfigKey` **变化** ⇒ 生成**不同** `candidateId`（旧候选原样保留） |
 | **T-C6-31 引文即 Fragment（四者一致）** | 一条引文（含**跨段落但连续**的引文）⇒ 断言 `fragment.text === evidence.quoteText === quote.text` 且 `sha256Hex(quote.text) === evidence.quoteHash === fragment.textHash`；`fragment.locator` 是**精确覆盖该区间的 `char_range`**；并经 `resolveLocator(normalized, fragment.locator)` **解析回材料原文**得到同一段文本 |
 | **T-C6-32 引用不成立 ⇒ 整次失败（V1–V4 各一例）** | V1 窗口不属于本版本 · V2 区间越界/倒置 · **V3 文本与位置不符** · **V4 长度超过 `maxQuoteChars`** ⇒ 运行 `failed`；`claim_candidate` **零新增**；`extraction_run.candidate_ids_json = []`；`error` 指明失败类别与第几个窗口 / 第几条 quote |
 | **T-C6-33 人工确认前下游指纹不变（完整指纹）** | 成功运行后，§M8 十张表的**完整内容指纹**与运行前**逐项相等**（**不是**只比行数）；候选全为 `draft` / `projectionStatus = "none"` / 无 `decisionRelation` |
 | **T-C6-34 超时 / 取消不误报完成** | 适配器**永不 resolve** ⇒ 运行 `failed` + `error` 以 `timeout:` 开头；**零候选**；`finishedAt` 有值；**且**断言适配器**收到了 abort**（其 promise 在 `signal` 触发后以 `AbortError` 结束），证明不是"只把状态改成失败" |
 | **T-C6-35 已审核候选不被改动** | 先 `confirm` / `reject` 某候选 ⇒ **候选写入阶段**遇到同 id ⇒ 该候选 `reviewStatus` / `statement` / `evidenceRefs` **一字不变**，并计入 `skippedReviewed`；`draft` 候选仍可合并 Evidence（`merged` 计入） |
 | **T-C6-36 无适配器 ⇒ 明确失败** | 未配置 `ModelExtractionAdapter` ⇒ **报错** `ADAPTER_NOT_CONFIGURED`；**不静默退回** `[CANDIDATE]`；**不写任何表** |
-| **T-C6-37 已有成功运行 ⇒ 复用而不重调模型**（★ rev3 加**并发**） | **串行**：同 `(materialVersionId, extractionConfigKey)` 第二次调用 ⇒ 既有 `candidateIds` + `reused = true` + `completed`；**适配器调用次数仍为 1**；**不写任何表**（指纹不变）；适配器**故意不可用**时也不受影响。<br>**并发**：两个同配置请求**同时**发起 ⇒ 计数适配器断言**模型调用恰好 1 次**、**`completed` 运行恰好 1 条**；未抢到认领的一方拿到**复用结果**或显式 **`in_progress`**（**不得**出现第二次模型调用）；租约过期后可重新认领（新 `attemptSeq`），被抢方的写入因**代际 token** 校验而失败（§M7.1a） |
+| **T-C6-37 复用与并发认领**（★ rev3 加并发 · **rev4 修正承诺与测试手段**） | **串行**：同 `(materialVersionId, extractionConfigKey)` 第二次调用 ⇒ 既有 `candidateIds` + `reused = true` + `completed`；**适配器调用次数仍为 1**；**不写任何表**（指纹不变）；适配器**故意不可用**时也不受影响。<br>**并发 —— 必须用两个独立进程，或至少两个独立数据库连接**（单进程 `Promise.all` 只证明进程内串行化，**不算**）：① 断言**有效租约内只有 1 次模型调用**、**`completed` 运行只有 1 条**；未抢到者拿到**复用结果**或显式 **`in_progress`**，**且没有第二次模型调用**；② **租约接管**：令持有者过期 ⇒ 新代次可认领（新 `attemptSeq`；此时**出现第二次模型请求是允许的**）⇒ 断言**旧代次零残留**（无新增 `claim_candidate`、无新增 `fragment_evidence`、运行未被写成 `completed`），新代次正常 `completed`；③ 断言**部分唯一索引**确实阻止两个 `running` 并存（§M7.1a ①） |
 
 **测试纪律（沿用 C6 标准）**：断言**行为与身份**（行数、状态、id、hash、指纹），**不断言文案**；每条正例必须证明"**真的**落库且可追溯"（Evidence → Fragment → 规范化位置）；每条反例必须证明"**零残留**"；并做至少一次 **mutation 反证**（例如把 V3 的逐字比较改成 `startsWith` ⇒ T-C6-32 必须失败）。
 
@@ -531,8 +626,9 @@ interface ExtractionConfigSnapshot {
 
 | 版本 | 变更 |
 |---|---|
-| **rev3** | **第二轮审查意见的收口**（§M2.2，逐条核实后全部成立）：① **窗口覆盖规则拆分**（段落组窗口首尾相接 / 超长段落切片重叠 / 全文按**区间并集**检查无缺口；§M4.2、§M4.5 的 I4–I6 按窗口种类分别断言、T-C6-29 同步）—— rev2 把"不重叠"与"重叠"同时写为对全部窗口成立，**自相矛盾**；② **同配置并发互斥**：§M7.1a 原子认领（`attempt_seq = MAX+1`、`changes() === 1`）+ 租约 + 代际 token fencing（复用 `claimMaterialIngest` 思路），未抢到者不得调模型；T-C6-37 增并发子用例；③ **运行身份**改用 `attemptSeq`（`startedAt` 只作审计字段）；④ **审计升级为不可变配置快照** `config_snapshot_json`（含有序 `dimensionHints`）+ 运行行补 `attempt_seq` 与认领三列；⑤ **`dimensionHints` 顺序**定为方法论声明序（不排序），`dimensionSetHash` 对**同一有序列表**计算；⑥ **删除"同版本必须可复现"**的过强承诺，改为"同配置只调用一次 + 结果复用 + 实际版本写入审计"，服务商无不稳定标识时须记录部署标识；⑦ 文档收尾：§M10 标题改 T-C6-29…T-C6-37、全仓日期按真实值改为 `2026-09-27` |
+| **rev4** | **第三轮审查意见的收口**（§M2.3，逐条核实后全部成立）：① **超长段落末片吞分隔符**（rev3 只让"普通窗口"吞 ⇒ 其后 `\n{2,}` 无人覆盖、并集仍有缺口），并明确 **`maxChars` 只约束正文**；② **原子认领落到可执行机制**（**INSERT 新尝试行**而非 UPDATE 已有行 · **部分唯一索引** `WHERE status='running'` · 单事务四步认领 · 三种情况的数据库结果表 · 提交带 `generation` 校验；§M9 #4b）；③ **修正"模型调用恰好一次"**（与租约接管矛盾）：有效租约内只一个持有者调用 · 接管后允许重复请求 · 只有当前代次能提交 · 远端严格去重须靠**服务商幂等键**；④ **并发测试改用两个独立进程/连接**，接管用例断言旧代次**零残留**；⑤ **快照新增 `generation` 对象**（实际生成参数）并**参与配置身份**，`promptVersion` 只管提示词；⑥ **成本提示更正为显式基准**（`600` vs 零重叠 `+42.9%`；`600` vs `500` `+7.1%`） |
+| **rev3** | **第二轮审查意见的收口**（§M2.2）：① **窗口覆盖规则拆分**（段落组窗口首尾相接 / 超长段落切片重叠 / 全文按**区间并集**检查无缺口；不变量 I4–I6 按窗口种类分别断言）；② **同配置并发互斥**（§M7.1a 原子认领 + 租约 + 代际 token）；③ **运行身份**改用 `attemptSeq`（`startedAt` 只作审计字段）；④ **审计升级为不可变配置快照** `config_snapshot_json`；⑤ **`dimensionHints` 顺序**定为方法论声明序（不排序），`dimensionSetHash` 对**同一有序列表**计算；⑥ **删除"同版本必须可复现"**的过强承诺；⑦ 文档收尾（§M10 标题、全仓日期 `2026-09-27`） |
 | **rev2** | **第一轮审查意见的四处补齐**（§M2.1）：① **引文即 Fragment**（精确 `char_range`）+ 更正 `fragmentEvidenceIdFor` 的 `stance` 参数 + "四者一致"不变量；② **分隔符归前一窗口** ⇒ 窗口覆盖全文；明确**坐标单位 = UTF-16 code unit**；补配置约束；明确**首版不承诺跨段落组边界的整条引文**；③ **配置身份与运行审计**补入分块器 / **方法论版本** / **维度集合 hash** / **`maxQuoteChars`**，审计保留原值；④ **重跑语义收紧**为"已有成功运行 ⇒ 复用，不再调用模型"。另：`stance` 的语义与**审核界面可见性**（§M5.5）· 超时的**边界与取消**（`AbortSignal`，§M6.2a）· 删除无法失败的"不连续"检查并补 V4（长度上限）验收 · T-C6-33 改为**完整下游状态指纹** · 新增 T-C6-37 |
 | **rev1** | 首版（DESIGN ONLY）：D-C6-H/I/J 三项裁定落为可执行规则 —— 窗口协议（`para-greedy-v1` + 重叠 + 规则进身份）· 模型输出 schema 与 V1–V5 引用校验 · 异步化与"全成或全败"单事务 · 不覆盖已审核候选 · 验收 T-C6-29…T-C6-36 · 改动清单（含 `chunker_version` 加列） |
 
-**End of contract（rev3: 模型提取器契约，DESIGN ONLY —— 实现未授权）.**
+**End of contract（rev4: 模型提取器契约，DESIGN ONLY —— 实现未授权）.**
