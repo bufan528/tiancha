@@ -80,6 +80,30 @@ export function renderDossierMarkdown(d: IndustryDossier): string {
 
   out.push("## 最近证据");
   out.push(bullets(s.recentEvidence.map((r) => r)));
+
+  // ★ C6 slice ⑤ (§C6.3 citation policy): fragment text lives in the NORMALIZED material,
+  // so a rendered excerpt must be labelled with the normalization version.
+  if (s.recentEvidence.length > 0) {
+    out.push("");
+    out.push(
+      "> 引用来自材料的**规范化文本**（`nfkc-lf-v1`）：摘录在标点等 Unicode 形式上可能与原文略有差异，定位与校验一律以规范化文本为准。",
+    );
+  }
+
+  // ★ C6 slice ⑤: candidates still awaiting review ARE part of the real state (§C6.5).
+  if (s.pendingCandidates.length > 0) {
+    out.push("");
+    out.push("待确认候选（提案：未确认前不进入已确认认知、Pool 充分度、Gap 或投资评价）：");
+    for (const row of s.pendingCandidates) {
+      if ("candidateRef" in row) {
+        out.push(
+          `- **${row.dimension}** · ${row.contentKind} · ${row.reviewStatus} → ${row.statement}（证据 ${row.evidenceRefCount} 条；规范化 ${row.normalizationVersion}）`,
+        );
+      } else {
+        out.push(`- **${row.dimension}** · belief 候选 → ${row.claimRef}`);
+      }
+    }
+  }
   out.push("");
 
   out.push("## 当前评价");

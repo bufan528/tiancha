@@ -155,7 +155,7 @@ describe("Phase C4-A · cognition / conflict / state consumption", () => {
       const s = new ReportService(db.db).generateDossier(sid).sections;
 
       assert.deepEqual(
-        s.pendingCandidates.map((b) => b.beliefId),
+        s.pendingCandidates.map((b) => ("candidateRef" in b ? b.candidateRef : b.beliefId)),
         [planted.candidate.beliefId],
         "T-C4-1: candidate is in pendingCandidates",
       );
@@ -217,10 +217,13 @@ describe("Phase C4-A · cognition / conflict / state consumption", () => {
 
       for (const key of ["pendingCandidates", "revisedBeliefs", "supersededBeliefs", "rejectedBeliefs", "conflictingBeliefs"] as const) {
         const list = a[key];
+        // ★ C6 slice ⑤: `pendingCandidates` now carries a discriminated union — a knowledge row has
+        // `beliefId`, a C6 candidate row has `candidateRef`. The ordering judge is the SAME either way.
+        const rowKey = (l: (typeof list)[number]): string => ("candidateRef" in l ? l.candidateRef : l.beliefId);
         const sorted = [...list].sort((x, y) =>
-          x.dimension < y.dimension ? -1 : x.dimension > y.dimension ? 1 : x.beliefId < y.beliefId ? -1 : 1,
+          x.dimension < y.dimension ? -1 : x.dimension > y.dimension ? 1 : rowKey(x) < rowKey(y) ? -1 : 1,
         );
-        assert.deepEqual(list.map((l) => l.beliefId), sorted.map((l) => l.beliefId), `T-C4-5: ${key} order`);
+        assert.deepEqual(list.map(rowKey), sorted.map(rowKey), `T-C4-5: ${key} order`);
         assert.deepEqual(list, b[key], `T-C4-5: ${key} is stable across regenerations`);
       }
 

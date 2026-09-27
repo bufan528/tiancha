@@ -31,6 +31,8 @@ import type {
   ReportSections,
   ReportSnapshot,
 } from "../domain/index.js";
+import type { ClaimCandidateLine } from "../domain/report.js";
+import { NORMALIZATION_VERSION } from "../domain/material-source.js";
 
 const MAX_RECENT = 10;
 
@@ -101,19 +103,37 @@ export class ReportService {
     });
 
     // 当前认知 = every current belief; 主要判断 = the confirmed ones.
+    // ★ C6 slice ⑤ (D-C6-D): classify CONFIRMED claims by the candidate that produced them.
+    // The association lives on the candidate row (`confirmedClaimRef` → `contentKind`), so the
+    // report reads the research DB only — never the Claim blob in the artifact store.
+    // ★ A claim with NO candidate behind it (a historical `[CLAIM]` material) keeps the OLD behaviour.
+    const contentKindByClaimRef = new Map<string, string>();
+    const allCandidates = repo.listClaimCandidatesBySubject(subjectKind, subjectId);
+    for (const c of allCandidates) {
+      if (c.confirmedClaimRef !== undefined) contentKindByClaimRef.set(c.confirmedClaimRef, c.contentKind);
+    }
+    const kindOf = (claimRef: string): string | undefined => contentKindByClaimRef.get(claimRef);
     const currentKnowledge = currentBeliefs.map(toLine);
-    const mainJudgments = currentBeliefs.filter((b) => b.state === "confirmed").map(toLine);
+    const mainJudgments = currentBeliefs
+      .filter((b) => b.state === "confirmed")
+      .map(toLine)
+      // ★ ...and a claim we KNOW to be a fact is not a judgment.
+      .filter((k) => kindOf(k.claimRef) !== "fact");
 
     // 关键事实 = Pool items (they reference claims; the fact itself is not copied).
     const slots = repo.listPoolSlots(subjectId);
-    const keyFacts: FactLine[] = slots.flatMap((s) =>
-      repo.listPoolItems(s.slotId).map((it) => ({
-        slotId: s.slotId,
-        dimension: s.dimension,
-        claimRef: it.claimRef,
-        relation: it.relation,
-      })),
-    );
+
+    const keyFacts: FactLine[] = slots
+      .flatMap((s) =>
+        repo.listPoolItems(s.slotId).map((it) => ({
+          slotId: s.slotId,
+          dimension: s.dimension,
+          claimRef: it.claimRef,
+          relation: it.relation,
+        })),
+      )
+      // ★ a claim we KNOW to be a judgment is not a fact — it belongs in mainJudgments (§C6.5).
+      .filter((f) => kindOf(f.claimRef) !== "judgment");
 
     // 主要冲突 (subject-scoped, both sides retained).
     const subjectClaimRefs = new Set(allBeliefs.map((b) => b.claimRef));
@@ -256,7 +276,26 @@ export class ReportService {
         priority,
         nextActions,
         // C4-A: cognition lifecycle / conflict history / state（只读透传）
-        pendingCandidates: beliefsInState("candidate"),
+        pendingCandidates: [
+          ...beliefsInState("candidate"),
+          // ★ C6 slice ⑤: candidates still awaiting review are part of the real state — and they
+          // carry their own identity (`candidateRef`) plus the normalization version of their text.
+          ...allCandidates
+            .filter((c) => c.reviewStatus === "draft")
+            .sort((a, b) => (a.candidateId < b.candidateId ? -1 : 1))
+            .map(
+              (c): ClaimCandidateLine => ({
+                candidateRef: c.candidateId,
+                dimension: c.dimension,
+                contentKind: c.contentKind,
+                statement: c.statement,
+                reviewStatus: c.reviewStatus,
+                evidenceRefCount: c.evidenceRefs.length,
+                materialVersionId: c.materialVersionId,
+                normalizationVersion: NORMALIZATION_VERSION,
+              }),
+            ),
+        ],
         revisedBeliefs: beliefsInState("revised"),
         supersededBeliefs: beliefsInState("superseded"),
         rejectedBeliefs: beliefsInState("rejected"),

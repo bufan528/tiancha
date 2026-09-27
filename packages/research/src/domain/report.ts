@@ -101,6 +101,28 @@ export interface EvaluationSummary {
 export type ReportStateLine = ResearchState;
 
 /**
+ * ★ C6 slice ⑤ (D-C6-E): a CANDIDATE row inside the projection. It is a *proposal*, so it must never
+ * be confusable with a `KnowledgeLine` (which always carries beliefId + claimRef). They form a
+ * discriminated union: the existing identity fields stay REQUIRED on their own member.
+ */
+export interface ClaimCandidateLine {
+  /** Identity of the proposal — the discriminant (`KnowledgeLine` has no `candidateRef`). */
+  candidateRef: string;
+  dimension: string;
+  /** `fact` | `judgment` (§C6.5): the content nature, NOT the review state. */
+  contentKind: string;
+  statement: string;
+  reviewStatus: string;
+  evidenceRefCount: number;
+  materialVersionId: string;
+  /**
+   * ★ §C6.3: the fragment behind this candidate was located in the NORMALIZED material
+   * (`nfkc-lf-v1`), so any rendered excerpt must be labelled with this version.
+   */
+  normalizationVersion: string;
+}
+
+/**
  * The structured sections of a projection (08 §4.6):
  * 当前认知 / 关键事实 / 主要判断 / 主要冲突 / 缺口 / 最近变化 / 最近证据 / 当前评价 /
  * 优先级 / 下一步，以及 C4-A 新增的 cognition 生命周期与状态透传。
@@ -119,8 +141,12 @@ export interface ReportSections {
   nextActions: NextActionLine[];
 
   // ---- C4-A: cognition lifecycle / conflict history / state（全部只读透传）----
-  /** 待确认候选 — `state === "candidate"`（**永不** current）. */
-  pendingCandidates: KnowledgeLine[];
+  /**
+   * 待确认候选 — candidate BELIEFS (`state === "candidate"`, never current) **plus** C6 claim
+   * candidates still awaiting review (`reviewStatus === "draft"`). The members are told apart by
+   * `candidateRef` (C6) vs `beliefId` (knowledge) — see `ClaimCandidateLine`.
+   */
+  pendingCandidates: Array<KnowledgeLine | ClaimCandidateLine>;
   /** 已修订 — `state === "revised"`（只透传**状态**；修订关系链不在 `KnowledgeLine` 中）. */
   revisedBeliefs: KnowledgeLine[];
   /** 已取代 — `state === "superseded"`. */
