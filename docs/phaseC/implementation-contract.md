@@ -2235,5 +2235,46 @@ rev5 的 `updateMaterialProgress()` 只按 `material_id` 更新，**不校验持
 | 全量测试 | **399 tests / 399 pass / 0 fail**（106 suites） |
 | 新增用例 | `T-R1-13`（fencing）· `T-R1-14`（租约被窃取）· `T-R1-15`（孤儿复用） |
 
-**End of §29（rev6: §29.13 复核修正）.**
+## §29.14 5a 落地：未完成材料的 Claim 不计入"已确认证据"汇总（2026-09-26，用户裁决 (i)）
+
+> ⚠️ 追加记录。§29.0 – §29.13 原文**一字未改**；本节**关闭** §29.12.3 第 5 项与 §29.13.5 的未满足条款。
+
+### §29.14.1 反向溯源口径（唯一）
+
+```text
+unconfirmedClaimRefs(subjectId) =
+  { `artifact:claim/${c}`  |  c ∈ m.claimRefs,  m ∈ materials(subjectId),  m.ingestStatus ≠ 'completed' }
+```
+
+* 依据 `material.claim_refs_json`（存的是**裸 claimId**，§15）与 `ingest_status`；**不新增表 / 列 / 索引**。
+* 归一为 `artifact:claim/<id>`，与 belief 的 `claimRef` 同构。
+* 材料当前只携带 `industry` subject（§29.1），故按 `subject_id` 查询即可。
+
+### §29.14.2 落地范围（**只改"汇总"，不改"投影"**）
+
+| 口径 | 处理 | 理由 |
+|---|---|---|
+| **Report · `sections.recentEvidence`** | **排除**未确认的 claimRef | 它就是"最近的证据汇总"；C4-A 冻结的是**字段集**，内容可以（也必须）正确 |
+| **Evaluation · `DimensionEvaluation.evidenceRefs`** | 拆成 `evidenceRefs`（已确认）+ **`unconfirmedEvidenceRefs`（新增**可选**字段）** | 契约要求"不得计入"，但信息不能凭空消失 ⇒ 单列；字段**可选** ⇒ 向后兼容 |
+| Report · `recentChanges` / `mainJudgments` / 其它 section | **不动** | 它们描述的是**认知变化**，不是"证据汇总" |
+| **Pool / Gap / Sufficiency / `InvestmentEvaluation.coverage`** | **不动** | 5a 明确**接受**"部分可见"；这些是**投影视角**，在此过滤等于偷换 5b 语义（已裁决不采用） |
+| `sections.evaluation`（persisted 镜像） | **不动** | C4-A 冻结：它是快照镜像，过滤会破坏"重算不产生新真相"（I14） |
+
+> **边界声明**：5a 的"评价的叙述"**落地为** —— 报告的 `recentEvidence` 排除 + `DimensionEvaluation.evidenceRefs` 拆分；
+> **不**包含 `coverage` / `sufficiency` 的判定（投影层，5a 接受其部分可见）。
+>
+> 注：拆分是**加法**的（两个桶不相交，并集不变）。若某个未确认 Claim **从未**被投影视图引用
+> （例如它没进入任何 Pool item），则两个桶都不含它 —— 契约禁止的是"**计入已确认**"，不是"必须到处出现"。
+
+### §29.14.3 验收
+
+| # | 场景 | 期望 |
+|---|---|---|
+| **T-R1-16** | 一份 `failed`（已部分投影）的材料 | 其 Claim **在** belief / Pool（5a 接受部分可见）；**不在** `recentEvidence`；**不在** 任何 `DimensionEvaluation.evidenceRefs`；**在** `unconfirmedEvidenceRefs` |
+| **T-R1-17** | 同一材料随后补齐为 `completed` | 其 Claim **计入** `recentEvidence`（不再是未确认） |
+| mutation | 去掉 `unconfirmedClaimRefs` 过滤 | T-R1-16 必须转红 |
+| mutation | 把判断改成"一律过滤" | T-R1-17 必须转红 |
+
+**End of §29（rev7: §29.14 5a 落地）.**
+
 
