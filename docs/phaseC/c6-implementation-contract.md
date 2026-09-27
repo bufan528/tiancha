@@ -11,7 +11,7 @@
 
 | 版本 | 变更 |
 |---|---|
-| **rev15** | **§C6.28 = 模型提取器契约（独立文件）**：`c6-model-extractor-contract.md` **rev1**（**DESIGN ONLY，实现未授权**）—— D-C6-H（窗口分批 + 规则进身份）· D-C6-I（模型只给引用文本与位置，ID 由天查生成，引用不成立则整次失败）· D-C6-J（异步 + 全成或全败单事务 + 不覆盖已审核候选）。**本轮纯文档，零代码改动** |
+| **rev15** | **§C6.28 = 模型提取器契约（独立文件）**：`c6-model-extractor-contract.md` **rev2**（**DESIGN ONLY，实现未授权**）—— D-C6-H（窗口分批 + 分隔符归前窗 + 规则进身份）· D-C6-I（模型只给引用文本与位置 → **引文即 Fragment** → ID 由天查生成，引用不成立则整次失败）· D-C6-J（异步 + 全成或全败单事务 + 已有成功运行则复用 + 不覆盖已审核候选）。**本轮纯文档，零代码改动** |
 | **rev14** | **D-C6-G 实现 + 多来源证据展示**（`4f969b5` / `0143ffd`）：① `REVISE` 目标管线落地（`revisedClaimRef` + 新列 `revised_claim_ref` + 决定期/投影前双重校验 + 重试不可更换 + CLI `--revises-claim`；验收 T-C6-21…T-C6-27）—— 顺带修好 **CLI `confirm --supersedes-claim` 从未接线**的既有缺陷；② `ClaimCandidateLine`/`CandidateView` 的 `excerpt` 改为逐条 `evidence[]`（`evidenceRef`+`locator`+`excerpt`），`candidate show` / 审核输出 / Markdown 逐条列出（T-C6-10 加强 + T-C6-28）。全量 **469/469**（125 suites）+ smoke PASS。详见 §C6.26.8 / §C6.27 |
 | **rev13** | **§C6.26 `REVISE` 目标契约（D-C6-G，用户裁决）**：`confirm --relation REVISE` **必须**带 `--revises-claim <claimRef>`，**不得自动选择"最新一条"**；目标校验与 SUPERSEDE **同源**（复用 `checkEvolutionTarget`）；目标随决定持久化且重试不得更换；验收 T-C6-21…T-C6-26 |
 | **rev12** | **独立复核后的三项修复**（`4b74862` / `67f72a8` / `455b31d`）：① **演化目标（SUPERSEDE / REVISE）决定期 + 投影前双重校验**，知识侧 `SKIPPED` 时**不再**收口为 `finalized`（投影后验证真实 belief）· ② T-C6-10 改为**把定位解析回材料原文** + 新增 **T-C6-13b**（跨材料版本证据）· ③ **决定与审计行同一事务**（`applyAndAudit`）。新增 T-C6-14…T-C6-20。全量 **461/461**（124 suites）+ smoke PASS。详见 §C6.25 |
@@ -951,7 +951,7 @@ Markdown      ：- 证据 1：`ev-be8f…` @ `paragraph:0`  → 摘录：第一�
 
 ## §C6.28 模型提取器契约（独立文件，**DESIGN ONLY —— 实现未授权**）
 
-**普通行业报告自动进入候选层**的契约已起草为独立文件：[`c6-model-extractor-contract.md`](./c6-model-extractor-contract.md)（**rev1**）。
+**普通行业报告自动进入候选层**的契约已起草为独立文件：[`c6-model-extractor-contract.md`](./c6-model-extractor-contract.md)（**rev2**）。
 
 **三项核对要点**（用户 2026-09-28 裁决）：
 
