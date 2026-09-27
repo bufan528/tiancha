@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev8 — 第 ① / ② / ③ 片已授权实现并交付（§C6.18–§C6.21）；片 ④–⑤ 仍未授权。**
+> 状态：**rev9 — 第 ①–④ 片已授权实现并交付（§C6.18–§C6.22）；片 ⑤ 仍未授权。**
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -12,6 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
+| **rev9** | **第 ④ 片（投影到既有认知路径）实现并交付**（`13db5d1`）：`CandidateProjectionService` **只调用** 既有 `ingestClaims()`（不改其语义）· confirm 记录即投影 + `candidate project` 幂等续跑 · `reservedClaimId` 在 P1 持久化 ⇒ 崩溃后**找回同一 Claim** · 重跑不产生第二个 Claim/belief · `confirmedClaimRef` 用统一 claimRef 形状 · 6 例验收 · 全量 **447/447** + smoke PASS。**片 ⑤ 未授权**。详见 §C6.22 |
 | **rev8** | **第 ③ 片（人工审阅入口）实现并交付**（`57259e7`）：CLI `candidate list/show/confirm/revise/reject` · `--operator` 必填 · `confirm` 需 `--relation`（I-C6-8）· **`revise` 只编辑并保持 draft** · append-only 审计 · Agent 只读工具（20 → 21）· **确认≠投影**（实测下游全 0）· 8 例验收 · 全量 **441/441** + smoke PASS。**片 ④–⑤ 未授权**。详见 §C6.21 |
 | **rev7** | **第 ② 片（候选生成与身份，W3）实现并交付**（`fb93e4c`）：新增 `claim_candidate` / `candidate_review` / `extraction_run`（29 → **32**）· `extractionConfigKey` 纳入身份 · insert-only 保护人工编辑 · `isProjectable` 落实 I-C6-8 · **LLM-free 参考提取器 + 可注入接口**（模型提取器仍未授权）· 9 例验收 · 全量 **433/433** + smoke PASS。**片 ③–⑤ 未授权**。详见 §C6.20 |
 | **rev6** | **第 ① 片修订（slice-1 review 闭环，§C6.19）**：W1 **真正原子**（单事务，嵌套安全）· 版本**必须属于既有 Material** 且 subject 从 Material 读取 · 版本**不可变**（insert-only，同 id 不同内容**报错**）· locator 合法性校验（整数/非空/范围内）· **完整性与定位检查分离**（`verifyVersionIntegrity` vs `verifyFragmentLocation`）· 分段规则与**引用口径**写入契约 · 表名同步为 `fragment_evidence`。测试 9 → **13** 例；全量 **424/424** |
@@ -652,4 +653,45 @@ candidate reject <other> --operator analyst --comment 来源不可靠 → exit 0
 
 下游实测：`claim_candidate = 2` · `candidate_review = 3` · **`knowledge_belief = 0`** · **`information_pool_item = 0`** · **`research_gap = 0`**。
 
-**End of contract（rev8: §C6.21 第 ③ 片实现记录）.**
+---
+
+## §C6.22 第 ④ 片实现记录（2026-09-27，**已授权并交付**）
+
+| 项 | 内容 |
+|---|---|
+| Commit | **`13db5d1`**（代码 + 测试；文档单独提交） |
+| 范围 | **W4 投影**：已确认候选 ⇒ **既有 `ingestClaims()`** ⇒ Knowledge |
+| ★ **复用而非重写** | `CandidateProjectionService` **只调用** `OpportunityDiscoveryService.ingestClaims()`；Claim 写入 / 投影 / `refreshSubject` **全部由既有路径完成**，其签名与语义**未改**（§C6.10） |
+| 触发 | `candidate confirm --relation …` **记录人工决定后立即投影**；`candidate project <id> --operator` 用于**任意时刻续跑 / 重做**（幂等） |
+| I-C6-8 | `draft` 或**无 relation** 的候选 ⇒ **拒绝**（实测 draft 候选 `project` ⇒ **exit 1**） |
+| §C6.17 状态机 | `none → reserved → claim_written → projected → finalized`；**P1 即持久化 `reservedClaimId`** ⇒ 崩溃后重跑**找回同一个 Claim** |
+| 幂等 | 传 `claimIds: [reserved]` + **稳定** `sourceId` / `runId` ⇒ artifact `put` 按 `artifactId` 幂等 + belief 确定性 id ⇒ **重跑不产生第二个 Claim / belief**（实测第二次为 `already_projected` 且**计数不变**） |
+| ★ claimRef 形状 | `confirmedClaimRef` 存**项目统一的引用形状** `artifact:claim/<id>`；`reservedClaimId` 存裸 artifact id —— 两者**不得混用** |
+| 错误留痕 | 投影抛错 ⇒ 记 `projectionError`；候选**保持 `confirmed`**、状态可续跑（实测：注入抛错的 artifact store ⇒ `failed` + 记录；恢复后重跑**复用同一 `reservedClaimId`**） |
+| SUPERSEDE | 必须给 `--supersedes-claim <claimRef>`，否则**拒绝**（不猜要取代哪条 Claim） |
+| CLI 文案 | confirm 现在会真的投影 ⇒ 提示改为**按是否配置投影服务**区分（`attempted` / `not_wired`），不再固定说"尚未投影" |
+| 验收 | `packages/research/src/phase-c6-projection.test.ts` **6 例**：T-C6-3（走既有路径 + **双向可追**）· T-C6-2（draft 拒绝 + 指纹不变）· T-C6-8（**任意点重跑幂等**：P4 后 / 清掉 P4 回填 / P2 后）· T-C6-8b（失败留痕 + 恢复同 id）· T-C6-9（SUPERSEDE 不猜）· 被拒候选不可投影 + 两候选独立 |
+| 收口 | root `tsc` **0** · research typecheck **0** · **447 tests / 447 pass / 0 fail**（120 suites）· `research smoke` **PASS** |
+| 未做（按授权边界） | 报告接入（片 ⑤）—— **未授权** |
+
+### §C6.22.1 真实 CLI 证据（隔离库）
+
+```text
+BEFORE   knowledge_belief=0 | industry_knowledge=0 | information_pool_item=0 | research_gap=0
+
+candidate confirm <id> --operator analyst --relation SUPPORT --comment 口径与报告一致
+  审核状态：confirmed · relation=SUPPORT
+  → 正在通过既有 ingestClaims 路径投影（结果见下）。
+  候选 <id> · 投影结果：projected
+  已生成 Claim：artifact:claim/claim-379055ff-…（可双向追溯：候选 ↔ Claim）
+
+AFTER    knowledge_belief=1 | industry_knowledge=1 | information_pool_item=0 | research_gap=0
+
+candidate project <id> --operator analyst     → already_projected，计数**不变**（belief 仍 1）
+candidate project <draft-candidate> --operator analyst → exit 1（I-C6-8 拒绝）
+
+候选行：review_status=confirmed · decision_relation=SUPPORT · projection_status=finalized
+        reserved_claim_id=claim-379055ff-… · confirmed_claim_ref=artifact:claim/claim-379055ff-…
+```
+
+**End of contract（rev9: §C6.22 第 ④ 片实现记录）.**
