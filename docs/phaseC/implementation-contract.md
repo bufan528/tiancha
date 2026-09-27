@@ -2462,6 +2462,38 @@ overlaps 初始值 = 材料已持久化的 ingestOverlaps（续跑必须记住�
 | mutation | `material list` 不显示 `ingestOverlaps` | T-R1-26 的 ② 必须转红 |
 | mutation | `attribute` 允许非 `completed` 目标 | T-R1-26 的 ③ 必须转红 |
 
-**End of §29（rev12: §29.19 复核修正 6）.**
+## §29.20 复核修正 7（2026-09-26，验收者指出后）
+
+> ⚠️ 追加记录。§29.0 – §29.19 原文**一字未改**。
+
+### §29.20.1 缺陷 13 — `attribute` 的校验不完整（**已修**）
+
+§29.19 的 `attributeClaim()` 只校验：**claimRef 形态** ✓、**目标材料存在** ✓、**目标 `completed`** ✓。
+它**没有**核实：
+
+1. 该 Claim **是否真的存在**（`artifacts.sqlite` 里是否写过）⇒ 一个**格式正确但虚构的引用**也能被登记进 `claim_refs_json`；
+2. 该 Claim 的 **subject 是否与目标材料一致** ⇒ **别的行业**的 Claim 也能被登记成本材料的"已确认证据"。
+
+正常顺着 `material list` 展示的重叠引用操作走不到这两条分支（那些 ref 本来就来自扫描），但**直接调用 `attribute`** 可以。
+
+**修正 —— 补两项校验（都在写入之前）**：
+
+| 校验 | 规则 |
+|---|---|
+| **存在性** | `artifactStore.get(claimId)` 必须返回记录，否则报错 `claim '<id>' does not exist …` |
+| **subject 一致** | Claim blob 的 `subjectKind` / `subjectId` 必须**同时存在**且**与目标材料相同**；缺失 ⇒ 明确拒绝（**绝不猜**）；不一致 ⇒ 报错并把两个 subject 都打印出来 |
+
+> 因此 `attributeClaim()` 变为 **async**（它现在要读另一个库），CLI 调用点相应 `await`。
+
+### §29.20.2 验收
+
+| # | 场景 | 期望 |
+|---|---|---|
+| **T-R1-27** | ① 格式合法但**从未写入**的 claimRef；② **另一个 subject** 的真实 Claim | ① exit 1 + `does not exist`，目标 `claim_refs` **不变**；② exit 1 + `belongs to …`，目标 `claim_refs` **不变** |
+| **T-R1-26（回归）** | 正常的"查看 → 登记 → `--force`"链路 | 仍然全部通过（正例未被这次收紧破坏） |
+| mutation | 去掉存在性校验 | T-R1-27 的 ① 必须转红 |
+| mutation | 去掉 subject 校验 | T-R1-27 的 ② 必须转红 |
+
+**End of §29（rev13: §29.20 复核修正 7）.**
 
 
