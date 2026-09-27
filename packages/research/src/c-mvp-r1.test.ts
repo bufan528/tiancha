@@ -631,6 +631,7 @@ describe("C-MVP-R1 · fencing: a stale holder can never overwrite the new one (�
             ingestStage: null,
             ingestError: null,
             ingestBlocks: current.ingestBlocks,
+            ingestOverlaps: [],
             claimRefs: [],
             ingestOwner: null,
             ingestLeaseUntil: null,
@@ -658,6 +659,7 @@ describe("C-MVP-R1 · fencing: a stale holder can never overwrite the new one (�
         ingestStage: "projecting" as const,
         ingestError: null,
         ingestBlocks: current.ingestBlocks,
+        ingestOverlaps: [],
         claimRefs: [] as string[],
         ingestOwner: "A",
         ingestLeaseUntil: future,
@@ -1127,3 +1129,74 @@ describe("C-MVP-R1 · orphan scan reach and ambiguity (§29.15)", () => {
   });
 
 import { parseClaims } from "./domain/material-parser.js";
+
+// ===========================================================================
+// T-R1-24 — §29.17: a SINGLE same-content Claim that NO completed material owns is still
+// un-attributable ⇒ the subject keeps the conservative downgrade (while this import succeeds and
+// keeps its own Claim ids).
+// ===========================================================================
+
+describe("C-MVP-R1 · an un-attributable overlap keeps the subject conservative (§29.17)", () => {
+  test("T-R1-24: a single un-owned same-content Claim is never counted as confirmed", async () => {
+    const t = await setup("R1 行业 single");
+    try {
+      const knowledge = new KnowledgeRepository(t.db.db);
+      const claims = parseClaims(MATERIAL).claims;
+
+      // A Claim the (pre-R1) pipe wrote AND projected: it HAS a belief but is owned by NO material.
+      const discovery = new OpportunityDiscoveryService(t.repo, new EchoDataProvider(), t.inner);
+      await discovery.ingestClaims({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        claims: [{ statement: claims[0]!.statement, dimension: "market" }],
+      });
+      const k0 = knowledge.findKnowledgeBySubject("industry", t.sid)!;
+      const legacyRef = knowledge.listBeliefs(k0.knowledgeId)[0]!.claimRef;
+      assert.ok(legacyRef.startsWith("artifact:claim/"), "fixture: the legacy Claim has a belief");
+
+      // While no material exists it looks confirmed — that is the state the material must fix.
+      const before = new ReportService(t.db.db).generateReport("industry", t.sid);
+      assert.ok(
+        before.sections.recentEvidence.includes(legacyRef),
+        "fixture: un-owned and no residual marker yet ⇒ it looks confirmed",
+      );
+
+      // ---- a NEW material carrying the same statement is imported
+      const materials = new MaterialIngestService(t.repo, new EchoDataProvider(), t.inner, {
+        ownerId: "single",
+        knowledge,
+      });
+      const result = await materials.ingest({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        title: "新纪要",
+        text: MATERIAL,
+      });
+      assert.equal(result.outcome, "created", "T-R1-24: the import itself succeeds");
+      assert.ok(
+        result.material.ingestBlocks.every((b) => `artifact:claim/${b.claimId}` !== legacyRef),
+        "T-R1-24: the new material keeps its OWN Claim ids",
+      );
+      assert.equal(
+        result.material.ingestOverlaps.includes(legacyRef),
+        true,
+        "T-R1-24: the un-attributable overlap was recorded on the material",
+      );
+
+      // ---- …and the old, un-owned Claim is no longer confirmed evidence
+      const after = new ReportService(t.db.db).generateReport("industry", t.sid);
+      assert.ok(
+        !after.sections.recentEvidence.includes(legacyRef),
+        "T-R1-24: the un-owned Claim is withheld from recent (confirmed) evidence",
+      );
+      const afterEval = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      assert.ok(
+        !afterEval.dimensionEvaluations.flatMap((d) => d.evidenceRefs).includes(legacyRef),
+        "T-R1-24: …and withheld from the confirmed evidence of every dimension",
+      );
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+});
