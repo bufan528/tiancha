@@ -12,7 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
-| **rev8** | **第 ③ 片（人工审阅入口）实现并交付**（`e0b5a10`）：CLI `candidate list/show/confirm/revise/reject` · `--operator` 必填 · `confirm` 需 `--relation`（I-C6-8）· **`revise` 只编辑并保持 draft** · append-only 审计 · Agent 只读工具（20 → 21）· **确认≠投影**（实测下游全 0）· 8 例验收 · 全量 **441/441** + smoke PASS。**片 ④–⑤ 未授权**。详见 §C6.21 |
+| **rev8** | **第 ③ 片（人工审阅入口）实现并交付**（`57259e7`）：CLI `candidate list/show/confirm/revise/reject` · `--operator` 必填 · `confirm` 需 `--relation`（I-C6-8）· **`revise` 只编辑并保持 draft** · append-only 审计 · Agent 只读工具（20 → 21）· **确认≠投影**（实测下游全 0）· 8 例验收 · 全量 **441/441** + smoke PASS。**片 ④–⑤ 未授权**。详见 §C6.21 |
 | **rev7** | **第 ② 片（候选生成与身份，W3）实现并交付**（`fb93e4c`）：新增 `claim_candidate` / `candidate_review` / `extraction_run`（29 → **32**）· `extractionConfigKey` 纳入身份 · insert-only 保护人工编辑 · `isProjectable` 落实 I-C6-8 · **LLM-free 参考提取器 + 可注入接口**（模型提取器仍未授权）· 9 例验收 · 全量 **433/433** + smoke PASS。**片 ③–⑤ 未授权**。详见 §C6.20 |
 | **rev6** | **第 ① 片修订（slice-1 review 闭环，§C6.19）**：W1 **真正原子**（单事务，嵌套安全）· 版本**必须属于既有 Material** 且 subject 从 Material 读取 · 版本**不可变**（insert-only，同 id 不同内容**报错**）· locator 合法性校验（整数/非空/范围内）· **完整性与定位检查分离**（`verifyVersionIntegrity` vs `verifyFragmentLocation`）· 分段规则与**引用口径**写入契约 · 表名同步为 `fragment_evidence`。测试 9 → **13** 例；全量 **424/424** |
 | **rev5** | **第 ① 片（材料版本 + Fragment/Evidence，W1–W2）实现并交付**（`6407d49`）：新增 3 表（26 → 29）· 独立类型而非扩展既有类型 · 双 hash · v1 定位 · 确定性身份与幂等 · 9 例验收全绿 · 全量 420/420 + smoke PASS。**片 ②–⑤ 未授权**。详见 §C6.18 |
@@ -611,7 +611,7 @@ P4 回填【主库】confirmedClaimRef = reservedClaimId；projectionStatus = fi
 
 | 项 | 内容 |
 |---|---|
-| Commit | **`e0b5a10`**（代码 + 测试；文档单独提交） |
+| Commit | **`57259e7`**（代码 + 测试；文档单独提交） |
 | 范围 | **人工审阅入口**：CLI 五命令 + 服务层 + Agent 只读工具 |
 | CLI | `tiancha research candidate list \| show \| confirm \| revise \| reject`（`list` 用 `<行业名>` 或 `--material-version <id>`，可加 `--status`) |
 | **`--operator`** | 所有写操作 **必填且非空** —— 实测缺省 ⇒ **exit 1** |
