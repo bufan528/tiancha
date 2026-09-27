@@ -47,6 +47,9 @@ export class ResearchRepository {
    * Used for atomic multi-row decisions (e.g. methodology activation check+write).
    */
   transaction<T>(fn: () => T): T {
+    // ★ C6 slice ①: when already inside a transaction, JOIN it instead of opening a nested one
+    // (SQLite forbids nested BEGIN). This is what makes the W1 "version + fragments" write atomic.
+    if (this.db.isTransaction) return fn();
     this.db.exec("BEGIN");
     try {
       const result = fn();
@@ -789,24 +792,20 @@ export class ResearchRepository {
   // Every identity below is DETERMINISTIC (§C6.7) ⇒ all methods are idempotent re-runs:
   // same input ⇒ same row, never a duplicate. Fragments are immutable (DO NOTHING on conflict).
 
-  upsertMaterialVersion(v: MaterialVersion): void {
-    this.db
+  /**
+   * INSERT-ONLY idempotent write of a material version.
+   * Versions are IMMUTABLE (§C6.3): the same id with the same content is a no-op, but the same id
+   * carrying different immutable fields is an ERROR — a silent overwrite would invalidate every
+   * fragment already located against the old text (slice-1 review).
+   */
+  insertMaterialVersion(v: MaterialVersion): void {
+    const res = this.db
       .prepare(
         `INSERT INTO material_version
          (material_version_id, material_id, subject_kind, subject_id, raw_text, raw_text_ref,
           raw_hash, normalized_hash, normalization_version, byte_length, char_length, created_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(material_version_id) DO UPDATE SET
-           material_id           = excluded.material_id,
-           subject_kind          = excluded.subject_kind,
-           subject_id            = excluded.subject_id,
-           raw_text              = excluded.raw_text,
-           raw_text_ref          = excluded.raw_text_ref,
-           raw_hash              = excluded.raw_hash,
-           normalized_hash       = excluded.normalized_hash,
-           normalization_version = excluded.normalization_version,
-           byte_length           = excluded.byte_length,
-           char_length           = excluded.char_length`,
+         ON CONFLICT(material_version_id) DO NOTHING`,
       )
       .run(
         v.materialVersionId,
@@ -822,6 +821,25 @@ export class ResearchRepository {
         v.charLength,
         v.createdAt,
       );
+    if (Number(res.changes) === 1) return;
+    const existing = this.getMaterialVersion(v.materialVersionId);
+    if (existing === undefined) {
+      throw new Error(`material version ${v.materialVersionId} disappeared during insert`);
+    }
+    const same =
+      existing.materialId === v.materialId &&
+      existing.subjectKind === v.subjectKind &&
+      existing.subjectId === v.subjectId &&
+      existing.rawText === v.rawText &&
+      existing.rawHash === v.rawHash &&
+      existing.normalizedHash === v.normalizedHash &&
+      existing.normalizationVersion === v.normalizationVersion;
+    if (!same) {
+      throw new Error(
+        `material version ${v.materialVersionId} already exists with DIFFERENT content - versions ` +
+          "are immutable (§C6.3); register a new version instead of overwriting one",
+      );
+    }
   }
 
   getMaterialVersion(materialVersionId: string): MaterialVersion | undefined {
@@ -863,8 +881,7 @@ export class ResearchRepository {
        VALUES (?,?,?,?,?,?,?)
        ON CONFLICT(fragment_id) DO NOTHING`,
     );
-    this.db.exec("BEGIN");
-    try {
+    this.transaction(() => {
       for (const f of fragments) {
         stmt.run(
           f.fragmentId,
@@ -876,11 +893,7 @@ export class ResearchRepository {
           f.createdAt,
         );
       }
-      this.db.exec("COMMIT");
-    } catch (err) {
-      this.db.exec("ROLLBACK");
-      throw err;
-    }
+    });
   }
 
   getFragment(fragmentId: string): MaterialFragment | undefined {

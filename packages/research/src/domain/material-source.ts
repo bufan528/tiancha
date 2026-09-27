@@ -96,6 +96,34 @@ export function splitParagraphs(text: string): { index: number; start: number; e
   return out;
 }
 
+/**
+ * Locator validity (slice-1 review). A `char_range` handed straight to `slice()` can silently
+ * produce an empty-but-"valid" fragment, so v1 demands integers, non-empty spans and in-range ends.
+ */
+export function assertValidLocator(l: FragmentLocator, normalizedLength: number): void {
+  const isInt = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n);
+  switch (l.kind) {
+    case "char_range":
+      if (!isInt(l.start) || !isInt(l.end)) throw new Error("char_range must use integers");
+      if (l.start < 0) throw new Error(`char_range.start must be >= 0 (got ${l.start})`);
+      if (l.end <= l.start) throw new Error(`char_range must be non-empty: start < end (got ${l.start}..${l.end})`);
+      if (l.end > normalizedLength) {
+        throw new Error(`char_range.end ${l.end} exceeds the normalized text length ${normalizedLength}`);
+      }
+      return;
+    case "paragraph":
+      if (!isInt(l.index)) throw new Error("paragraph.index must be an integer");
+      if (l.index < 0) throw new Error(`paragraph.index must be >= 0 (got ${l.index})`);
+      return;
+    case "page":
+    case "timestamp":
+      throw new Error(
+        `locator kind "${l.kind}" is not enabled in v1 (contract §C6.15 D-C6-A = (a); ` +
+          `enabled: ${V1_LOCATOR_KINDS.join(", ")})`,
+      );
+  }
+}
+
 /** Resolve a locator against NORMALIZED text. `undefined` = not resolvable (v1-disabled kinds included). */
 export function resolveLocator(normalizedText: string, l: FragmentLocator): string | undefined {
   switch (l.kind) {
@@ -222,7 +250,9 @@ export function buildMaterialFragment(
         `enabled: ${V1_LOCATOR_KINDS.join(", ")})`,
     );
   }
-  const text = resolveLocator(normalizeText(version.rawText), locator);
+  const normalized = normalizeText(version.rawText);
+  assertValidLocator(locator, normalized.length);
+  const text = resolveLocator(normalized, locator);
   if (text === undefined) {
     throw new Error(`locator ${locatorKey(locator)} does not resolve against version ${version.materialVersionId}`);
   }
@@ -264,17 +294,47 @@ export function buildFragmentEvidence(
 }
 
 /**
- * §C6.3 machine re-computation: does `fragment` still point at exactly this text in `rawText`?
- * ⇒ MUST be true for every fragment; a single changed character makes it false (T-C6-1).
+ * VERSION INTEGRITY - are BOTH hashes consistent with the stored raw text?
+ * Kept apart from the location check on purpose (slice-1 review): NFKC maps some distinct raw
+ * byte sequences onto the same normalized text, so a location check alone could stay green while
+ * the raw material had actually changed. Integrity is its own, separately assertable check.
  */
-export function verifyFragmentRef(
-  version: { rawText: string; normalizedHash: string; normalizationVersion: string },
-  fragment: MaterialFragment,
-): boolean {
-  if (version.normalizationVersion !== NORMALIZATION_VERSION) return false;
+export interface VersionIntegrity {
+  rawHashOk: boolean;
+  normalizedHashOk: boolean;
+  normalizationVersionOk: boolean;
+}
+
+export function verifyVersionIntegrity(version: {
+  rawText: string;
+  rawHash: string;
+  normalizedHash: string;
+  normalizationVersion: string;
+}): VersionIntegrity {
+  return {
+    rawHashOk: sha256Hex(version.rawText) === version.rawHash,
+    normalizedHashOk: sha256Hex(normalizeText(version.rawText)) === version.normalizedHash,
+    normalizationVersionOk: version.normalizationVersion === NORMALIZATION_VERSION,
+  };
+}
+
+/**
+ * LOCATION check ONLY - does `fragment` still point at exactly this text inside the (normalized)
+ * raw text? It deliberately does NOT re-check the version hashes; combine it with
+ * `verifyVersionIntegrity` when both properties are needed. One changed character makes it false.
+ */
+export function verifyFragmentLocation(version: { rawText: string }, fragment: MaterialFragment): boolean {
   const normalized = normalizeText(version.rawText);
-  if (sha256Hex(normalized) !== version.normalizedHash) return false;
-  const span = resolveLocator(normalized, fragment.locator);
+  let span: string | undefined;
+  try {
+    assertValidLocator(fragment.locator, normalized.length);
+    span = resolveLocator(normalized, fragment.locator);
+  } catch {
+    return false;
+  }
   if (span === undefined) return false;
   return span === fragment.text && sha256Hex(fragment.text) === fragment.textHash;
 }
+
+/** Back-compat alias: the historical name of the location check. */
+export const verifyFragmentRef = verifyFragmentLocation;

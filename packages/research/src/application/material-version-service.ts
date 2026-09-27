@@ -14,7 +14,9 @@ import {
   materialVersionIdFor,
   NORMALIZATION_VERSION,
   sha256Hex,
-  verifyFragmentRef,
+  verifyFragmentLocation,
+  verifyVersionIntegrity,
+  type VersionIntegrity,
   type FragmentEvidence,
   type FragmentEvidenceStance,
   type FragmentLocator,
@@ -26,9 +28,8 @@ import type { ResearchRepository } from "../storage/research-repository.js";
 export type MaterialSubjectKind = "industry" | "company" | "general";
 
 export interface RegisterVersionInput {
+  /** The C-MVP material this version belongs to. It MUST already exist (§C6.3). */
   materialId: string;
-  subjectKind: MaterialSubjectKind;
-  subjectId: string;
   /** The raw text exactly as provided; it is stored verbatim. */
   rawText: string;
   createdAt?: string;
@@ -53,20 +54,30 @@ export class MaterialVersionService {
    * returns the SAME version (idempotent); changed bytes ⇒ a NEW version (old ones are never deleted).
    */
   registerVersion(input: RegisterVersionInput): RegisterVersionResult {
+    // ★ §C6.3: a version is a version STREAM OF an existing C-MVP material. Read the material and
+    // TAKE its subject from there — a caller can no longer pair an arbitrary subject with a
+    // mistyped materialId (slice-1 review).
+    const material = this.repo.getMaterial(input.materialId);
+    if (material === undefined) {
+      throw new Error(
+        `material not found: ${input.materialId} — a material version belongs to an existing ` +
+          "C-MVP material (§C6.3)",
+      );
+    }
     const version = buildMaterialVersion({
-      materialId: input.materialId,
-      subjectKind: input.subjectKind,
-      subjectId: input.subjectId,
+      materialId: material.materialId,
+      subjectKind: material.subjectKind as MaterialSubjectKind,
+      subjectId: material.subjectId,
       rawText: input.rawText,
       createdAt: input.createdAt ?? nowIso(),
     });
     const existing = this.repo.findMaterialVersionByRawHash(
-      input.materialId,
+      version.materialId,
       version.rawHash,
       version.normalizationVersion,
     );
     if (existing !== undefined) return { version: existing, created: false };
-    this.repo.upsertMaterialVersion(version);
+    this.repo.insertMaterialVersion(version);
     return { version, created: true };
   }
 
@@ -132,12 +143,23 @@ export class MaterialVersionService {
    * §C6.3 machine re-computation over an entire version: every fragment must still point at exactly
    * its text inside the raw text. A single changed character turns the corresponding entry red.
    */
-  verifyVersion(version: MaterialVersion): { fragmentId: string; locator: FragmentLocator; ok: boolean }[] {
-    return this.listFragments(version.materialVersionId).map((f) => ({
+  verifyVersion(version: MaterialVersion): {
+    integrity: VersionIntegrity;
+    fragments: { fragmentId: string; locator: FragmentLocator; locationOk: boolean }[];
+    ok: boolean;
+  } {
+    const integrity = verifyVersionIntegrity(version);
+    const fragments = this.listFragments(version.materialVersionId).map((f) => ({
       fragmentId: f.fragmentId,
       locator: f.locator,
-      ok: verifyFragmentRef(version, f),
+      locationOk: verifyFragmentLocation(version, f),
     }));
+    const ok =
+      integrity.rawHashOk &&
+      integrity.normalizedHashOk &&
+      integrity.normalizationVersionOk &&
+      fragments.every((f) => f.locationOk);
+    return { integrity, fragments, ok };
   }
 
   /** Convenience for tests/CLI: register + fragment in one call (still idempotent). */
@@ -146,9 +168,13 @@ export class MaterialVersionService {
     created: boolean;
     fragments: MaterialFragment[];
   } {
-    const { version, created } = this.registerVersion(input);
-    const fragments = this.addFragments(version, input.locators, input.createdAt);
-    return { version, created, fragments };
+    // ★ W1 (§C6.7): the version AND its initial fragments commit in ONE transaction — a crash in
+    // between can no longer leave a version row with no fragments (slice-1 review).
+    return this.repo.transaction(() => {
+      const { version, created } = this.registerVersion(input);
+      const fragments = this.addFragments(version, input.locators, input.createdAt);
+      return { version, created, fragments };
+    });
   }
 }
 
