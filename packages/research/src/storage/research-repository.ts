@@ -571,8 +571,9 @@ export class ResearchRepository {
          (material_id, subject_kind, subject_id, kind, title, filename, content_hash,
           raw_text, locator, claim_refs_json, received_at, created_at,
           ingest_status, ingest_stage, ingest_error, parser_version, model_version,
-          ingest_attempts, ingest_owner, ingest_lease_until, ingest_generation, ingest_blocks_json)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          ingest_attempts, ingest_owner, ingest_lease_until, ingest_generation,
+          ingest_overlaps_json, ingest_blocks_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(material_id) DO UPDATE SET
            subject_kind       = excluded.subject_kind,
            subject_id         = excluded.subject_id,
@@ -593,6 +594,7 @@ export class ResearchRepository {
            ingest_owner       = excluded.ingest_owner,
            ingest_lease_until = excluded.ingest_lease_until,
            ingest_generation  = excluded.ingest_generation,
+           ingest_overlaps_json = excluded.ingest_overlaps_json,
            ingest_blocks_json = excluded.ingest_blocks_json`,
       )
       .run(
@@ -617,6 +619,7 @@ export class ResearchRepository {
         m.ingestOwner ?? null,
         m.ingestLeaseUntil ?? null,
         m.ingestGeneration,
+        JSON.stringify(m.ingestOverlaps),
         JSON.stringify(m.ingestBlocks),
       );
   }
@@ -678,11 +681,15 @@ export class ResearchRepository {
     leaseUntil: string,
     resumeStage: string,
     now: string,
-    options: { allowTerminal?: boolean } = {},
+    options: { allowCompleted?: boolean; allowResidual?: boolean } = {},
   ): number | null {
-    const statusList = options.allowTerminal
-      ? "('received','parsed','failed','projecting','completed','legacy_failed')"
-      : "('received','parsed','failed','projecting')";
+    // ★ §29.17: the whitelist is widened PER STATUS, never wholesale. A concurrent `retry` must not
+    // be able to take over a row that meanwhile COMPLETED — only an explicit `--force` may, and a
+    // `legacy_failed`残骸 only with `--accept-orphans`.
+    const statuses = ["'received'", "'parsed'", "'failed'", "'projecting'"];
+    if (options.allowCompleted) statuses.push("'completed'");
+    if (options.allowResidual) statuses.push("'legacy_failed'");
+    const statusList = `(${statuses.join(",")})`;
     const row = this.db
       .prepare(
         `UPDATE material
@@ -719,6 +726,7 @@ export class ResearchRepository {
       ingestStage: MaterialIngestStage | null;
       ingestError: string | null;
       ingestBlocks: Material["ingestBlocks"];
+      ingestOverlaps: string[];
       claimRefs: string[];
       ingestOwner: string | null;
       ingestLeaseUntil: string | null;
@@ -729,7 +737,7 @@ export class ResearchRepository {
       .prepare(
         `UPDATE material
             SET ingest_status = ?, ingest_stage = ?, ingest_error = ?, ingest_blocks_json = ?,
-                claim_refs_json = ?, ingest_owner = ?, ingest_lease_until = ?
+                ingest_overlaps_json = ?, claim_refs_json = ?, ingest_owner = ?, ingest_lease_until = ?
           WHERE material_id = ?
             AND ingest_generation = ?`,
       )
@@ -738,6 +746,7 @@ export class ResearchRepository {
         patch.ingestStage,
         patch.ingestError,
         JSON.stringify(patch.ingestBlocks),
+        JSON.stringify(patch.ingestOverlaps),
         JSON.stringify(patch.claimRefs),
         patch.ingestOwner,
         patch.ingestLeaseUntil,
@@ -1415,6 +1424,7 @@ function rowToMaterial(row: any): Material {
     ingestLeaseUntil: row.ingest_lease_until ?? undefined,
     ingestGeneration: row.ingest_generation ?? 0,
     ingestBlocks: row.ingest_blocks_json ? JSON.parse(row.ingest_blocks_json) : [],
+    ingestOverlaps: row.ingest_overlaps_json ? JSON.parse(row.ingest_overlaps_json) : [],
   };
 }
 

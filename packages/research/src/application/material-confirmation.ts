@@ -43,6 +43,13 @@ export function materialEvidenceIndex(
   let hasResidual = false;
 
   for (const material of repo.listMaterials(subjectId)) {
+    // ★ §29.17: the residual marker applies to ANY material — INCLUDING a `completed` one that
+    // merely OBSERVED an un-attributable overlapping Claim. It must therefore be checked BEFORE the
+    // `continue` below: a completed material never adds to `unconfirmed`, yet it may still be the
+    // reason this subject has to stay conservative.
+    if (material.ingestStatus === "legacy_failed" || material.ingestOverlaps.length > 0) {
+      hasResidual = true;
+    }
     if (material.ingestStatus === "completed") {
       for (const claimId of material.claimRefs) confirmed.add(`${CLAIM_REF_PREFIX}${claimId}`);
       continue;
@@ -50,7 +57,6 @@ export function materialEvidenceIndex(
     // ★ §29.15: EVERY claim id this material owns — including ids merely RESERVED in the ledger.
     for (const claimId of material.claimRefs) unconfirmed.add(`${CLAIM_REF_PREFIX}${claimId}`);
     for (const block of material.ingestBlocks) unconfirmed.add(`${CLAIM_REF_PREFIX}${block.claimId}`);
-    if (material.ingestStatus === "legacy_failed") hasResidual = true;
   }
   return { unconfirmed, confirmed, hasResidual };
 }

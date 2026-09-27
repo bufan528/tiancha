@@ -344,6 +344,9 @@ export class ResearchDb {
         -- ★ §29.5a FENCING: bumped on every successful ownership claim; every later write must
         -- present the generation it was issued, so a stale holder cannot overwrite the new one.
         ingest_generation INTEGER NOT NULL DEFAULT 0,
+        -- \u2605 \u00a729.17: claim refs that overlap this material's blocks by content but belong to
+        -- NO completed material => the subject keeps its conservative downgrade until a human decides.
+        ingest_overlaps_json TEXT NOT NULL DEFAULT '[]',
         ingest_blocks_json TEXT NOT NULL DEFAULT '[]'
       );
       CREATE INDEX IF NOT EXISTS idx_material_subject ON material(subject_kind, subject_id);

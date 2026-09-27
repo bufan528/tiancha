@@ -26,6 +26,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
   ResearchDb,
   ResearchRepository,
+  KnowledgeRepository,
   SqliteArtifactStore,
   EchoDataProvider,
   OpportunityDiscoveryService,
@@ -94,7 +95,11 @@ export class TianchaAgentHost {
       methodology,
       priority: new PriorityService(db.db),
       reports: new ReportService(db.db),
-      materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
+      // ★ §29.17: the Agent entry point MUST run the same orphan-overlap detection as the CLI —
+      // without `knowledge` the scan returns immediately and never looks at all.
+      materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts, {
+        knowledge: new KnowledgeRepository(db.db),
+      }),
       // B5: READ-ONLY exposure of the chain / needs / confirmed targets / preparations.
       // No ChainProjectionService is injected: the Agent never projects a chain, and the
       // TargetService here is read-only in practice (there is NO target-write tool).

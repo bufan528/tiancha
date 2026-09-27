@@ -106,6 +106,7 @@ interface MaterialProgressPatch {
   ingestStage: MaterialIngestStage | null;
   ingestError: string | null;
   ingestBlocks: MaterialIngestBlock[];
+  ingestOverlaps: string[];
   claimRefs: string[];
   ingestOwner: string | null;
   ingestLeaseUntil: string | null;
@@ -158,20 +159,21 @@ export class MaterialIngestService {
     if (inFlight) {
       return this.run(inFlight, this.ledgerFor(inFlight, parsed.claims), parsed, input, {
         outcome: "resumed",
-        allowTerminal: false,
+        allowCompleted: false,
+        allowResidual: false,
       });
     }
 
     if (legacy || completed) {
       const terminal = (legacy ?? completed)!;
       const ledger = this.ledgerFor(terminal, parsed.claims);
-      return this.run(
-        terminal,
-        ledger,
-        parsed,
-        { ...input, acceptOrphanRisk: true, force: true },
-        { outcome: "resumed", allowTerminal: true },
-      );
+      return this.run(terminal, ledger, parsed, input, {
+        outcome: "resumed",
+        // ★ §29.17: authorise by USER INTENT, never by the status we just read — the row can change
+        // under us, and that is exactly the race the whitelist must not open.
+        allowCompleted: input.force === true,
+        allowResidual: input.acceptOrphanRisk === true,
+      });
     }
 
     // ---- NEW row (§29.5b P1): the ledger AND its claim ids are persisted with the row itself.
@@ -199,6 +201,7 @@ export class MaterialIngestService {
       ingestOwner: undefined,
       ingestLeaseUntil: undefined,
       ingestBlocks: buildLedger(parsed.claims),
+      ingestOverlaps: [],
     };
 
     try {
@@ -213,7 +216,8 @@ export class MaterialIngestService {
       if (other) {
         return this.run(other, this.ledgerFor(other, parsed.claims), parsed, input, {
           outcome: "resumed",
-          allowTerminal: false,
+          allowCompleted: false,
+          allowResidual: false,
         });
       }
       throw err;
@@ -221,7 +225,8 @@ export class MaterialIngestService {
 
     return this.run(material, material.ingestBlocks, parsed, input, {
       outcome: "created",
-      allowTerminal: false,
+      allowCompleted: false,
+      allowResidual: false,
     });
   }
 
@@ -261,7 +266,13 @@ export class MaterialIngestService {
         force: options.force,
         acceptOrphanRisk: options.acceptOrphanRisk,
       },
-      { outcome: "resumed", allowTerminal: true },
+      {
+        outcome: "resumed",
+        // ★ §29.17: intent-driven whitelist (see above) — a plain `retry` can never take over a row
+        // that completed meanwhile.
+        allowCompleted: options.force === true,
+        allowResidual: options.acceptOrphanRisk === true,
+      },
     );
   }
 
@@ -275,7 +286,7 @@ export class MaterialIngestService {
     ledger: MaterialIngestBlock[],
     parsed: { claims: ParsedClaim[]; errors: string[] },
     input: MaterialIngestInput,
-    options: { outcome: "created" | "resumed"; allowTerminal: boolean },
+    options: { outcome: "created" | "resumed"; allowCompleted: boolean; allowResidual: boolean },
   ): Promise<MaterialIngestOutcome> {
     // ★ §29.5a (+ §29.2 (c) for terminal rows reached through an explicit retry): lease = the ONLY
     // admission condition, status advances in the same statement, and the generation is returned.
@@ -285,13 +296,19 @@ export class MaterialIngestService {
       this.leaseUntil(),
       "received",
       new Date().toISOString(),
-      { allowTerminal: options.allowTerminal },
+      { allowCompleted: options.allowCompleted, allowResidual: options.allowResidual },
     );
     if (generation === null) {
-      return { outcome: "in_progress", material: this.mustGet(material.materialId) };
+      // ★ §29.17: report what ACTUALLY happened — if the row completed while we were losing the
+      // race, the honest answer is `duplicate`, not `in_progress`.
+      const current = this.mustGet(material.materialId);
+      return current.ingestStatus === "completed"
+        ? { outcome: "duplicate", material: current }
+        : { outcome: "in_progress", material: current };
     }
 
     let progress = ledger;
+    let overlaps: string[] = [];
     try {
       // ★ §29.15 (review round 2): the orphan scan runs HERE, not at the call sites, and for ANY
       // attempt whose ledger is still entirely `reserved` — which includes a BRAND-NEW material,
@@ -299,7 +316,7 @@ export class MaterialIngestService {
       // (A resume, or a `--force` re-run, already holds ids it must reuse, so it is skipped.)
       if (progress.length > 0 && progress.every((b) => b.state === "reserved")) {
         // ★ §29.16: DETECTION ONLY — `detectOrphanOverlap` never rewrites the ledger.
-        await this.detectOrphanOverlap(material, parsed.claims, progress);
+        overlaps = await this.detectOrphanOverlap(material, parsed.claims, progress);
       }
 
       // No valid block ⇒ nothing to project, and the import IS complete (§29.2 (b)).
@@ -309,6 +326,7 @@ export class MaterialIngestService {
           ingestStage: null,
           ingestError: null,
           ingestBlocks: [],
+          ingestOverlaps: overlaps,
           claimRefs: [],
           ingestOwner: null,
           ingestLeaseUntil: null,
@@ -345,6 +363,7 @@ export class MaterialIngestService {
             ingestStage: "projecting",
             ingestError: null,
             ingestBlocks: progress,
+            ingestOverlaps: overlaps,
             claimRefs: projectedRefs(progress),
             ingestOwner: this.ownerId,
             ingestLeaseUntil: this.leaseUntil(),
@@ -359,6 +378,7 @@ export class MaterialIngestService {
         ingestStage: null,
         ingestError: null,
         ingestBlocks: progress,
+        ingestOverlaps: overlaps,
         claimRefs: refs,
         ingestOwner: null,
         ingestLeaseUntil: null,
@@ -382,6 +402,7 @@ export class MaterialIngestService {
           ingestStage: ambiguous ? "migration" : "projecting",
           ingestError: message.slice(0, 500),
           ingestBlocks: progress,
+          ingestOverlaps: overlaps,
           claimRefs: projectedRefs(progress),
           ingestOwner: null,
           ingestLeaseUntil: null,
@@ -432,9 +453,9 @@ export class MaterialIngestService {
     material: Material,
     claims: ParsedClaim[],
     ledger: MaterialIngestBlock[],
-  ): Promise<void> {
+  ): Promise<string[]> {
     const knowledge = this.knowledge;
-    if (!knowledge || ledger.length === 0) return;
+    if (!knowledge || ledger.length === 0) return [];
 
     const candidates = new Map<string, Set<string>>();
     const addCandidate = (statement: string | undefined, claimId: string): void => {
@@ -460,16 +481,30 @@ export class MaterialIngestService {
         addCandidate(blob?.statement, claimId);
       }
     }
-    if (candidates.size === 0) return;
+    if (candidates.size === 0) return [];
 
+    // ★ §29.17: which candidates are PROVABLY owned by a completed material? Only those may be
+    // treated as an already-established source. Everything else is unattributed — even a single
+    // candidate — and must keep this subject under the conservative downgrade.
+    const attributed = new Set<string>();
+    for (const other of this.repo.listMaterials(material.subjectId)) {
+      if (other.ingestStatus !== "completed") continue;
+      for (const claimId of other.claimRefs) attributed.add(claimId);
+    }
+
+    const overlaps: string[] = [];
     for (const block of ledger) {
       const statement = claims[block.blockIndex]?.statement;
       const matches = statement ? [...(candidates.get(statement) ?? [])] : [];
-      // ★ §29.16: ambiguity is the ONLY thing we escalate — and never as a guess.
+      // ★ §29.16: ambiguity is escalated — and never as a guess.
       if (matches.length > 1) {
         throw new OrphanClaimAmbiguous(material.materialId, statement!, matches.length);
       }
+      for (const claimId of matches) {
+        if (!attributed.has(claimId)) overlaps.push(`${CLAIM_REF_PREFIX}${claimId}`);
+      }
     }
+    return overlaps;
   }
 
   /**
@@ -496,6 +531,9 @@ export class MaterialIngestService {
 function projectedRefs(ledger: MaterialIngestBlock[]): string[] {
   return ledger.filter((b) => b.state === "projected").map((b) => b.claimId);
 }
+
+/** `artifact:claim/<id>` — the ONE prefix a belief's `claimRef` may use (§15 CR-10). */
+const CLAIM_REF_PREFIX = "artifact:claim/";
 
 /** `artifact:claim/<claimId>` ⇒ `<claimId>` (the belief→claim hop of the orphan scan). */
 function claimIdFromRef(ref: string | undefined): string | undefined {

@@ -101,6 +101,13 @@ export interface Material {
   ingestLeaseUntil?: string;
   /** Per-block ledger (§29.5b). `[]` for legacy rows and materials with no valid blocks. */
   ingestBlocks: MaterialIngestBlock[];
+  /**
+   * ★ §29.17: claim refs that OVERLAP this material's blocks by content but cannot be attributed to
+   * any `completed` material. Non-empty ⇒ this subject keeps the conservative downgrade (the old
+   * Claim is owned by nobody, so it must not count as confirmed evidence) — while THIS material
+   * still completes normally with its own Claim ids.
+   */
+  ingestOverlaps: string[];
 }
 
 /**
