@@ -1200,3 +1200,99 @@ describe("C-MVP-R1 · an un-attributable overlap keeps the subject conservative 
     }
   });
 });
+
+// ===========================================================================
+// T-R1-25 — §29.18: the overlap marker is STICKY. A resume must not clear it, and only an explicit
+// `--force` (after the attribution was actually resolved) may drop it.
+// ===========================================================================
+
+describe("C-MVP-R1 · the overlap marker is sticky (§29.18)", () => {
+  test("T-R1-25: survives a resume and a force re-run; clears only once attribution is resolved", async () => {
+    const t = await setup("R1 行业 sticky");
+    try {
+      const knowledge = new KnowledgeRepository(t.db.db);
+      const claims = parseClaims(MATERIAL).claims;
+
+      // (1) an un-owned Claim that the pre-R1 pipe wrote AND projected (has a belief, no material)
+      const discovery = new OpportunityDiscoveryService(t.repo, new EchoDataProvider(), t.inner);
+      await discovery.ingestClaims({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        claims: [{ statement: claims[0]!.statement, dimension: "market" }],
+      });
+      const k0 = knowledge.findKnowledgeBySubject("industry", t.sid)!;
+      const legacyRef = knowledge.listBeliefs(k0.knowledgeId)[0]!.claimRef;
+      assert.ok(legacyRef.startsWith("artifact:claim/"));
+
+      // (2) a NEW material that FAILS half-way — the marker is written, the import is not finished
+      const broken = new MaterialIngestService(
+        t.repo,
+        new EchoDataProvider(),
+        new FlakyArtifactStore(t.inner, 2),
+        { ownerId: "sticky-broken", knowledge },
+      );
+      const failed = await broken.ingest({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        title: "纪要",
+        text: MATERIAL,
+      });
+      assert.equal(failed.outcome, "failed");
+      assert.equal(
+        failed.material.ingestOverlaps.includes(legacyRef),
+        true,
+        "the marker was recorded when the overlap was detected",
+      );
+      const materialId = failed.material.materialId;
+
+      // (3) a plain RESUME must KEEP it
+      const healthy = new MaterialIngestService(t.repo, new EchoDataProvider(), t.inner, {
+        ownerId: "sticky-healthy",
+        knowledge,
+      });
+      const resumed = await healthy.ingest({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        title: "纪要",
+        text: MATERIAL,
+      });
+      assert.equal(resumed.outcome, "resumed");
+      assert.equal(resumed.material.ingestOverlaps.length > 0, true, "T-R1-25: a resume KEEPS the marker");
+      const afterResume = new ReportService(t.db.db).generateReport("industry", t.sid);
+      assert.ok(
+        !afterResume.sections.recentEvidence.includes(legacyRef),
+        "T-R1-25: …and the conservative downgrade still holds",
+      );
+
+      // (4) a FORCE re-run recomputes — the Claim is still unattributable ⇒ the marker stays
+      const forced = await healthy.retry(materialId, { force: true });
+      assert.equal(forced.outcome, "resumed");
+      assert.equal(
+        forced.material.ingestOverlaps.includes(legacyRef),
+        true,
+        "T-R1-25: still unattributable ⇒ still marked",
+      );
+
+      // (5) the human RESOLVES the attribution: the Claim now belongs to this completed material
+      const material = t.repo.getMaterial(materialId)!;
+      t.db.db
+        .prepare("UPDATE material SET claim_refs_json = ? WHERE material_id = ?")
+        .run(JSON.stringify([...material.claimRefs, legacyRef.replace("artifact:claim/", "")]), materialId);
+      const resolved = await healthy.retry(materialId, { force: true });
+      assert.equal(resolved.outcome, "resumed");
+      assert.equal(
+        resolved.material.ingestOverlaps.length,
+        0,
+        "T-R1-25: once the attribution is resolved, the marker clears",
+      );
+      const afterResolve = new ReportService(t.db.db).generateReport("industry", t.sid);
+      assert.ok(
+        afterResolve.sections.recentEvidence.includes(legacyRef),
+        "T-R1-25: …and the Claim is confirmed evidence again",
+      );
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+});
