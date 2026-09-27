@@ -14,6 +14,7 @@ import { join } from "node:path";
 import {
   ResearchDb,
   ResearchRepository,
+  KnowledgeRepository,
   SqliteArtifactStore,
   EchoDataProvider,
   OpportunityDiscoveryService,
@@ -29,6 +30,7 @@ import {
 } from "@tiancha/research";
 import {
   runMaterialAdd,
+  runMaterialAttribute,
   runMaterialList,
   runMaterialRetry,
   type ResearchCliDeps,
@@ -57,13 +59,15 @@ function makeDeps(
   artifacts: SqliteArtifactStore,
   lines: string[],
   reportDir: string,
+  options: { knowledge?: KnowledgeRepository } = {},
 ): ResearchCliDeps {
   return {
     repo,
     evaluation: new EvaluationService(db.db),
     priority: new PriorityService(db.db),
     reports: new ReportService(db.db),
-    materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts),
+    // ★ §29.19: the CLI wiring carries `knowledge` — same as the Agent host.
+    materials: new MaterialIngestService(repo, new EchoDataProvider(), artifacts, options),
     targets: new TargetService(db.db),
     chain: new ChainProjectionService(db.db),
     needs: new ResearchNeedService(db.db),
@@ -235,3 +239,112 @@ describe("C-MVP-R1 CLI", () => {
     }
   });
 });
+
+// ===========================================================================
+// T-R1-26 — §29.19: the SUPPORTED flow for resolving an overlap, with no direct DB editing:
+//   material list (see it) → material attribute (register the attribution) → retry --force (recompute)
+// ===========================================================================
+
+describe("C-MVP-R1 CLI · resolving an overlap through supported commands (§29.19)", () => {
+  test("T-R1-26: list → attribute → --force clears the marker and restores the evidence", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tiancha-r1-cli3-"));
+    const dbPath = join(dir, "tiancha.sqlite");
+    try {
+      const sid = await bootstrap(dbPath);
+      const db = new ResearchDb({ path: dbPath });
+      const repo = new ResearchRepository(db.db);
+      const artifacts = new SqliteArtifactStore({ path: ":memory:" });
+      const knowledge = new KnowledgeRepository(db.db);
+      const lines: string[] = [];
+      const deps = makeDeps(db, repo, artifacts, lines, join(dir, "reports"), { knowledge });
+      try {
+        // (1) a pre-R1 pipe Claim — projected (it HAS a belief) but owned by NO material.
+        //     Its statement matches the FIRST block of MATERIAL below.
+        const discovery = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+        await discovery.ingestClaims({
+          subjectKind: "industry",
+          subjectId: sid,
+          claims: [{ statement: "市场空间约 500 亿元", dimension: "market" }],
+        });
+        const k0 = knowledge.findKnowledgeBySubject("industry", sid)!;
+        const legacyRef = knowledge.listBeliefs(k0.knowledgeId)[0]!.claimRef;
+
+        // (2) importing the material DETECTS the overlap
+        const file = join(dir, "expert.md");
+        writeFileSync(file, MATERIAL, "utf8");
+        lines.length = 0;
+        assert.equal(await runMaterialAdd(INDUSTRY, file, { json: false }, deps), 0);
+        const materialId = repo.listMaterials(sid)[0]!.materialId;
+        assert.equal(
+          repo.getMaterial(materialId)!.ingestOverlaps.includes(legacyRef),
+          true,
+          "the overlap was recorded on the material",
+        );
+
+        // (3) …and the user can SEE it, together with the command that resolves it
+        lines.length = 0;
+        assert.equal(await runMaterialList(INDUSTRY, { json: false }, deps), 0);
+        const listed = lines.join("\n");
+        assert.ok(listed.includes(`未归属重叠：${legacyRef}`), "T-R1-26: the overlap is visible");
+        assert.ok(listed.includes("tiancha research material attribute"), "…with the resolving command");
+
+        lines.length = 0;
+        assert.equal(await runMaterialList(INDUSTRY, { json: true }, deps), 0);
+        const view = JSON.parse(lines.join("\n"));
+        assert.deepEqual(view.materials[0].ingestOverlaps, [legacyRef], "…and in --json too");
+
+        // (4) the attribution command validates every input
+        lines.length = 0;
+        assert.equal(await runMaterialAttribute(undefined, { json: false }, deps), 1);
+        assert.ok(lines.some((l) => l.startsWith("ERR:usage:")));
+        assert.equal(await runMaterialAttribute("not-a-ref", { json: false, to: materialId }, deps), 1);
+        assert.equal(await runMaterialAttribute(legacyRef, { json: false, to: "mat-nope" }, deps), 1);
+        // a NON-completed target may not own confirmed evidence
+        t_setStatus(db, materialId, "failed");
+        lines.length = 0;
+        assert.equal(await runMaterialAttribute(legacyRef, { json: false, to: materialId }, deps), 1);
+        assert.ok(lines.some((l) => l.startsWith("ERR:") && l.includes("completed")));
+        t_setStatus(db, materialId, "completed");
+
+        // (5) the supported act itself
+        lines.length = 0;
+        assert.equal(await runMaterialAttribute(legacyRef, { json: false, to: materialId }, deps), 0);
+        assert.ok(lines.join("\n").includes("已登记归属"), "T-R1-26: the attribution is confirmed");
+        assert.equal(
+          repo.getMaterial(materialId)!.claimRefs.includes(legacyRef.replace("artifact:claim/", "")),
+          true,
+          "the Claim now belongs to the completed material",
+        );
+        assert.equal(
+          repo.getMaterial(materialId)!.ingestOverlaps.includes(legacyRef),
+          true,
+          "…but the marker is still there until the material is recomputed",
+        );
+
+        // (6) --force recomputes: the marker clears and the Claim counts as evidence again
+        lines.length = 0;
+        assert.equal(
+          await runMaterialRetry(materialId, { json: false, force: true, acceptOrphanRisk: false }, deps),
+          0,
+        );
+        assert.equal(
+          repo.getMaterial(materialId)!.ingestOverlaps.length,
+          0,
+          "T-R1-26: after attribution + --force the overlap is resolved",
+        );
+        const report = new ReportService(db.db).generateReport("industry", sid);
+        assert.ok(report.sections.recentEvidence.includes(legacyRef), "T-R1-26: the Claim is evidence again");
+      } finally {
+        await artifacts.close();
+        db.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Flip a material's status (to exercise the attribution target validation). */
+function t_setStatus(db: ResearchDb, materialId: string, status: string): void {
+  db.db.prepare("UPDATE material SET ingest_status = ? WHERE material_id = ?").run(status, materialId);
+}
