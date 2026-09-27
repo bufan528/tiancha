@@ -304,6 +304,14 @@ export class MaterialIngestService {
         `claim '${claimId}' does not exist — a Claim that was never written cannot be attributed`,
       );
     }
+    // ★ §29.21 (review round 8): the SAME store also holds fact / evidence / score / report /
+    // dossier artifacts. A `artifact:claim/<id>` ref that points at a real, same-subject artifact of
+    // ANOTHER kind is still not a Claim.
+    if (record.artifact.kind !== "claim") {
+      throw new Error(
+        `artifact '${claimId}' is a '${record.artifact.kind}', not a 'claim' — refusing to attribute it`,
+      );
+    }
     // … and a Claim from ANOTHER subject must never become evidence of this one.
     const blob = record.blob as { subjectKind?: string; subjectId?: string } | undefined;
     if (!blob || blob.subjectKind === undefined || blob.subjectId === undefined) {
