@@ -1,7 +1,7 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev2 — DESIGN ONLY。Implementation / Commit / Push 均未授权。**
-> 父基线：`a237129`（= `origin/main`；C-MVP-R1 已发布，总契约 §29 rev16）。
+> 状态：**rev4 — DESIGN ONLY。Implementation / Commit / Push 均未授权。**
+> **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
 
@@ -12,6 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
+| **rev4** | **验收者第二轮契约审查后的 4 处校准确认**（**不改 scope**）：① **版本头/基线**修正（头部 rev2→rev4；起始基线不再写作"当前 HEAD"）；② **表数修正为 6 张**（`candidate_review` **独立成表**、append-only、与 `extraction_run` 生命周期不同）；③ **D-C6-D = 反查方案**（`confirmedClaimRef` 作分类关联；补数据流、落库、按 subject 查询与"历史 `[CLAIM]` 无 `contentKind`"的展示规则）；④ **D-C6-E = 联合类型**（保留 `KnowledgeLine` 的身份字段必填；新增 `ClaimCandidateLine`，`pendingCandidates` 收判别联合；并修正"零破坏"说法）；⑤ **D-C6-F 补审计参数**（`--operator` 必填、`--relation` 必填、`revise` 只记录修改并保持 draft）；⑥ **新增 §C6.17 候选级恢复协议**（W4 细化：预留/进度/并发/回填前崩溃）并据此改写 T-C6-8 |
 | **rev3** | **用户确认三项裁定**（§C6.15）+ **实现前复核**（§C6.16：预计文件清单 / T-C6 可测性 / 回归面 / 分片）+ 复核新发现的 3 项待定小项（§C6.16.5 D-C6-D/E/F）。**不改 scope** |
 | **rev2** | **验收者审查后的 5 处模型补清 + 3 项裁定**（**不改 scope**）：① 原文**保存位置与双 hash**（§C6.3）；② `evidence` 字段表 + `contentKind` **收窄为 `fact`/`judgment`** + **报告分类来源拆开**（§C6.4/§C6.5）；③ **确认/修订投影必须有显式 relation**，"仅编辑"不得投影（§C6.4）；④ **`extractionConfigKey` 纳入候选身份** + 三个对象的**确定性身份与失败重跑语义**（§C6.7）；⑤ **跨库写入顺序 + 崩溃窗口表 + 每个边界的故障注入**（§C6.7）。三项裁定见 **§C6.15** |
 
@@ -274,7 +275,7 @@ W4【跨库】       人工 confirm(with relation) → 既有 ingestClaims()
 | **T-C6-5** | 合成冲突（隔离库，`synthetic: true`） | 来源并存、冲突可见、人工确认后按既有演化规则处理；**真实库不得出现 synthetic 行** |
 | **T-C6-6** | 身份与重跑 | 同配置重跑 ⇒ 候选**不翻倍**（身份复用）；改 `extractionConfigKey` ⇒ **新候选** + `supersedesCandidateRef` 指向旧候选；已 `confirmed` 的候选**不被改写** |
 | **T-C6-7** | 分值语义 + critical 门控回归 | 三处输出带"证据充分度 + 规则版本"；`risk=100` 解释文本存在；关键维度证据不足 ⇒ `暂不判断` |
-| **T-C6-8** | 跨库部分失败与恢复 | **对 W1–W4 每个边界注入失败**：W1 回滚无残骸；W2/W3 重跑不重复；W4 按 §29.5b 恢复；断言"无一 Artifact 丢失或重复" |
+| **T-C6-8** | 跨库部分失败与恢复 | **对 W1–W4 每个边界注入失败**：W1 回滚无残骸；W2/W3 重跑不重复； **W4 必须覆盖 §C6.17 的 4 个候选级崩溃点**（P1 前 / P2 写后未回写 / P3 投影后未回写 / P4 回填前）⇒ 重跑按 `projectionStatus` 续做、`reservedClaimId` 不变、artifact 与 belief **均不重复**；断言"无一 Artifact 丢失或重复"。**仅说"复用 §29 注入点"不足以证明这条路径** |
 | **T-C6-9** | 边界：候选不得绕过闸门 | 静态 + 行为各一条：不存在"候选 → `ingestClaims`"的直接路径；未确认候选不出现在任何投影视野 |
 
 ---
@@ -336,7 +337,11 @@ W4【跨库】       人工 confirm(with relation) → 既有 ingestClaims()
 | **④ 确认后既有投影（W4）** | `application/candidate-review-service.ts`：`confirm` ⇒ **调用既有 `OpportunityDiscoveryService.ingestClaims()`**（**复用 C-MVP-R1 的 P1→P4**）· `confirmedClaimRef` 回填 | `phase-c6-projection.test.ts`（T-C6-2/T-C6-3/T-C6-8） |
 | **⑤ 报告引用与缺口回填** | `application/report-service.ts`（**按 `contentKind` 分流**既有分区 + 接入候选）· 可能 `domain/report.ts`（见 §C6.16.5 的 D-C6-E） | `phase-c6-report.test.ts`（T-C6-4/T-C6-7） |
 
-**表数量**：当前 26 张 → 预计 **+4~5 张**（`material_version` · `fragment` · `evidence` · `claim_candidate` · `extraction_run`；`candidate_review` 可并入 `extraction_run` 邻域或独立）。**每张新表都要 PRAGMA 预检查惯例**（与既有迁移一致）。
+**表数量（rev4 修正）**：当前 **26** 张 → 预计 **+6 张 = 32**：`material_version` · `fragment` · `evidence` · `claim_candidate` · **`candidate_review`** · `extraction_run`。
+
+* ★ **`candidate_review` 独立成表、且必须独立**：**审阅历史与提取运行是两个不同的生命周期**（前者由人驱动、后者由提取驱动），不能互相承载；
+* ★ **它必须 append-only**：每次审阅**只追加一行**（`candidateId` · `action` · `operator` · `comment?` · `at` · `before`/`after`），**永不 UPDATE / DELETE 既有行**（与 `report_snapshot` 同一纪律，I-C6-5 的落点）；
+* **每张新表都要 PRAGMA 预检查惯例**（与既有迁移一致）。
 
 ### §C6.16.2 T-C6-1…T-C6-9 可测性
 
@@ -361,7 +366,10 @@ W4【跨库】       人工 confirm(with relation) → 既有 ingestClaims()
    ⇒ 需要改的只是**内容的分配规则**（按 `contentKind` 分流）+ 候选的接入（见 D-C6-E）。
 2. **C-MVP / C-MVP-R1 零改动**：C6 只**调用** `ingestClaims()`（W4），不改其签名与语义；`[CLAIM]` 路径完全不动。
 3. **I1–I16 无冲突**：新对象全部 append/版本化（I2）；候选不进 SoT（I1）；冲突并列（I3）；报告仍是投影（I14）；分值语义按 §C6.6 标注（不违反任何既有不变量）。
-4. **既有测试的影响面**：预计**零破坏** —— 新表、新 domain、新 service、新 CLI 子命令；唯一可能触及既有断言的是 **D-C6-E**（若选择"新增 section"则会动 T-C4-6，故**建议不新增**）。
+4. **既有测试的影响面（rev4 修正措辞）**：**section 集合不变**（不撞 T-C4-6）这个结论成立；但 ★ **不能说"零破坏"** —— 第 ⑤ 片会改变
+   **`pendingCandidates` 的行类型（判别联合）**、**报告各分区的内容分配**、以及 **fact / judgment 的筛选规则**，
+   因此 **C4-A / S6 相关回归测试需要适配**（属于"预期内的断言更新"，不是回归缺陷）。
+   其余各片的既有影响面确实为零（新表 / 新 domain / 新 service / 新 CLI 子命令）。
 5. **真实库**：C6 不迁移老数据（只新增表）；`material_version` 与既有 `material` 是**父子关系**，既有 `material` 行**不需要**版本行即可继续工作（版本按需创建）。
 
 ### §C6.16.4 分片与依赖（实现授权建议）
@@ -382,9 +390,9 @@ W4【跨库】       人工 confirm(with relation) → 既有 ingestClaims()
 
 | # | 议题 | 背景 | 候选方案 |
 |---|---|---|---|
-| **D-C6-D** | `contentKind` 如何**随确认传递到 Claim** | `contentKind` 现只存在于 `claim_candidate`；而报告要按它分流**已确认**的"事实 / 判断" | (a) `Claim` 加**可选** `contentKind?`（确认时复制，blob 为 JSON ⇒ 老数据无影响）★ 推荐 · (b) 报告侧用 `confirmedClaimRef` **反查**候选（不改 Claim，但每次投影多一次 join）· (c) v1 **只对候选**生效，已确认认知维持既有 `keyFacts`/`mainJudgments` 语义 |
-| **D-C6-E** | 报告"待确认候选"的**落点** | 既有 `pendingCandidates` 的行类型是 `KnowledgeLine`（含 `beliefId`/`claimRef`），**装不下** C6 候选（无 belief/claim） | (a) **扩展 `KnowledgeLine` 为可选字段**（`beliefId?`/`claimRef?` + `candidateRef?`）⇒ **不改 section 集合**，不撞 T-C4-6 ★ 推荐 · (b) 新增独立 section（**会**动 C4-A 断言）· (c) 专用 DTO 只用于"调研报告"渲染 |
-| **D-C6-F** | C6 的 **CLI 命令面** | 需人类入口查看/审核候选 | (a) `research candidate list/show/confirm/revise/reject`（与 `material` 平级）★ 推荐 · (b) 并入 `research material candidate …`（更长的路径） |
+| **D-C6-D** | `contentKind` 如何**随确认传递到 Claim** | **已定：(b) 反查方案** —— 见 §C6.16.7 |
+| **D-C6-E** | 报告"待确认候选"的**落点** | **已定：保留 `KnowledgeLine` 身份字段必填 + 新增 `ClaimCandidateLine` + `pendingCandidates` 收判别联合** —— 见 §C6.16.8 |
+| **D-C6-F** | C6 的 **CLI 命令面** | **已定：`research candidate list/show/confirm/revise/reject` + `--operator` 必填 + `--relation` 必填 + `revise` 只记录修改** —— 见 §C6.16.9 |
 
 > 三项都**只影响实现细节**，不影响 §C6.2 的链路与 I-C6-1…I-C6-8；建议在**授权第 ① 片之前**一并定案（其中 D-C6-D 影响 ⑤、D-C6-E 影响 ⑤、D-C6-F 影响 ③）。
 
@@ -394,4 +402,111 @@ W4【跨库】       人工 confirm(with relation) → 既有 ingestClaims()
 * **建议先定 §C6.16.5 的 D-C6-D / D-C6-E / D-C6-F**（都是小项，一次定完即可），然后**按片授权**，从 ① 开始；
 * 报告侧**不改 section 集合**这一点，使 C6 对已发布冻结面的影响降到最低。
 
-**End of contract（rev3）.**
+
+---
+
+## §C6.16.7 D-C6-D 落定：用 `confirmedClaimRef` **反查**做分类关联（**LOCKED**）
+
+**为什么不是"给 Claim 加 `contentKind`"**：`ReportService` **只读主库**（Knowledge / Pool / Gap / `research_state` …），
+**没有读 `artifacts.sqlite` 中 Claim blob 的接口**；而 `mainJudgments` 按 **belief 状态**取数、`keyFacts` 按 **PoolItem** 取数。
+⇒ 只在 Claim JSON 上加字段，**报告侧依然拿不到它**。因此采用**反查**：
+
+```text
+claim_candidate.confirmedClaimRef ──(C6 分类关联)──► belief.claimRef / pool_item.claimRef
+        │                                                      ▲
+        └─ contentKind (fact | judgment)                        │
+                  报告服务：按 subject 取出该 subject 的候选关联表，建立 claimRef → contentKind 映射
+                            mainJudgments / keyFacts 据此分流
+```
+
+**契约要求（必须写清）**：
+
+| 项 | 规则 |
+|---|---|
+| **关联如何落库** | 关联**存在候选行上**（`claim_candidate.confirmedClaimRef`），**不**改 `ingestClaims()` 签名、**不**改 Claim blob 结构 |
+| **如何按 subject 查询** | 候选表有 `subjectKind` / `subjectId` ⇒ 报告服务按 subject 一次取出 `{confirmedClaimRef → contentKind}` 映射（**主库内查询，不跨库**） |
+| **`contentKind` 缺失时** | ★ **历史 `[CLAIM]` 材料**（C-MVP 路径）**没有**候选行 ⇒ **没有 `contentKind`**。展示规则：**继续沿用既有语义**（出现在 `keyFacts` 与 `mainJudgments`，**不强行归类为 fact/judgment**）；报告需在**"数据来源"处**区分"经 C6 候选确认"与"人工 `[CLAIM]` 直入" |
+| **不变的边界** | C-MVP / C-MVP-R1 **零改动**；`ingestClaims()` 只被**调用**，其签名与语义不变 |
+
+---
+
+## §C6.16.8 D-C6-E 落定：判别联合，而非把身份字段改成可选（**LOCKED**）
+
+**不采纳"把 `KnowledgeLine.beliefId` / `claimRef` 改成可选"** —— 它们是**现有 Knowledge 行的必要身份字段**，改成可选会**削弱类型保证**。
+
+**采纳**：保留现有类型不动，新增 C6 候选行，让 `pendingCandidates` 收**判别联合**：
+
+```text
+KnowledgeLine          // 既有：belief 候选（beliefId + claimRef 必填，不变）
+ClaimCandidateLine     // 新增：C6 候选（candidateId + reviewStatus + contentKind + evidenceRefs + statement + sourceLocator）
+pendingCandidates: Array<KnowledgeLine | ClaimCandidateLine>   // 判别字段：candidateId? / beliefId?
+```
+
+* **不新增 section key** ⇒ 不撞 C4-A 的 T-C4-6 字段集断言 ✓
+* **不削弱既有行的类型保证** ✓
+* ★ 但必须**同步适配回归测试**：老快照读取（老 `sections_json` 无新行类型 ⇒ 按原样可读）、C4-A / S6 的候选断言（见 §C6.16.3 第 4 点的措辞修正）
+
+---
+
+## §C6.16.9 D-C6-F 落定：CLI 命令面 + 审计参数（**LOCKED**）
+
+```text
+tiancha research candidate list   <行业> [--json]
+tiancha research candidate show   <candidateId> [--json]
+tiancha research candidate confirm <candidateId> --operator <名> --relation <SUPPORT|REVISE|CONFLICT|SUPERSEDE>
+tiancha research candidate revise  <candidateId> --operator <名> [--statement …] [--content-kind …]
+tiancha research candidate reject  <candidateId> --operator <名> [--comment …]
+```
+
+| 规则 | 内容 |
+|---|---|
+| **`--operator`** | 所有**写**操作（`confirm` / `revise` / `reject`）**必填且非空**（与 C5-B 的 `confirm/reject` 同一治理） |
+| **`--relation`** | `confirm` **必填**（I-C6-8）；`CONFLICT` / `SUPERSEDE` 需带必要参数（对齐总契约 §7） |
+| ★ **`revise` 的语义（唯一）** | **只记录修改并保持 `draft`** —— 审核动作 ≠ 投影动作。投影**只能**由 `confirm --relation …` 触发 |
+| **Agent 权限** | 只给**只读** `research_candidate_list`（与 `research_material_list` 同一治理）；**不给**任何写工具 |
+
+---
+
+## §C6.17 候选级恢复协议（W4 细化，**LOCKED**）
+
+> **为什么需要单独写**：§C6.7 说"W4 复用 C-MVP-R1 §29.5b 的 P1→P4"，但 R1 的**认领状态机、租约与进度账本由 `MaterialIngestService` 编排**；
+> `OpportunityDiscoveryService.ingestClaims()` 本身**只**负责写 Claim 与投影，**不提供**候选级的认领/租约/恢复账本。
+> ⇒ 候选确认**必须有自己的恢复语义**（本节）。
+
+**承载表（唯一）**：**`claim_candidate` 自身字段**（候选是**单条**，不需要材料那样的"多块账本"表）：
+
+| 字段 | 作用 |
+|---|---|
+| `projectionStatus` | `none` → `reserved` → `claim_written` → `projected` → `finalized`（**单向、永不回退**） |
+| `reservedClaimId` | ★ **P1 就持久化**的稳定 Claim id —— 崩溃后据此**找回同一个 Claim**（回答"回填前崩溃怎么办"） |
+| `confirmedClaimRef` | 投影成功后回填（**不**作为恢复锚点，恢复锚点是 `reservedClaimId` + `projectionStatus`） |
+| `projectionError?` | `failed` 时的错误摘要（不含凭据） |
+
+```text
+P1 预留【主库·单事务】projectionStatus: none → reserved；reservedClaimId 生成并持久化
+                       ↑ 同时写 reviewStatus=confirmed + decision.relation（一次原子状态转换）
+P2 写 artifact【跨库】artifactStore.put({ artifactId: reservedClaimId, … })   ← 幂等（by artifactId）
+                       → 回写 projectionStatus = claim_written
+P3 投影【主库】knowledge.projectFromClaim({ claim, dimension, … })            ← 幂等（确定性 beliefId，§16.1）
+                       → 回写 projectionStatus = projected
+P4 回填【主库】confirmedClaimRef = reservedClaimId；projectionStatus = finalized
+```
+
+**崩溃恢复（必须逐点可测）**：
+
+| 崩溃在 | 重跑行为 |
+|---|---|
+| P1 之前 | 无副作用；重新 `confirm` |
+| P2 写 artifact 之后、回写之前 | 重跑 P2：`put` 幂等（同 `reservedClaimId`）⇒ **artifact 不重复** |
+| P3 投影之后、回写之前 | 重跑 P3：`beliefId` 确定性 ⇒ **no-op**（§16.1） |
+| P4 回填之前 | `reservedClaimId` 已持久化 ⇒ 重跑能找到**同一个** Claim ⇒ 直接回填 |
+
+**并发确认（候选级 fencing）**：
+
+* 用**一条原子 `UPDATE`** 完成"`none` → `reserved` + 写 relation"：`WHERE candidate_id = ? AND projection_status = 'none'`，校验 `changes() === 1`；
+* 输家 ⇒ 返回"已被处理"（不等待、不自旋）；**候选是单条、单步很小**，因此 **v1 不引入租约/续租**
+  （若将来做**批量确认**，再按 C-MVP-R1 §29.5a 的模式加租约 —— 此处明确**为什么现在不加**）。
+
+**与 T-C6-8 的关系**：T-C6-8 必须**逐点覆盖 P1–P4 的 4 个崩溃点**，而不是笼统说"复用 §29 注入点"。
+
+**End of contract（rev4）.**
