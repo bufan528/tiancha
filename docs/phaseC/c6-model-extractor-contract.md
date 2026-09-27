@@ -161,6 +161,8 @@ export interface ModelBatchInput {
 4) 窗口按 start 升序编号 index = 0,1,2,…
 ```
 
+**首版默认值**：`maxChars = 2000` · `overlapChars = 600` · `maxQuoteChars = 500`（三者皆为 UTF-16 code unit，且**全部进 `extractionConfigKey`**；§M9 #5）。`overlapChars` 取 **600 > `maxQuoteChars` = 500**，正是为了满足下面的第三条约束 —— 超长段落切分处的引文仍能在相邻片内**完整**出现。
+
 **配置约束（不满足即拒绝该配置并抛错，不静默钳制）**：
 
 | 约束 | 理由 |
