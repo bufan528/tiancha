@@ -18,7 +18,7 @@
 | HEAD / 远端 | **代码验证基线 `5fa0ca3`**（= 本轮最后一个 `test:` 提交）；**基线取法**：`git log --oneline` 中第一个非 `docs:` 提交；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不把 `docs:` 提交的 hash 写进本表**（它每次同步都会变，写了必然很快失准） |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **411 tests / 411 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev15**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，**§29.22 = 文档基线维护规则**）—— **无剩余未满足条款**；下一步候选：**C6 / Phase C 完整版（Material → Fragment → Evidence 链）** —— **未授权**，且按建议应先做**真实行业试点**再定契约范围 |
+| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev16**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，§29.22 = 基线维护规则，**§29.23 = 状态文档一致性校准**）—— **无剩余未满足条款**；下一步候选：**C6 / Phase C 完整版（Material → Fragment → Evidence 链）** —— **未授权**，且按建议应先做**真实行业试点**再定契约范围 |
 | 之后 | Phase D（外环：Experience → Pattern → 方法论候选）· Phase E（Wind + 自动发现）—— 未授权 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
@@ -522,7 +522,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **C5-B** | **Human-Gated Decision**：`research confirm\|reject <proposalRef> --operator <name>`；**`confirm` 是产出 `research_target` 的唯一路径**；Agent **不获得**该写权限 | ✅ |
 | **C5-C** | **Plan 只读消费 Proposal/Decision**：`research plan` 展示 `positions[].proposals`（含 decision 与 `targetRef` 校验）+ `orphanProposals`；`--json` 向后兼容；零写用**内容指纹**证明 | ✅ |
 | **C5-D** | **Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影**（`{preparationRef, status, questionCount} \| null`）：契约 LOCK（`7672a49`）→ **已实现（`dc64c33`）+ 测试（`aa4dc95`）+ 独立复验收口（§21.11）**；`New tables = 0, Migration = 0` | ✅ |
-| **C-MVP-R1** | **Material 导入可靠性**（状态机 + 续跑 + 查重语义 + 五态返回 + 跨库恢复 + 并发原子认领 + **fencing token** + 块级账本 + **孤儿重叠检测（不推断归属；歧义交人工）** + **5a 未确认证据排除（含崩溃窗口 + 残骸保守降级）**）：契约 **§29 rev14** → 实现 `e0fe004` / 修正 `709447e` / `18341aa` / `5f016c3` / `7f8187d` / `dd452cc` / `01873c0` / `af9eae1` / `07820a0` / `e7c0996` / **`085e29d`** + 测试 `f6a0a2c` / `6a0bc63` / `a83946f` / `3c6a6f7` / `28bcf71` / `9ea3e06` / `536022b` / `35e9bbc` / `a6680aa` / **`5fa0ca3`**；闭环见 §29.12–**§29.21** | ✅ |
+| **C-MVP-R1** | **Material 导入可靠性**（状态机 + 续跑 + 查重语义 + 五态返回 + 跨库恢复 + 并发原子认领 + **fencing token** + 块级账本 + **孤儿重叠检测（不推断归属；歧义交人工）** + **5a 未确认证据排除（含崩溃窗口 + 残骸保守降级）**）：契约 **§29 rev16** → 实现 `e0fe004` / 修正 `709447e` / `18341aa` / `5f016c3` / `7f8187d` / `dd452cc` / `01873c0` / `af9eae1` / `07820a0` / `e7c0996` / **`085e29d`** + 测试 `f6a0a2c` / `6a0bc63` / `a83946f` / `3c6a6f7` / `28bcf71` / `9ea3e06` / `536022b` / `35e9bbc` / `a6680aa` / **`5fa0ca3`**；闭环见 §29.12–**§29.21** | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -702,7 +702,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | C1–C4（Knowledge 语义 / Planning / Priority 验证 / Report） | ✅ | ✅ | ✅ | ❌ | — |
 | C5-A / C5-B（推荐 / 人工决定） | ✅ | ✅ | ✅ | ❌ | **真实库尚无 `target_proposal*` 两张表** |
 | C5-C / C5-D（Plan 只读消费 / Preparation 摘要） | ✅ | ✅ | ✅ | ❌ | — |
-| **C-MVP-R1**（材料导入可靠性） | ✅ 契约 §29 rev14 | ✅ | ✅（T-R1-1…T-R1-28 + **Agent 工具面**：两进程并发、fencing、同文不合并、artifact-only 重叠、歧义失败且可识别、单条无法归属重叠的保守降级、标记粘性、人工归属闭环及其 5 项写入前校验、5a 证据拆分、5a 崩溃窗口） | ❌ | **真实库仍未用过材料导入**（`material` = 0 行） |
+| **C-MVP-R1**（材料导入可靠性） | ✅ 契约 §29 rev16 | ✅ | ✅（T-R1-1…T-R1-28 + **Agent 工具面**：两进程并发、fencing、同文不合并、artifact-only 重叠、歧义失败且可识别、单条无法归属重叠的保守降级、标记粘性、人工归属闭环及其 5 项写入前校验、5a 证据拆分、5a 崩溃窗口） | ❌ | **真实库仍未用过材料导入**（`material` = 0 行） |
 | C6 / Phase C 完整版（Material → Fragment → Evidence → Claim） | ⛔ 未授权 | ❌ | ❌ | ❌ | `DocumentFragment` 仅类型；`evidence/evidence-engine.ts` 返回 `[]` |
 | Phase D（外环：Experience → Pattern → 方法论候选） | ⛔ 未授权 | ❌ | ❌ | ❌ | 红线 9：不预造空壳表 |
 | Phase E（Wind / 自动发现行业） | ⛔ 未授权 | ❌ | ❌ | ❌ | `echo-data-provider.ts` 仍是占位（`isRealExternalData=false`） |
