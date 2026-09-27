@@ -348,3 +348,98 @@ describe("C-MVP-R1 CLI · resolving an overlap through supported commands (§29.
 function t_setStatus(db: ResearchDb, materialId: string, status: string): void {
   db.db.prepare("UPDATE material SET ingest_status = ? WHERE material_id = ?").run(status, materialId);
 }
+
+// ===========================================================================
+// T-R1-27 — §29.20: `attribute` must refuse a Claim that does not exist, and a Claim from another
+// subject. A syntactically valid ref is not proof of anything.
+// ===========================================================================
+
+describe("C-MVP-R1 CLI · attribute validation (§29.20)", () => {
+  test("T-R1-27: a non-existent ref and a foreign-subject Claim are both refused", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tiancha-r1-cli4-"));
+    const dbPath = join(dir, "tiancha.sqlite");
+    try {
+      const sid = await bootstrap(dbPath);
+      const db = new ResearchDb({ path: dbPath });
+      const repo = new ResearchRepository(db.db);
+      const artifacts = new SqliteArtifactStore({ path: ":memory:" });
+      const knowledge = new KnowledgeRepository(db.db);
+      const lines: string[] = [];
+      const deps = makeDeps(db, repo, artifacts, lines, join(dir, "reports"), { knowledge });
+      try {
+        // a completed material to attribute onto
+        const file = join(dir, "expert.md");
+        writeFileSync(file, MATERIAL, "utf8");
+        assert.equal(await runMaterialAdd(INDUSTRY, file, { json: false }, deps), 0);
+        const materialId = repo.listMaterials(sid)[0]!.materialId;
+        const refsBefore = repo.getMaterial(materialId)!.claimRefs.length;
+
+        // (1) syntactically valid, but that Claim was NEVER written
+        lines.length = 0;
+        assert.equal(
+          await runMaterialAttribute("artifact:claim/claim-does-not-exist", { json: false, to: materialId }, deps),
+          1,
+          "T-R1-27: a fabricated ref is refused",
+        );
+        assert.ok(
+          lines.some((l) => l.startsWith("ERR:") && l.includes("does not exist")),
+          "…with an explicit reason",
+        );
+        assert.equal(
+          repo.getMaterial(materialId)!.claimRefs.includes("claim-does-not-exist"),
+          false,
+          "…and nothing was written",
+        );
+
+        // (2) a REAL Claim that belongs to ANOTHER subject
+        const discovery = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+        const otherRes = await discovery.ingestMaterial({ materialText: "x", industryName: "另一个行业" });
+        await discovery.ingestClaims({
+          subjectKind: "industry",
+          subjectId: otherRes.industry.industryId,
+          claims: [{ statement: "别处的断言", dimension: "market" }],
+        });
+        const otherKnowledge = knowledge.findKnowledgeBySubject("industry", otherRes.industry.industryId)!;
+        const foreignRef = knowledge.listBeliefs(otherKnowledge.knowledgeId)[0]!.claimRef;
+        assert.ok(foreignRef.startsWith("artifact:claim/"), "fixture: the foreign Claim really exists");
+
+        lines.length = 0;
+        assert.equal(
+          await runMaterialAttribute(foreignRef, { json: false, to: materialId }, deps),
+          1,
+          "T-R1-27: a foreign-subject Claim is refused",
+        );
+        assert.ok(
+          lines.some((l) => l.startsWith("ERR:") && l.includes("belongs to")),
+          "…with both subjects named",
+        );
+        assert.equal(
+          repo.getMaterial(materialId)!.claimRefs.includes(foreignRef.replace("artifact:claim/", "")),
+          false,
+          "…and nothing was written",
+        );
+        assert.equal(
+          repo.getMaterial(materialId)!.claimRefs.length,
+          refsBefore,
+          "the material's own refs are untouched by both refusals",
+        );
+
+        // (3) the valid case is untouched by the tightening (a Claim of THIS subject, really written)
+        const sameSubject = await discovery.ingestClaims({
+          subjectKind: "industry",
+          subjectId: sid,
+          claims: [{ statement: "本行业的断言", dimension: "market" }],
+        });
+        const ownRef = `artifact:claim/${sameSubject.claimIds[0]}`;
+        lines.length = 0;
+        assert.equal(await runMaterialAttribute(ownRef, { json: false, to: materialId }, deps), 0);
+        assert.ok(lines.join("\n").includes("已登记归属"));
+      } finally {
+        await artifacts.close();
+        db.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
