@@ -18,7 +18,7 @@
 | HEAD / 远端 | **代码验证基线 `5fa0ca3`**（= 本轮最后一个 `test:` 提交）；**基线取法**：`git log --oneline` 中第一个非 `docs:` 提交；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不把 `docs:` 提交的 hash 写进本表**（它每次同步都会变，写了必然很快失准） |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **411 tests / 411 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 已完整实现并发布（`§29` rev7：状态机 + 续跑 + 并发认领 + fencing + 块级账本 + 五态 + 孤儿复用 + 5a 汇总排除），无剩余未满足条款**；下一步候选：**C6（Material → Claim → Knowledge Evolution）** 或 **Phase C 完整版（Fragment / Evidence 链）** —— **均未授权** |
+| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev15**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，**§29.22 = 文档基线维护规则**）—— **无剩余未满足条款**；下一步候选：**C6 / Phase C 完整版（Material → Fragment → Evidence 链）** —— **未授权**，且按建议应先做**真实行业试点**再定契约范围 |
 | 之后 | Phase D（外环：Experience → Pattern → 方法论候选）· Phase E（Wind + 自动发现）—— 未授权 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
@@ -665,7 +665,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/architecture-review/07-domain-model-design.md` | **领域模型**：10 上下文 / 聚合 / 14 不变量 / identity / 生命周期 / §3.8a 评分口径 |
 | `docs/architecture-review/08-code-design.md` | **代码设计**：Phase A 详细 + S1–S7 拆分 + 表/接口/工具 |
 | `docs/phaseB/implementation-contract.md` | **Phase B v1 实现契约（B1–B5 已全部实现，见其 §12）**：Need → Position → Target → Fit → Diligence 的字段/identity/不变量/写入边界/T-B 验收 |
-| `docs/phaseC/implementation-contract.md` | **Phase C 总契约**（C1 语义 / SoT 边界 / 演化 / Human Gate / 幂等 / 不变量 / 验收场景）+ **§29 = C-MVP-R1（材料导入可靠性，DESIGN ONLY，全部 LOCKED、实现未授权）** |
+| `docs/phaseC/implementation-contract.md` | **Phase C 总契约**（C1 语义 / SoT 边界 / 演化 / Human Gate / 幂等 / 不变量 / 验收场景）+ **§29 = C-MVP-R1（材料导入可靠性）—— 已实现并发布**；§29.12–§29.22 为实现闭环与八轮复核修正（**检测重叠但不推断来源**、**人工登记归属**、§29.22 = 基线维护规则） |
 | `docs/phaseC/c5-implementation-contract.md` | **C5-A → C5-D 单文件谱系契约**（§19 C5-B · §20 C5-C · §21 C5-D；**§21.11 = 实现与验收闭环**） |
 | `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
 | `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
