@@ -298,16 +298,8 @@ export class MaterialIngestService {
       // because the pre-R1 pipe wrote Claims for a subject before any `material` row existed at all.
       // (A resume, or a `--force` re-run, already holds ids it must reuse, so it is skipped.)
       if (progress.length > 0 && progress.every((b) => b.state === "reserved")) {
-        progress = await this.detectOrphans(material, parsed.claims, progress);
-        this.write(material, generation, {
-          ingestStatus: "projecting",
-          ingestStage: "projecting",
-          ingestError: null,
-          ingestBlocks: progress,
-          claimRefs: projectedRefs(progress),
-          ingestOwner: this.ownerId,
-          ingestLeaseUntil: this.leaseUntil(),
-        });
+        // ★ §29.16: DETECTION ONLY — `detectOrphanOverlap` never rewrites the ledger.
+        await this.detectOrphanOverlap(material, parsed.claims, progress);
       }
 
       // No valid block ⇒ nothing to project, and the import IS complete (§29.2 (b)).
@@ -378,12 +370,16 @@ export class MaterialIngestService {
         return { outcome: "in_progress", material: this.mustGet(material.materialId) };
       }
       const message = (err as Error)?.message ?? String(err);
+      // ★ §29.16: an AMBIGUOUS overlap must stay IDENTIFIABLE as a残骸. If we wrote a plain
+      // `failed`, `materialEvidenceIndex()` would not set `hasResidual` and the old, unattributable
+      // Claims of this subject would be counted as confirmed evidence again.
+      const ambiguous = err instanceof OrphanClaimAmbiguous;
       try {
         // An EXPLICIT failure (we are still alive) releases the lease, so a human retry does not
         // have to wait for it to expire. A hard crash keeps the lease — that is what §29.5a is for.
         this.write(material, generation, {
-          ingestStatus: "failed",
-          ingestStage: "projecting",
+          ingestStatus: ambiguous ? "legacy_failed" : "failed",
+          ingestStage: ambiguous ? "migration" : "projecting",
           ingestError: message.slice(0, 500),
           ingestBlocks: progress,
           claimRefs: projectedRefs(progress),
@@ -394,7 +390,12 @@ export class MaterialIngestService {
         /* the lease moved on — the NEW holder's state must win (never overwrite it) */
         return { outcome: "in_progress", material: this.mustGet(material.materialId) };
       }
-      return { outcome: "failed", material: this.mustGet(material.materialId), stage: "projecting", error: message };
+      return {
+        outcome: "failed",
+        material: this.mustGet(material.materialId),
+        stage: ambiguous ? "migration" : "projecting",
+        error: message,
+      };
     }
   }
 
@@ -413,18 +414,28 @@ export class MaterialIngestService {
    * subject's beliefs already point at, and REUSE those ids (marking the block `projected`, so the
    * block is skipped entirely). Nothing is written here.
    */
-  private async detectOrphans(
+  /**
+   * ★ §29.16 (review round 3) — this used to ADOPT a matching existing Claim id. That was wrong:
+   * *"a Claim with the same content is NOT proof that it belongs to THIS material"*. Two materials
+   * may legitimately carry the same sentence and still be two INDEPENDENT SOURCES; adopting one id
+   * for both silently destroys `independentSources`.
+   *
+   * So the scan is DETECTION ONLY — it never rewrites the ledger:
+   *   · the material always keeps its OWN freshly reserved claim ids (provenance stays honest);
+   *   · an overlap is only escalated when it is AMBIGUOUS (≥2 existing Claims for the same
+   *     content), because then a human must decide how the sources relate (§29.16).
+   *
+   * Sources (unchanged from §29.15): every Claim artifact this pipe wrote for the subject — which
+   * covers a残骸 that died before projecting — plus every Claim the subject's beliefs point at.
+   */
+  private async detectOrphanOverlap(
     material: Material,
     claims: ParsedClaim[],
     ledger: MaterialIngestBlock[],
-  ): Promise<MaterialIngestBlock[]> {
+  ): Promise<void> {
     const knowledge = this.knowledge;
-    if (!knowledge || ledger.length === 0) return ledger;
+    if (!knowledge || ledger.length === 0) return;
 
-    // ★ §29.15 (review finding): TWO sources, because a pre-R1 attempt could die between the
-    // artifact write and the projection — such a Claim has NO belief and would be missed.
-    //   (a) every Claim artifact this pipe wrote for THIS subject (covers artifact-only残骸);
-    //   (b) every Claim the subject's beliefs point at (covers the projected half).
     const candidates = new Map<string, Set<string>>();
     const addCandidate = (statement: string | undefined, claimId: string): void => {
       if (!statement) return;
@@ -449,24 +460,16 @@ export class MaterialIngestService {
         addCandidate(blob?.statement, claimId);
       }
     }
-    if (candidates.size === 0) return ledger;
+    if (candidates.size === 0) return;
 
-    // ★ §29.15: a match is reused ONLY when it is UNAMBIGUOUS. Two Claims with the same content
-    // are two independent sources — merging them would corrupt `independentSources`. Anything
-    // ambiguous fails loudly and goes to a human (never a guess).
-    const alreadyReused = new Set<string>();
-    return ledger.map((block) => {
+    for (const block of ledger) {
       const statement = claims[block.blockIndex]?.statement;
-      const matches = statement
-        ? [...(candidates.get(statement) ?? [])].filter((id) => !alreadyReused.has(id))
-        : [];
-      if (matches.length === 0) return block;
-      if (matches.length > 1) throw new OrphanClaimAmbiguous(material.materialId, statement!, matches.length);
-      const claimId = matches[0]!;
-      alreadyReused.add(claimId);
-      // A genuine, unique content match ⇒ reuse the id and count the block as already projected.
-      return { ...block, claimId, state: "projected" as const };
-    });
+      const matches = statement ? [...(candidates.get(statement) ?? [])] : [];
+      // ★ §29.16: ambiguity is the ONLY thing we escalate — and never as a guess.
+      if (matches.length > 1) {
+        throw new OrphanClaimAmbiguous(material.materialId, statement!, matches.length);
+      }
+    }
   }
 
   /**
