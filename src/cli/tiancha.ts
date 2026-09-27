@@ -58,7 +58,7 @@ import {
 } from "@tiancha/research";
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
-import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runMaterialList, runMaterialRetry, runResearchCommand, runTargetAdd, runTargetList, type ResearchCliDeps } from "./research-commands.js";
+import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runMaterialAttribute, runMaterialList, runMaterialRetry, runResearchCommand, runTargetAdd, runTargetList, type ResearchCliDeps } from "./research-commands.js";
 import { KnowledgeRepository } from "@tiancha/research";
 
 const TIANCHA_VERSION = "0.1.0";
@@ -512,8 +512,15 @@ async function run(): Promise<void> {
             { json, force: args.includes("--force"), acceptOrphanRisk: args.includes("--accept-orphans") },
             deps,
           );
+        } else if (sub === "attribute") {
+          const at = args.indexOf("--to");
+          process.exitCode = await runMaterialAttribute(
+            args[3],
+            { json, to: at >= 0 ? args[at + 1] : undefined },
+            deps,
+          );
         } else {
-          deps.err("usage: tiancha research material add|list|retry …");
+          deps.err("usage: tiancha research material add|list|retry|attribute …");
           process.exitCode = 1;
         }
       } else if (isTargetCmd) {

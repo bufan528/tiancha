@@ -671,6 +671,8 @@ export interface MaterialListView {
     claimRefs: number;
     error?: string;
     receivedAt: string;
+    /** ★ §29.19: overlaps not yet attributed to any completed material. */
+    ingestOverlaps: string[];
   }>;
 }
 
@@ -685,6 +687,13 @@ export function formatMaterialListHuman(v: MaterialListView): string {
         ` · claims ${m.claimRefs} · 尝试 ${m.attempts} · ${m.receivedAt}`,
     );
     if (m.error) lines.push(`      ⚠ ${m.error}`);
+    // ★ §29.19: show what still needs a human decision, with the exact command that resolves it.
+    for (const ref of m.ingestOverlaps) {
+      lines.push(
+        `      ⚠ 未归属重叠：${ref}（该 Claim 尚不属于任何已完成材料；` +
+          `tiancha research material attribute ${ref} --to <materialId> 登记归属后 --force 重算）`,
+      );
+    }
   }
   return lines.join("\n");
 }

@@ -449,6 +449,8 @@ const MATERIAL_OUTCOME_NOTE: Record<
         attempts: m.ingestAttempts,
         error: m.ingestError,
         receivedAt: m.receivedAt,
+        // ★ §29.19: overlaps awaiting a human attribution are part of the material's real state.
+        ingestOverlaps: m.ingestOverlaps,
       }));
       return json(JSON.stringify({ industry: ind.canonicalName, materials }, null, 2));
     },

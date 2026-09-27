@@ -756,6 +756,22 @@ export class ResearchRepository {
     return Number(res.changes) === 1;
   }
 
+  /**
+   * ★ §29.19: the HUMAN attribution act — "this existing Claim belongs to that material".
+   * It is the supported way to resolve an overlap marker: no direct DB editing is required.
+   * Idempotent; it never removes a ref (attribution is additive).
+   */
+  attributeClaimsToMaterial(materialId: string, claimIds: string[]): Material | undefined {
+    const material = this.getMaterial(materialId);
+    if (!material) return undefined;
+    const merged = [...material.claimRefs];
+    for (const claimId of claimIds) if (!merged.includes(claimId)) merged.push(claimId);
+    this.db
+      .prepare("UPDATE material SET claim_refs_json = ? WHERE material_id = ?")
+      .run(JSON.stringify(merged), materialId);
+    return this.getMaterial(materialId);
+  }
+
   // ---- ResearchPosition (Phase B v1) ----
   /**
    * A position is a TEMPLATE INSTANCE: `positionRef` includes templateId + positionKey,

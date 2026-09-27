@@ -277,6 +277,32 @@ export class MaterialIngestService {
   }
 
   /**
+   * ★ §29.19 — the supported HUMAN act that resolves an overlap: register that an existing Claim
+   * belongs to a COMPLETED material. After this, a `--force` re-run of the material that reported
+   * the overlap recomputes it, the Claim counts as attributed, and the marker clears by itself.
+   *
+   * Only a `completed` material may own confirmed evidence (that is exactly what
+   * `materialEvidenceIndex()` means by "attributed"), so the target is validated here.
+   */
+  attributeClaim(claimRef: string, targetMaterialId: string): Material {
+    const claimId = claimIdFromRef(claimRef);
+    if (!claimId) {
+      throw new Error(`'${claimRef}' is not a claim ref (expected artifact:claim/<claimId>)`);
+    }
+    const target = this.repo.getMaterial(targetMaterialId);
+    if (!target) throw new Error(`unknown material '${targetMaterialId}'`);
+    if (target.ingestStatus !== "completed") {
+      throw new Error(
+        `material '${targetMaterialId}' is '${target.ingestStatus}', not 'completed' — only a ` +
+          "completed material can own confirmed evidence",
+      );
+    }
+    const updated = this.repo.attributeClaimsToMaterial(targetMaterialId, [claimId]);
+    if (!updated) throw new Error(`material '${targetMaterialId}' disappeared`);
+    return updated;
+  }
+
+  /**
    * ★ §29.5b — the resumable core. The atomic claim (which also issues the fencing generation)
    * comes first; then `P2` (idempotent artifact write) and `P3` (projection) run block by block,
    * and EVERY write carries the generation, so a stale holder stops instead of overwriting.

@@ -663,11 +663,52 @@ export async function runMaterialList(
       claimRefs: m.claimRefs.length,
       error: m.ingestError,
       receivedAt: m.receivedAt,
+      // ★ §29.19: an un-attributed overlap must be VISIBLE — the human cannot resolve what it
+      // cannot see.
+      ingestOverlaps: m.ingestOverlaps,
     })),
   };
   printMaterialMigration(deps);
   deps.out(options.json ? toJson(view) : formatMaterialListHuman(view));
   return 0;
+}
+
+/**
+ * ★ §29.19 — `tiancha research material attribute <artifact:claim/xxx> --to <materialId>`:
+ * register that an existing Claim belongs to a completed material. This is the SUPPORTED way to
+ * resolve an overlap (no direct DB editing), and the Agent gets no tool for it.
+ */
+export async function runMaterialAttribute(
+  claimRef: string | undefined,
+  options: { json: boolean; to?: string },
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (!claimRef || !options.to) {
+    deps.err("usage: tiancha research material attribute <artifact:claim/xxx> --to <materialId>");
+    return 1;
+  }
+  try {
+    const material = deps.materials.attributeClaim(claimRef, options.to);
+    const view = {
+      claimRef,
+      targetMaterialId: material.materialId,
+      targetStatus: material.ingestStatus,
+      targetClaimRefs: material.claimRefs.length,
+      nextStep: "tiancha research material retry <检测到重叠的 materialId> --force",
+    };
+    deps.out(
+      options.json
+        ? toJson(view)
+        : [
+            `已登记归属：${claimRef} → 材料 ${material.materialId}（${material.title}，${material.ingestStatus}）`,
+            "  下一步：对检测到该重叠的材料执行 `tiancha research material retry <id> --force` 以重算重叠标记。",
+          ].join("\n"),
+    );
+    return 0;
+  } catch (err) {
+    deps.err((err as Error).message);
+    return 1;
+  }
 }
 
 /**
