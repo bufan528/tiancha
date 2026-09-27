@@ -4,6 +4,8 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+// C6 slice ①: fragment identity must be computed identically in domain and storage.
+import { locatorKey } from "../domain/material-source.js";
 import type {
   Industry,
   Company,
@@ -30,6 +32,11 @@ import type {
   TargetProposal,
   TargetProposalStatus,
   ProposalDecision,
+  MaterialVersion,
+  MaterialFragment,
+  FragmentEvidence,
+  FragmentLocator,
+  FragmentEvidenceStance,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -778,6 +785,158 @@ export class ResearchRepository {
    * and `chain_version` is stored, so a template upgrade produces new refs and never
    * rewrites the historical ones (I-B7).
    */
+  // ---- C6 slice ①: material versions / fragments / fragment evidence (§C6.3, §C6.4) ----
+  // Every identity below is DETERMINISTIC (§C6.7) ⇒ all methods are idempotent re-runs:
+  // same input ⇒ same row, never a duplicate. Fragments are immutable (DO NOTHING on conflict).
+
+  upsertMaterialVersion(v: MaterialVersion): void {
+    this.db
+      .prepare(
+        `INSERT INTO material_version
+         (material_version_id, material_id, subject_kind, subject_id, raw_text, raw_text_ref,
+          raw_hash, normalized_hash, normalization_version, byte_length, char_length, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(material_version_id) DO UPDATE SET
+           material_id           = excluded.material_id,
+           subject_kind          = excluded.subject_kind,
+           subject_id            = excluded.subject_id,
+           raw_text              = excluded.raw_text,
+           raw_text_ref          = excluded.raw_text_ref,
+           raw_hash              = excluded.raw_hash,
+           normalized_hash       = excluded.normalized_hash,
+           normalization_version = excluded.normalization_version,
+           byte_length           = excluded.byte_length,
+           char_length           = excluded.char_length`,
+      )
+      .run(
+        v.materialVersionId,
+        v.materialId,
+        v.subjectKind,
+        v.subjectId,
+        v.rawText,
+        v.rawTextRef,
+        v.rawHash,
+        v.normalizedHash,
+        v.normalizationVersion,
+        v.byteLength,
+        v.charLength,
+        v.createdAt,
+      );
+  }
+
+  getMaterialVersion(materialVersionId: string): MaterialVersion | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM material_version WHERE material_version_id = ?")
+      .get(materialVersionId) as Record<string, unknown> | undefined;
+    return row === undefined ? undefined : rowToMaterialVersion(row);
+  }
+
+  /** Identity lookup (§C6.7): the same material + raw bytes + normalization ⇒ the same version. */
+  findMaterialVersionByRawHash(
+    materialId: string,
+    rawHash: string,
+    normalizationVersion: string,
+  ): MaterialVersion | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM material_version
+         WHERE material_id = ? AND raw_hash = ? AND normalization_version = ?`,
+      )
+      .get(materialId, rawHash, normalizationVersion) as Record<string, unknown> | undefined;
+    return row === undefined ? undefined : rowToMaterialVersion(row);
+  }
+
+  listMaterialVersions(materialId: string): MaterialVersion[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM material_version WHERE material_id = ? ORDER BY created_at, material_version_id")
+        .all(materialId) as Record<string, unknown>[]
+    ).map(rowToMaterialVersion);
+  }
+
+  /** Insert fragments idempotently (immutable rows: an existing fragment is left untouched). */
+  insertFragments(fragments: MaterialFragment[]): void {
+    if (fragments.length === 0) return;
+    const stmt = this.db.prepare(
+      `INSERT INTO fragment
+       (fragment_id, material_version_id, locator_json, locator_key, text, text_hash, created_at)
+       VALUES (?,?,?,?,?,?,?)
+       ON CONFLICT(fragment_id) DO NOTHING`,
+    );
+    this.db.exec("BEGIN");
+    try {
+      for (const f of fragments) {
+        stmt.run(
+          f.fragmentId,
+          f.materialVersionId,
+          JSON.stringify(f.locator),
+          locatorKey(f.locator),
+          f.text,
+          f.textHash,
+          f.createdAt,
+        );
+      }
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
+  getFragment(fragmentId: string): MaterialFragment | undefined {
+    const row = this.db.prepare("SELECT * FROM fragment WHERE fragment_id = ?").get(fragmentId) as
+      | Record<string, unknown>
+      | undefined;
+    return row === undefined ? undefined : rowToFragment(row);
+  }
+
+  listFragments(materialVersionId: string): MaterialFragment[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM fragment WHERE material_version_id = ? ORDER BY locator_key")
+        .all(materialVersionId) as Record<string, unknown>[]
+    ).map(rowToFragment);
+  }
+
+  upsertFragmentEvidence(e: FragmentEvidence): void {
+    this.db
+      .prepare(
+        `INSERT INTO fragment_evidence
+         (evidence_id, material_version_id, fragment_id, stance, quote_text, quote_hash, note, created_at)
+         VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(evidence_id) DO UPDATE SET
+           stance      = excluded.stance,
+           quote_text  = excluded.quote_text,
+           quote_hash  = excluded.quote_hash,
+           note        = excluded.note`,
+      )
+      .run(
+        e.evidenceId,
+        e.materialVersionId,
+        e.fragmentId,
+        e.stance,
+        e.quoteText,
+        e.quoteHash,
+        e.note ?? null,
+        e.createdAt,
+      );
+  }
+
+  getFragmentEvidence(evidenceId: string): FragmentEvidence | undefined {
+    const row = this.db.prepare("SELECT * FROM fragment_evidence WHERE evidence_id = ?").get(evidenceId) as
+      | Record<string, unknown>
+      | undefined;
+    return row === undefined ? undefined : rowToFragmentEvidence(row);
+  }
+
+  listFragmentEvidence(materialVersionId: string): FragmentEvidence[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM fragment_evidence WHERE material_version_id = ? ORDER BY evidence_id")
+        .all(materialVersionId) as Record<string, unknown>[]
+    ).map(rowToFragmentEvidence);
+  }
+
   upsertPosition(p: ResearchPosition): void {
     this.db
       .prepare(
@@ -1442,6 +1601,48 @@ function rowToMaterial(row: any): Material {
     ingestBlocks: row.ingest_blocks_json ? JSON.parse(row.ingest_blocks_json) : [],
     ingestOverlaps: row.ingest_overlaps_json ? JSON.parse(row.ingest_overlaps_json) : [],
   };
+}
+
+function rowToMaterialVersion(row: any): MaterialVersion {
+  return {
+    materialVersionId: row.material_version_id,
+    materialId: row.material_id,
+    subjectKind: row.subject_kind,
+    subjectId: row.subject_id,
+    rawText: row.raw_text,
+    rawTextRef: null,
+    rawHash: row.raw_hash,
+    normalizedHash: row.normalized_hash,
+    normalizationVersion: row.normalization_version,
+    byteLength: row.byte_length,
+    charLength: row.char_length,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToFragment(row: any): MaterialFragment {
+  return {
+    fragmentId: row.fragment_id,
+    materialVersionId: row.material_version_id,
+    locator: JSON.parse(row.locator_json) as FragmentLocator,
+    text: row.text,
+    textHash: row.text_hash,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToFragmentEvidence(row: any): FragmentEvidence {
+  const out: FragmentEvidence = {
+    evidenceId: row.evidence_id,
+    materialVersionId: row.material_version_id,
+    fragmentId: row.fragment_id,
+    stance: row.stance as FragmentEvidenceStance,
+    quoteText: row.quote_text,
+    quoteHash: row.quote_hash,
+    createdAt: row.created_at,
+  };
+  if (row.note !== null && row.note !== undefined) out.note = row.note as string;
+  return out;
 }
 
 function rowToPoolSlot(row: any): InformationPoolSlot {

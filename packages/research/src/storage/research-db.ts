@@ -352,6 +352,61 @@ export class ResearchDb {
       CREATE INDEX IF NOT EXISTS idx_material_subject ON material(subject_kind, subject_id);
       CREATE INDEX IF NOT EXISTS idx_material_hash ON material(subject_kind, subject_id, content_hash);
 
+      -- ================= C6 slice ①: provenance chain (§C6.3 / §C6.4) =================
+      -- material_version — an IMMUTABLE version of a material. Raw text is kept verbatim here
+      -- (same DB as 'material' on purpose: version + fragments then commit in ONE transaction,
+      -- which is what keeps W1 crash-safe without any cross-database protocol).
+      CREATE TABLE IF NOT EXISTS material_version (
+        material_version_id TEXT PRIMARY KEY,
+        material_id TEXT NOT NULL,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        raw_text TEXT NOT NULL,
+        -- Reserved for large-file (PDF/audio) storage; ALWAYS NULL in v1 (§C6.3).
+        raw_text_ref TEXT,
+        -- ★ rawHash = sha256(RAW bytes); normalizedHash = sha256(NORMALIZED text). NEVER mixed.
+        raw_hash TEXT NOT NULL,
+        normalized_hash TEXT NOT NULL,
+        normalization_version TEXT NOT NULL,
+        byte_length INTEGER NOT NULL,
+        char_length INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_material_version_material ON material_version(material_id);
+      -- Identity (§C6.7): same material + same raw bytes + same normalization ⇒ same version.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_material_version_identity
+        ON material_version(material_id, raw_hash, normalization_version);
+
+      -- fragment — a located span of a material version. Locators are v1: char_range | paragraph.
+      CREATE TABLE IF NOT EXISTS fragment (
+        fragment_id TEXT PRIMARY KEY,
+        material_version_id TEXT NOT NULL,
+        locator_json TEXT NOT NULL,
+        locator_key TEXT NOT NULL,
+        text TEXT NOT NULL,
+        text_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_fragment_version ON fragment(material_version_id);
+      -- Identity (§C6.7): same version + same locator ⇒ same fragment (re-runs reuse, never duplicate).
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_fragment_identity ON fragment(material_version_id, locator_key);
+
+      -- fragment_evidence — ONE stance on ONE fragment (§C6.4). Named 'fragment_evidence' (not
+      -- 'evidence') because Phase 2A's 'Evidence' type is claim-anchored; C6's evidence is
+      -- fragment-anchored and precedes any claim. Keeping the names distinct avoids ambiguity.
+      CREATE TABLE IF NOT EXISTS fragment_evidence (
+        evidence_id TEXT PRIMARY KEY,
+        material_version_id TEXT NOT NULL,
+        fragment_id TEXT NOT NULL,
+        stance TEXT NOT NULL,
+        quote_text TEXT NOT NULL,
+        quote_hash TEXT NOT NULL,
+        note TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_fragment_evidence_version ON fragment_evidence(material_version_id);
+      CREATE INDEX IF NOT EXISTS idx_fragment_evidence_fragment ON fragment_evidence(fragment_id);
+
       -- Phase B v1: ResearchPosition — a TEMPLATE INSTANCE (not chain truth).
       CREATE TABLE IF NOT EXISTS research_position (
         position_ref TEXT PRIMARY KEY,

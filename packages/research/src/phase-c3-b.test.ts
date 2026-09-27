@@ -32,10 +32,14 @@ import { ReportService } from "./application/report-service.js";
 import { ResearchPlanService } from "./application/research-plan-service.js";
 import { PRIORITY_POLICY_V1 } from "./domain/priority-policy.js";
 
-/** The 24-table baseline frozen by the C3 contract §7.4. */
+/** The schema baseline frozen by the C3 contract. Originally 24 tables; later phases EXTEND
+ *  the exact set (never remove from it): C5-A/B added target_proposal + target_proposal_decision,
+ *  C6 slice 1 added material_version + fragment + fragment_evidence.) §7.4. */
 const TABLES_24 = [
   "company",
   "diligence_preparation",
+  "fragment",
+  "fragment_evidence",
   "human_gate",
   "industry",
   "industry_knowledge",
@@ -47,6 +51,7 @@ const TABLES_24 = [
   "knowledge_belief",
   "knowledge_conflict",
   "material",
+  "material_version",
   "methodology",
   "methodology_candidate",
   "next_action",
