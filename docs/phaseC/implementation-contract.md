@@ -2362,6 +2362,36 @@ confirmed   = ∪_{m: status = completed} m.claimRefs
 | mutation | 恢复"唯一匹配即采纳" | T-R1-15 必须转红 |
 | mutation | 歧义失败写 `failed` 而非 `legacy_failed` | T-R1-21 必须转红 |
 
-**End of §29（rev9: §29.16 复核修正 3）.**
+## §29.17 复核修正 4（2026-09-26，验收者指出后）
+
+> ⚠️ 追加记录。§29.0 – §29.16 原文**一字未改**。
+
+### §29.17.1 缺陷 8 — Agent 组合根未注入 `knowledge`，Agent 路径**完全跳过**孤儿扫描（**已修**）
+
+`detectOrphanOverlap()` 在没有 `knowledge` 时**立即返回**。CLI 组合根（`src/cli/tiancha.ts`）注入了它，但 **Agent 组合根（`src/agent/tiancha-agent-host.ts`）仍用三参数构造** ⇒ Agent 的 `research_material_add` **既不扫描 artifact、也不扫描 belief**，歧义永远不会被发现。
+
+**修正**：Agent 组合根同样注入 `{ knowledge: new KnowledgeRepository(db.db) }` —— 与 CLI **同一装配语义**（两条真实入口必须一致）。
+
+**验收**：`T-R1-23` —— 经**真实工具面** `research_material_add` 导入一个含歧义重叠的材料 ⇒ 必须 `failed` + `ORPHAN_CLAIM_AMBIGUOUS`（若未注入，会静默 `created`）。
+
+### §29.17.2 缺陷 9 — 单个"无法归属"的旧 Claim 仍会被算作已确认（**已修**）
+
+§29.16 只在"≥ 2 候选（歧义）"时升级。**单个**同文候选既不报歧义、也不留痕；若该旧 Claim 有 belief 且**没有任何 `completed` 材料引用它**，导入会正常完成，而 `hasResidual` 仍是 `false` ⇒ 它被 `isUnconfirmedEvidence()` 判为**已确认**。
+
+**修正**：
+
+* `material` 新增列 **`ingest_overlaps_json`**；扫描时对每个同文候选判定**归属** —— 候选的 claimId **不属于任何 `completed` 材料的 `claimRefs`** ⇒ 记入该材料的 `ingestOverlaps`（**不阻断**本次导入：材料仍用自己的新 id 正常完成）；
+* `materialEvidenceIndex()` 的 `hasResidual` 改为：**存在 `legacy_failed` 行 ∨ 存在非空 `ingestOverlaps` 的行** ⇒ 该 subject 保持**保守降级**；
+* **相反的一半同样重要**：候选**已被某个 `completed` 材料归属** ⇒ **不记入** overlaps ⇒ **不降级**（它是已确立的来源，见 `T-R1-15`）。
+
+**验收**：`T-R1-24` —— 一个 artifact-only、**已有 belief**、**无 completed 材料引用**的旧 Claim；随后导入含同文块的新材料 ⇒ 新材料**保留自己的 id**，且该旧 Claim **在归属被人工解决前不再出现在** `recentEvidence` / `evidenceRefs`。
+
+| mutation | 期望 |
+|---|---|
+| Agent 组合根去掉 `knowledge` | T-R1-23 必须转红 |
+| 扫描不记录 `ingestOverlaps` | T-R1-24 必须转红 |
+| `hasResidual` 忽略 `ingestOverlaps` | T-R1-24 必须转红 |
+
+**End of §29（rev10: §29.17 复核修正 4）.**
 
 
