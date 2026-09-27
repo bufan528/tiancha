@@ -443,3 +443,86 @@ describe("C-MVP-R1 CLI · attribute validation (§29.20)", () => {
     }
   });
 });
+
+// ===========================================================================
+// T-R1-28 — §29.21: the artifact store also holds fact / evidence / score / report / dossier. A
+// real, same-subject artifact of ANOTHER kind must not be adopted as a material's Claim.
+// ===========================================================================
+
+describe("C-MVP-R1 CLI · attribute kind guard (§29.21)", () => {
+  test("T-R1-28: a same-subject artifact that is NOT a claim is refused", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tiancha-r1-cli5-"));
+    const dbPath = join(dir, "tiancha.sqlite");
+    try {
+      const sid = await bootstrap(dbPath);
+      const db = new ResearchDb({ path: dbPath });
+      const repo = new ResearchRepository(db.db);
+      const artifacts = new SqliteArtifactStore({ path: ":memory:" });
+      const knowledge = new KnowledgeRepository(db.db);
+      const lines: string[] = [];
+      const deps = makeDeps(db, repo, artifacts, lines, join(dir, "reports"), { knowledge });
+      try {
+        const file = join(dir, "expert.md");
+        writeFileSync(file, MATERIAL, "utf8");
+        assert.equal(await runMaterialAdd(INDUSTRY, file, { json: false }, deps), 0);
+        const materialId = repo.listMaterials(sid)[0]!.materialId;
+        const refsBefore = repo.getMaterial(materialId)!.claimRefs.length;
+
+        // a REAL artifact for THIS subject — but it is a `fact`, not a `claim`.
+        await artifacts.put({
+          artifact: {
+            artifactId: "fact-1",
+            kind: "fact",
+            schemaVersion: "2",
+            ref: { artifactId: "fact-1", kind: "fact", locator: { type: "sqlite", id: "fact-1" } },
+            createdAt: new Date().toISOString(),
+            taskId: "field-research-ingest",
+            attemptId: "ingest-claims",
+            runId: "backfill-fact",
+          },
+          blob: {
+            statement: "同 subject，但这是一个 fact",
+            subjectKind: "industry",
+            subjectId: sid,
+          },
+        });
+
+        lines.length = 0;
+        assert.equal(
+          await runMaterialAttribute("artifact:claim/fact-1", { json: false, to: materialId }, deps),
+          1,
+          "T-R1-28: a non-claim artifact is refused",
+        );
+        assert.ok(
+          lines.some((l) => l.startsWith("ERR:") && l.includes("not a 'claim'")),
+          "…and the reason names the actual kind",
+        );
+        assert.equal(
+          repo.getMaterial(materialId)!.claimRefs.includes("fact-1"),
+          false,
+          "T-R1-28: nothing was written",
+        );
+        assert.equal(repo.getMaterial(materialId)!.claimRefs.length, refsBefore);
+
+        // the guard is additive: a REAL claim of this subject still works
+        const discovery = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
+        const okRun = await discovery.ingestClaims({
+          subjectKind: "industry",
+          subjectId: sid,
+          claims: [{ statement: "本行业的一条真 claim", dimension: "market" }],
+        });
+        lines.length = 0;
+        assert.equal(
+          await runMaterialAttribute(`artifact:claim/${okRun.claimIds[0]}`, { json: false, to: materialId }, deps),
+          0,
+          "a genuine claim of the same subject is still accepted",
+        );
+      } finally {
+        await artifacts.close();
+        db.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
