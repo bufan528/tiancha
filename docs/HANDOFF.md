@@ -1,6 +1,6 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **Phase C · C5-D 与 C-MVP-R1 均已实现并发布（含八轮复核修正与 5a 落地）** · **代码验证基线 `a6680aa`**（最后一个实现/测试提交；其后的 `docs:` 同步提交即发布 HEAD，`origin/main` 与本地 **1:1**，ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
+> **Phase C · C5-D 与 C-MVP-R1 均已实现并发布（含八轮复核修正与 5a 落地）** · **代码验证基线 `5fa0ca3`**（= 本轮最后一个 `test:` 提交，含 T-R1-28 ⇒ 与 411 项测试相符；**基线的取法**：`git log --oneline` 中第一个非 `docs:` 提交） · 其后的 `docs:` 同步提交即发布 HEAD，`origin/main` 与本地 **1:1**（ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
 > 本文档已与真实代码状态**逐项核对（2026-09-26，第十一轮）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **411 tests / 411 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修） · `research smoke` PASS · 表 **26 张**。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。**C6 / Phase C 完整版仍未授权**（本文件 §0.1 已同步实现与授权状态）。
 
@@ -15,7 +15,7 @@
 | 当前阶段 | **Phase C · C1→C5-D 与 C-MVP-R1 全部 FINAL LOCK 且已实现发布**；**C6 / Phase C 完整版未授权** |
 | 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影）—— 已实现并发布（`dc64c33` + `aa4dc95`）** · **C-MVP-R1（材料导入可靠性：状态机 + 续跑 + 并发原子认领 + 块级账本 + 五态返回）—— 已实现并发布（`e0fe004` … `709447e`）** |
 | 验收状态 | C1–C5-D 与 **C-MVP-R1** 全部**已实现、已发布**；C5-D 闭环见 `c5-implementation-contract.md` §21.11；C-MVP-R1 闭环见 **`phaseC/implementation-contract.md` §29.12**，复核修正见 **§29.13**（fencing）、**§29.14**（5a 汇总排除）、**§29.15**（5a 崩溃窗口 + 残骸保守降级 + 扫描范围与歧义）、**§29.16**（取消按内容复用；歧义须保持 `legacy_failed`）、**§29.17**（Agent 入口与 CLI 同一装配；单个无法归属的重叠也触发保守降级）、**§29.18**（overlap 标记只增不减，仅 `--force` 重算；扫描排除本材料自己的 Claim）、**§29.19**（人工归属查看与确认流程：`material list` 展示未归属重叠 + `material attribute … --to <materialId>`）、**§29.20**（`attribute` 补存在性与 subject 归属校验）、**§29.21**（`attribute` 再补 **artifact kind = claim** 校验）—— **无剩余未满足条款** |
-| HEAD / 远端 | **代码验证基线 `a6680aa`**（实现 + 测试提交）；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不再把 docs 提交的 hash 写进本表**（它每次同步都会变） |
+| HEAD / 远端 | **代码验证基线 `5fa0ca3`**（= 本轮最后一个 `test:` 提交）；**基线取法**：`git log --oneline` 中第一个非 `docs:` 提交；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不把 `docs:` 提交的 hash 写进本表**（它每次同步都会变，写了必然很快失准） |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **411 tests / 411 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
 | 下一步 | **C-MVP-R1 已完整实现并发布（`§29` rev7：状态机 + 续跑 + 并发认领 + fencing + 块级账本 + 五态 + 孤儿复用 + 5a 汇总排除），无剩余未满足条款**；下一步候选：**C6（Material → Claim → Knowledge Evolution）** 或 **Phase C 完整版（Fragment / Evidence 链）** —— **均未授权** |
