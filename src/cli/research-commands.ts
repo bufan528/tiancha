@@ -81,6 +81,7 @@ import { renderDossierMarkdown, reportFileName } from "./report-markdown.js";
 // ★ C6 slice ③: the human gate for claim candidates (no projection lives here).
 import { CandidateReviewService, type ClaimCandidate } from "@tiancha/research";
 import { CandidateProjectionService } from "@tiancha/research";
+import { locatorKey } from "@tiancha/research";
 import {
   formatCandidateHuman,
   formatCandidateListHuman,
@@ -1195,7 +1196,20 @@ export interface CandidateReviewOptions {
   supersedes?: string;
 }
 
-function toCandidateView(c: ClaimCandidate): CandidateView {
+function toCandidateView(c: ClaimCandidate, repo?: ResearchRepository): CandidateView {
+  // ★ §C6.3: resolve WHERE each piece of evidence sits, so a reader can go back to the material.
+  const sourceLocators: string[] = [];
+  let excerpt = "";
+  if (repo !== undefined) {
+    for (const evidenceId of c.evidenceRefs) {
+      const evidence = repo.getFragmentEvidence(evidenceId);
+      if (evidence === undefined) continue;
+      const fragment = repo.getFragment(evidence.fragmentId);
+      if (fragment === undefined) continue;
+      sourceLocators.push(locatorKey(fragment.locator));
+      if (excerpt.length === 0) excerpt = fragment.text.slice(0, 140);
+    }
+  }
   return {
     candidateId: c.candidateId,
     materialVersionId: c.materialVersionId,
@@ -1206,6 +1220,10 @@ function toCandidateView(c: ClaimCandidate): CandidateView {
     reviewStatus: c.reviewStatus,
     ...(c.decisionRelation === undefined ? {} : { decisionRelation: c.decisionRelation }),
     evidenceRefCount: c.evidenceRefs.length,
+    evidenceRefs: [...c.evidenceRefs],
+    sourceLocators,
+    excerpt,
+    projectionStatus: c.projectionStatus,
     ...(c.supersedesCandidateRef === undefined ? {} : { supersedesCandidateRef: c.supersedesCandidateRef }),
     ...(c.reviewedBy === undefined ? {} : { reviewedBy: c.reviewedBy }),
   };
@@ -1242,10 +1260,10 @@ export async function runCandidateList(
     }
     if (opts.status !== undefined) rows = rows.filter((c) => c.reviewStatus === opts.status);
     if (opts.json) {
-      deps.out(toJson(rows.map(toCandidateView)));
+      deps.out(toJson(rows.map((c) => toCandidateView(c, deps.repo))));
       return 0;
     }
-    deps.out(formatCandidateListHuman(rows.map(toCandidateView), label));
+    deps.out(formatCandidateListHuman(rows.map((c) => toCandidateView(c, deps.repo)), label));
     return 0;
   } catch (err) {
     return fail(deps, err instanceof Error ? err.message : String(err));
@@ -1264,7 +1282,7 @@ export async function runCandidateShow(
       deps.out(toJson({ candidate: toCandidateView(candidate), reviews }));
       return 0;
     }
-    deps.out(formatCandidateHuman(toCandidateView(candidate)));
+    deps.out(formatCandidateHuman(toCandidateView(candidate, deps.repo)));
     if (reviews.length > 0) {
       deps.out(`  审阅记录（append-only，共 ${reviews.length} 条）：`);
       for (const r of reviews) {
@@ -1293,6 +1311,7 @@ export async function runCandidateConfirm(
     const updated = reviewOf(deps).confirm(candidateId, {
       operator: opts.operator,
       relation: opts.relation as never,
+      ...(opts.supersedes === undefined ? {} : { supersedesClaimRef: opts.supersedes }),
       ...(opts.comment === undefined ? {} : { comment: opts.comment }),
     });
     if (opts.json) {
@@ -1314,10 +1333,8 @@ export async function runCandidateConfirm(
       }
       return 0;
     }
-    const projected = await deps.projection.project(candidateId, {
-      operator: opts.operator,
-      ...(opts.supersedes === undefined ? {} : { supersedesClaimRef: opts.supersedes }),
-    });
+    // ★ the target already lives on the decision — the projection reads it from there
+    const projected = await deps.projection.project(candidateId, { operator: opts.operator });
     if (!opts.json) {
       deps.out(formatProjectionHuman(toCandidateView(projected.candidate), projected.status, projected.claimRef, projected.error));
     }

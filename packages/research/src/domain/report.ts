@@ -114,6 +114,14 @@ export interface ClaimCandidateLine {
   statement: string;
   reviewStatus: string;
   evidenceRefCount: number;
+  /** ★ The `fragment_evidence` rows behind this candidate — the reader can follow them. */
+  evidenceRefs: string[];
+  /** ★ Human-readable locators of those fragments (v1: `paragraph:<i>` / `char_range:<a>:<b>`). */
+  sourceLocators: string[];
+  /** ★ A short excerpt of the located (normalized) material text. */
+  excerpt: string;
+  /** `none` / `reserved` / `claim_written` / `projected` / `finalized` — §C6.17 progress. */
+  projectionStatus: string;
   materialVersionId: string;
   /**
    * ★ §C6.3: the fragment behind this candidate was located in the NORMALIZED material

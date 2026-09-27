@@ -227,3 +227,71 @@ describe("T-C6-4 / T-C6-7 — C6 semantics reach the Report", () => {
     );
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// \u00a7C6.3 traceability + \u00a7C6.17 recovery window (review follow-up)
+// ---------------------------------------------------------------------------
+
+describe("\u00a7C6.3 / \u00a7C6.17 \u2014 a reader can FOLLOW the evidence, and a half-finished projection stays visible", () => {
+  test("T-C6-10: every candidate row carries its evidence, its locator and an excerpt that resolves", async () => {
+    const e = await env();
+    const draftId = idOf(e, "supply");
+    const s = new ReportService(e.db.db).generateDossier(e.industryId).sections;
+
+    const row = s.pendingCandidates.find(
+      (r): r is Extract<typeof r, { candidateRef: string }> => "candidateRef" in r && r.candidateRef === draftId,
+    );
+    assert.ok(row !== undefined, "the draft candidate must be in the report");
+
+    // \u2605 the reader gets the EVIDENCE, not just a count
+    assert.equal(row.evidenceRefs.length, row.evidenceRefCount);
+    assert.ok(row.evidenceRefs.length >= 1);
+    assert.equal(row.sourceLocators.length, row.evidenceRefs.length);
+    assert.ok(row.excerpt.length > 0, "an excerpt is shown so the reader can recognise the passage");
+    assert.equal(row.projectionStatus, "none");
+
+    // \u2605 END-TO-END: the reported locator really points back into the material
+    const version = e.repo.listMaterialVersions("mat-1")[0];
+    assert.ok(version !== undefined);
+    const material = e.repo.getMaterial("mat-1");
+    assert.ok(material !== undefined);
+    const locator = row.sourceLocators[0];
+    const fragment = e.repo.getFragment(row.evidenceRefs[0].length > 0 ? e.repo.getFragmentEvidence(row.evidenceRefs[0])!.fragmentId : "");
+    assert.ok(fragment !== undefined);
+    assert.equal(locator, `paragraph:${(fragment.locator as { index: number }).index}`);
+    // the excerpt is a prefix of exactly what that locator resolves to in the material
+    const evidence = e.repo.getFragmentEvidence(row.evidenceRefs[0]);
+    assert.ok(evidence !== undefined);
+    assert.ok(fragment.text.startsWith(row.excerpt.slice(0, 20)));
+    assert.equal(fragment.textHash, evidence.quoteHash, "the quoted evidence matches the fragment");
+  });
+
+  test("T-C6-11: a crash between P3 and P4 must NOT list the same claim as both fact and judgment", async () => {
+    const e = await env();
+    const factId = idOf(e, "market");
+    e.review.confirm(factId, { operator: "analyst", relation: "SUPPORT" });
+    await e.projection.project(factId, { operator: "analyst" });
+    const claimRef = e.projection.claimRefOf(factId);
+    assert.ok(claimRef !== undefined);
+
+    // ★ simulate a crash after the projection, before the P4 backfill
+    e.repo.updateCandidateProjection(factId, { projectionStatus: "projected" });
+    e.db.db.prepare("UPDATE claim_candidate SET confirmed_claim_ref = NULL WHERE candidate_id = ?").run(factId);
+
+    const s = new ReportService(e.db.db).generateDossier(e.industryId).sections;
+
+    // the claim is classified through the RESERVED id \u2014 so it is NOT in both sections
+    const asFact = s.keyFacts.some((f) => f.claimRef === claimRef);
+    const asJudgment = s.mainJudgments.some((k) => k.claimRef === claimRef);
+    assert.equal(asFact && asJudgment, false, "the same claim must never be listed as BOTH fact and judgment");
+
+    // ...and the not-yet-finalized candidate is still VISIBLE (it must not disappear)
+    const row = s.pendingCandidates.find(
+      (r): r is Extract<typeof r, { candidateRef: string }> => "candidateRef" in r && r.candidateRef === factId,
+    );
+    assert.ok(row !== undefined, "a decided-but-unfinalized candidate stays visible");
+    assert.equal(row.reviewStatus, "confirmed");
+    assert.equal(row.projectionStatus, "projected", "its progress is shown as in-flight");
+  });
+});

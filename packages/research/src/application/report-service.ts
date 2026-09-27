@@ -31,6 +31,9 @@ import type {
   ReportSections,
   ReportSnapshot,
 } from "../domain/index.js";
+import { locatorKey } from "../domain/material-source.js";
+/** Project-wide claim reference shape (must match the projection service). */
+const CLAIM_REF_PREFIX = "artifact:claim/";
 import type { ClaimCandidateLine } from "../domain/report.js";
 import { NORMALIZATION_VERSION } from "../domain/material-source.js";
 
@@ -111,6 +114,13 @@ export class ReportService {
     const allCandidates = repo.listClaimCandidatesBySubject(subjectKind, subjectId);
     for (const c of allCandidates) {
       if (c.confirmedClaimRef !== undefined) contentKindByClaimRef.set(c.confirmedClaimRef, c.contentKind);
+      // ★ §C6.17 recovery window: a crash after P3 but before the P4 backfill leaves the claim
+      // written and projected while `confirmedClaimRef` is still empty. The RESERVED id is already
+      // known, so the report can still classify it — otherwise the same claim would be listed as
+      // BOTH a fact and a judgment (the legacy "no candidate behind it" rule).
+      if (c.confirmedClaimRef === undefined && c.reservedClaimId !== undefined && c.reviewStatus !== "rejected") {
+        contentKindByClaimRef.set(`${CLAIM_REF_PREFIX}${c.reservedClaimId}`, c.contentKind);
+      }
     }
     const kindOf = (claimRef: string): string | undefined => contentKindByClaimRef.get(claimRef);
     const currentKnowledge = currentBeliefs.map(toLine);
@@ -281,20 +291,40 @@ export class ReportService {
           // ★ C6 slice ⑤: candidates still awaiting review are part of the real state — and they
           // carry their own identity (`candidateRef`) plus the normalization version of their text.
           ...allCandidates
-            .filter((c) => c.reviewStatus === "draft")
+            // ★ drafts, AND anything already decided but NOT yet finalized (§C6.17 recovery window:
+            // a crash between P3 and P4 must not make a confirmed candidate disappear from the report).
+            .filter(
+              (c) =>
+                c.reviewStatus !== "rejected" &&
+                (c.reviewStatus === "draft" || c.projectionStatus !== "finalized"),
+            )
             .sort((a, b) => (a.candidateId < b.candidateId ? -1 : 1))
-            .map(
-              (c): ClaimCandidateLine => ({
+            .map((c): ClaimCandidateLine => {
+              const sourceLocators: string[] = [];
+              let excerpt = "";
+              for (const evidenceId of c.evidenceRefs) {
+                const evidence = repo.getFragmentEvidence(evidenceId);
+                if (evidence === undefined) continue;
+                const fragment = repo.getFragment(evidence.fragmentId);
+                if (fragment === undefined) continue;
+                sourceLocators.push(locatorKey(fragment.locator));
+                if (excerpt.length === 0) excerpt = fragment.text.slice(0, 140);
+              }
+              return {
                 candidateRef: c.candidateId,
                 dimension: c.dimension,
                 contentKind: c.contentKind,
                 statement: c.statement,
                 reviewStatus: c.reviewStatus,
                 evidenceRefCount: c.evidenceRefs.length,
+                evidenceRefs: [...c.evidenceRefs],
+                sourceLocators,
+                excerpt,
+                projectionStatus: c.projectionStatus,
                 materialVersionId: c.materialVersionId,
                 normalizationVersion: NORMALIZATION_VERSION,
-              }),
-            ),
+              };
+            }),
         ],
         revisedBeliefs: beliefsInState("revised"),
         supersededBeliefs: beliefsInState("superseded"),

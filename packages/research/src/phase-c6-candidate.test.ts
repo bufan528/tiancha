@@ -322,3 +322,71 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
 // keep the type import used even if a refactor drops the map above
 const _contentKindCheck: CandidateContentKind = "fact";
 void _contentKindCheck;
+
+
+// ---------------------------------------------------------------------------
+// Candidate identity for REPEATED text + evidence validation (review follow-up)
+// ---------------------------------------------------------------------------
+
+const REPEATED = [
+  "\u7b2c\u4e00\u6bb5\uff1a\u5e02\u573a\u89c4\u6a21\u7ea6 500 \u4ebf\u5143\u3002",
+  "\u7b2c\u4e8c\u6bb5\uff1a\u53e6\u4e00\u4efd\u53e3\u5f84\u4e5f\u6307\u5411\u540c\u4e00\u4e2a\u6570\u5b57\u3002",
+  "[\u0043ANDIDATE]",
+  "dimension: market",
+  "kind: fact",
+  "statement: 2025 \u5e74\u5168\u7403\u51fa\u8d27\u7ea6 2.5 \u4e07\u53f0",
+  "evidence: paragraph:0",
+  "[/\u0043ANDIDATE]",
+  "[\u0043ANDIDATE]",
+  "dimension: market",
+  "kind: fact",
+  "statement: 2025 \u5e74\u5168\u7403\u51fa\u8d27\u7ea6 2.5 \u4e07\u53f0",
+  "evidence: paragraph:1",
+  "[/\u0043ANDIDATE]",
+  "",
+].join("\n\n");
+
+describe("candidate identity for repeated text, and evidence validation", () => {
+  test("T-C6-12: the SAME statement in two places yields ONE candidate that keeps BOTH sources", () => {
+    const e = env();
+    const version = versionOf(e, REPEATED);
+    const r = e.x.run(version, AT);
+
+    // one candidate (identity is (version, blockHash, dimension, config)) ...
+    assert.equal(r.created, 1, "the same statement is one candidate, not two");
+    assert.equal(e.repo.listClaimCandidates(version.materialVersionId).length, 1);
+
+    // ...but the SECOND occurrence is not lost: its evidence is merged in
+    const candidate = e.repo.getClaimCandidate(r.candidateIds[0]);
+    assert.ok(candidate !== undefined);
+    assert.equal(candidate.evidenceRefs.length, 2, "\u2605 both source locations are kept");
+    assert.equal(r.merged, 1, "the merge is reported, not silent");
+
+    // a further re-run changes nothing
+    const again = e.x.run(version, AT2);
+    assert.equal(again.created, 0);
+    assert.equal(again.merged, 0);
+    assert.equal(e.repo.getClaimCandidate(r.candidateIds[0])?.evidenceRefs.length, 2);
+  });
+
+  test("T-C6-13: a draft citing non-existent evidence is refused (a model may not invent sources)", () => {
+    const e = env();
+    const version = versionOf(e);
+    const svc = new CandidateExtractionService(e.repo, {
+      modelVersion: "none",
+      promptVersion: "none",
+      extract: () => [
+        {
+          dimension: "market",
+          statement: "x",
+          contentKind: "fact" as CandidateContentKind,
+          evidenceRefs: ["ev-does-not-exist"],
+        },
+      ],
+    });
+    const r = svc.run(version, AT);
+    assert.equal(r.status, "failed");
+    assert.match(r.error ?? "", /does not exist/);
+    assert.equal(e.repo.listClaimCandidates(version.materialVersionId).length, 0);
+  });
+});

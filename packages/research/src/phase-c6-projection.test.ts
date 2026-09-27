@@ -252,11 +252,37 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
 
   });
 
-  test("T-C6-9: SUPERSEDE refuses to guess which claim it replaces", async () => {
+  test("T-C6-9: SUPERSEDE cannot guess a target, and a retry may not change it", async () => {
     const e = env();
     const id = e.candidateIds[0];
-    e.review.confirm(id, { operator: "analyst", relation: "SUPERSEDE" });
-    await assert.rejects(() => e.projection.project(id, { operator: "analyst" }), /needs an explicit supersedesClaimRef/);
+
+    // ★ the DECISION itself is refused without a target, before anything is reserved or written
+    assert.throws(
+      () => e.review.confirm(id, { operator: "analyst", relation: "SUPERSEDE" }),
+      /requires --supersedes-claim/,
+    );
+    const untouched = e.repo.getClaimCandidate(id);
+    assert.equal(untouched?.reviewStatus, "draft", "a refused decision leaves the candidate a draft");
+    assert.equal(untouched?.reservedClaimId, undefined, "nothing may be reserved by a refused decision");
+    assert.equal(untouched?.projectionError, undefined);
+
+    // ★ the target is part of the DECISION: it is persisted with it...
+    e.review.confirm(id, {
+      operator: "analyst",
+      relation: "SUPERSEDE",
+      supersedesClaimRef: "artifact:claim/claim-old",
+    });
+    assert.equal(e.repo.getClaimCandidate(id)?.supersededClaimRef, "artifact:claim/claim-old");
+
+    // ...and a retry may not quietly re-choose it
+    await assert.rejects(
+      () => e.projection.project(id, { operator: "analyst", supersedesClaimRef: "artifact:claim/claim-other" }),
+      /may not change the decision/,
+    );
+
+    // using the STORED target works
+    const result = await e.projection.project(id, { operator: "analyst" });
+    assert.equal(result.status, "projected");
   });
 
   test("a rejected candidate is never projectable, and two candidates project independently", async () => {

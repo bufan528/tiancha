@@ -61,8 +61,13 @@ export interface RunResult {
   extractionId: string;
   /** Candidates newly inserted by this run. */
   created: number;
-  /** Candidates that already existed (same identity) and were left untouched. */
+  /**
+   * Candidates that already existed (same identity). Their content is left untouched, but evidence
+   * from the new occurrence is MERGED in — see `merged`.
+   */
   reused: number;
+  /** How many of those actually gained evidence in this run. */
+  merged: number;
   candidateIds: string[];
   status: "completed" | "failed";
   error?: string;
@@ -139,7 +144,9 @@ export class CandidateExtractionService {
     let drafts: CandidateDraft[];
     try {
       drafts = this.extractor.extract({ version, fragments });
-      validateDrafts(drafts);
+      // ★ A non-empty list is not enough: every ref must be REAL and belong to THIS material
+      // version. A model-backed extractor must never be able to assert a source that does not exist.
+      this.validateDrafts(drafts, version);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.repo.updateExtractionRun(extractionId, {
@@ -147,12 +154,14 @@ export class CandidateExtractionService {
         finishedAt: this.now(),
         error: message,
       });
-      return { extractionId, created: 0, reused: 0, candidateIds: [], status: "failed", error: message };
+      return { extractionId, created: 0, reused: 0, merged: 0, candidateIds: [], status: "failed", error: message };
     }
 
     const candidateIds: string[] = [];
     let created = 0;
     let reused = 0;
+    /** Candidates whose evidence list GREW because the same statement appeared again. */
+    let merged = 0;
     for (const draft of drafts) {
       const blockHash = candidateBlockHash({
         dimension: draft.dimension,
@@ -161,7 +170,11 @@ export class CandidateExtractionService {
       });
       const candidateId = claimCandidateIdFor(version.materialVersionId, blockHash, draft.dimension, configKey);
       candidateIds.push(candidateId);
-      if (this.repo.getClaimCandidate(candidateId) !== undefined) {
+      const existing = this.repo.getClaimCandidate(candidateId);
+      if (existing !== undefined) {
+        // ★ the SAME statement extracted from ANOTHER place in the material: the candidate is
+        // already there (insert-only), so MERGE this occurrence's evidence instead of dropping it.
+        if (this.repo.appendCandidateEvidence(candidateId, draft.evidenceRefs)) merged += 1;
         reused += 1;
         continue;
       }
@@ -195,7 +208,7 @@ export class CandidateExtractionService {
       finishedAt: this.now(),
       candidateIds,
     });
-    return { extractionId, created, reused, candidateIds, status: "completed" };
+    return { extractionId, created, reused, merged, candidateIds, status: "completed" };
   }
 
   /** The predecessor of the same (blockHash, dimension) under ANY other extraction config. */
@@ -206,6 +219,26 @@ export class CandidateExtractionService {
     if (prior.length === 0) return undefined;
     // prefer the newest predecessor so a chain of configs stays traceable one hop at a time
     return prior.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0].candidateId;
+  }
+
+
+  /** ★ §C6.4/§C6.7: drafts must cite evidence that EXISTS and belongs to this version. */
+  private validateDrafts(drafts: CandidateDraft[], version: MaterialVersion): void {
+    validateDraftShapes(drafts);
+    for (const [i, draft] of drafts.entries()) {
+      for (const evidenceRef of draft.evidenceRefs) {
+        const evidence = this.repo.getFragmentEvidence(evidenceRef);
+        if (evidence === undefined) {
+          throw new Error(`draft #${i}: evidence ${evidenceRef} does not exist`);
+        }
+        if (evidence.materialVersionId !== version.materialVersionId) {
+          throw new Error(
+            `draft #${i}: evidence ${evidenceRef} belongs to material version ${evidence.materialVersionId}, ` +
+              `not ${version.materialVersionId}`,
+          );
+        }
+      }
+    }
   }
 
   listCandidates(materialVersionId: string): ClaimCandidate[] {
@@ -221,8 +254,12 @@ export class CandidateExtractionService {
   }
 }
 
-/** A draft with no evidence, or with an empty statement, is not a reviewable proposal. */
-function validateDrafts(drafts: CandidateDraft[]): void {
+/**
+ * A draft with no evidence, or with an empty statement, is not a reviewable proposal.
+ * ★ It also checks that every `evidenceRef` EXISTS and belongs to THIS material version — an
+ * extractor (especially a future model-backed one) cannot point at evidence it made up.
+ */
+function validateDraftShapes(drafts: CandidateDraft[]): void {
   for (const [i, d] of drafts.entries()) {
     if (d.statement.trim().length === 0) {
       throw new Error(`draft #${i}: statement must not be empty`);

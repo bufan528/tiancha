@@ -143,7 +143,11 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     assert.equal(reviews.length, 1);
     assert.equal(reviews[0].action, "confirm");
     assert.equal(reviews[0].operator, "analyst");
-    assert.deepEqual(reviews[0].after, { reviewStatus: "confirmed", decisionRelation: "SUPPORT" });
+    assert.deepEqual(reviews[0].after, {
+      reviewStatus: "confirmed",
+      decisionRelation: "SUPPORT",
+      supersededClaimRef: null,
+    });
   });
 
   test("T-C6-7c: revise EDITS content and KEEPS the candidate a draft (editing ≠ accepting)", () => {

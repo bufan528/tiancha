@@ -434,6 +434,9 @@ export class ResearchDb {
         confirmed_claim_ref TEXT,
         -- lineage: same (block_hash, dimension) under a PREVIOUS extraction config
         supersedes_candidate_ref TEXT,
+        -- ★ review decision: the claim this candidate supersedes (SUPERSEDE only). Persisted with the
+        -- decision so a retry never has to (and never may) invent a different target.
+        superseded_claim_ref TEXT,
         -- §C6.17: declared now, USED in slice ④ (avoids a second migration later)
         projection_status TEXT NOT NULL DEFAULT 'none',
         reserved_claim_id TEXT,
@@ -597,6 +600,7 @@ export class ResearchDb {
     this.migrateMaterialIngestState();
     // ★ C5-B last: it may FAIL FAST on legacy duplicate active proposals (see the method).
     this.ensureProposalActiveUniqueness();
+    this.ensureCandidateSupersedesColumn();
   }
 
   /**
@@ -727,6 +731,15 @@ export class ResearchDb {
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_active_subject " +
         "ON target_proposal(industry_ref, company_ref) WHERE status = 'proposed'",
     );
+  }
+
+  /**
+   * ★ C6: add `claim_candidate.superseded_claim_ref`. The SUPERSEDE target belongs to the REVIEW
+   * DECISION, not to one CLI invocation: persisting it is what makes "resume uses the ORIGINAL
+   * decision" true instead of "resume may re-choose one".
+   */
+  private ensureCandidateSupersedesColumn(): void {
+    this.addColumnIfMissing("claim_candidate", "superseded_claim_ref", "TEXT");
   }
 
   /** PRAGMA-prechecked ALTER; try/catch is only a concurrency safety net. */

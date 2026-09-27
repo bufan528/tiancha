@@ -971,9 +971,10 @@ export class ResearchRepository {
         `INSERT INTO claim_candidate
          (candidate_id, material_version_id, subject_kind, subject_id, dimension, block_hash, statement,
           content_kind, confidence, evidence_refs_json, extraction_id, extraction_config_key,
-          review_status, reviewed_by, reviewed_at, decision_relation, confirmed_claim_ref,
-          supersedes_candidate_ref, projection_status, reserved_claim_id, projection_error, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          review_status, reviewed_by, reviewed_at, decision_relation, superseded_claim_ref,
+          confirmed_claim_ref, supersedes_candidate_ref, projection_status, reserved_claim_id,
+          projection_error, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(candidate_id) DO NOTHING`,
       )
       .run(
@@ -993,6 +994,7 @@ export class ResearchRepository {
         c.reviewedBy ?? null,
         c.reviewedAt ?? null,
         c.decisionRelation ?? null,
+        c.supersededClaimRef ?? null,
         c.confirmedClaimRef ?? null,
         c.supersedesCandidateRef ?? null,
         c.projectionStatus,
@@ -1000,6 +1002,22 @@ export class ResearchRepository {
         c.projectionError ?? null,
         c.createdAt,
       );
+  }
+
+  /**
+   * ★ C6: UNION new evidence onto an existing candidate. Two occurrences of the SAME statement in
+   * one material share a candidate id, and the second occurrence must not lose its source — so the
+   * evidence list grows while every other field (including a human edit) stays untouched.
+   */
+  appendCandidateEvidence(candidateId: string, evidenceRefs: string[]): boolean {
+    const existing = this.getClaimCandidate(candidateId);
+    if (existing === undefined) return false;
+    const merged = [...new Set([...existing.evidenceRefs, ...evidenceRefs])];
+    if (merged.length === existing.evidenceRefs.length) return false;
+    const res = this.db
+      .prepare("UPDATE claim_candidate SET evidence_refs_json = ? WHERE candidate_id = ?")
+      .run(JSON.stringify(merged), candidateId);
+    return Number(res.changes) === 1;
   }
 
   getClaimCandidate(candidateId: string): ClaimCandidate | undefined {
@@ -1069,6 +1087,7 @@ export class ResearchRepository {
       confidence?: number;
       reviewStatus: CandidateReviewStatus;
       decisionRelation?: CandidateRelation;
+      supersededClaimRef?: string;
       reviewedBy?: string;
       reviewedAt?: string;
     },
@@ -1078,7 +1097,7 @@ export class ResearchRepository {
       .prepare(
         `UPDATE claim_candidate
             SET statement = ?, content_kind = ?, confidence = ?, review_status = ?,
-                decision_relation = ?, reviewed_by = ?, reviewed_at = ?
+                decision_relation = ?, superseded_claim_ref = ?, reviewed_by = ?, reviewed_at = ?
           WHERE candidate_id = ? AND review_status = ?`,
       )
       .run(
@@ -1087,6 +1106,7 @@ export class ResearchRepository {
         patch.confidence ?? null,
         patch.reviewStatus,
         patch.decisionRelation ?? null,
+        patch.supersededClaimRef ?? null,
         patch.reviewedBy ?? null,
         patch.reviewedAt ?? null,
         candidateId,
@@ -1929,6 +1949,9 @@ function rowToClaimCandidate(row: any): ClaimCandidate {
   if (row.reviewed_at !== null && row.reviewed_at !== undefined) out.reviewedAt = row.reviewed_at as string;
   if (row.decision_relation !== null && row.decision_relation !== undefined) {
     out.decisionRelation = row.decision_relation as CandidateRelation;
+  }
+  if (row.superseded_claim_ref !== null && row.superseded_claim_ref !== undefined) {
+    out.supersededClaimRef = row.superseded_claim_ref as string;
   }
   if (row.confirmed_claim_ref !== null && row.confirmed_claim_ref !== undefined) {
     out.confirmedClaimRef = row.confirmed_claim_ref as string;

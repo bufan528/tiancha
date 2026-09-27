@@ -37,6 +37,11 @@ export interface ReviewContext {
 export interface ConfirmInput extends ReviewContext {
   /** ★ I-C6-8: no relation ⇒ no confirmation. */
   relation: CandidateRelation;
+  /**
+   * ★ Required when — and only meaningful for — `SUPERSEDE`. It is stored WITH the decision so a
+   * later retry can never quietly pick a different target.
+   */
+  supersedesClaimRef?: string;
 }
 
 export interface ReviseInput extends ReviewContext {
@@ -88,15 +93,24 @@ export class CandidateReviewService {
         `--relation must be one of ${RELATIONS.join(" | ")} (I-C6-8: a confirmation without an explicit relation is not a confirmation)`,
       );
     }
+    // ★ validate BEFORE touching the row: a SUPERSEDE without a target is not a decision, and it
+    // must fail here rather than half-way through a projection.
+    if (input.relation === "SUPERSEDE" && (input.supersedesClaimRef ?? "").trim().length === 0) {
+      throw new CandidateReviewError(
+        "relation SUPERSEDE requires --supersedes-claim <claimRef> — the target is part of the decision",
+      );
+    }
     const before = this.requireDraft(candidateId, "confirm");
     const at = input.at ?? this.now();
     const after: ClaimCandidate = {
       ...before,
       reviewStatus: "confirmed",
       decisionRelation: input.relation,
+      ...(input.relation === "SUPERSEDE" && input.supersedesClaimRef !== undefined
+        ? { supersededClaimRef: input.supersedesClaimRef }
+        : {}),
       reviewedBy: input.operator,
       reviewedAt: at,
-      ...(input.comment === undefined ? {} : {}),
     };
     this.apply(before, after, at);
     this.appendReview({
@@ -105,8 +119,16 @@ export class CandidateReviewService {
       operator: input.operator,
       at,
       comment: input.comment,
-      before: { reviewStatus: before.reviewStatus, decisionRelation: before.decisionRelation ?? null },
-      after: { reviewStatus: after.reviewStatus, decisionRelation: after.decisionRelation ?? null },
+      before: {
+        reviewStatus: before.reviewStatus,
+        decisionRelation: before.decisionRelation ?? null,
+        supersededClaimRef: before.supersededClaimRef ?? null,
+      },
+      after: {
+        reviewStatus: after.reviewStatus,
+        decisionRelation: after.decisionRelation ?? null,
+        supersededClaimRef: after.supersededClaimRef ?? null,
+      },
     });
     return this.requireCandidate(candidateId);
   }
@@ -209,6 +231,7 @@ export class CandidateReviewService {
         confidence: after.confidence,
         reviewStatus: after.reviewStatus,
         decisionRelation: after.decisionRelation,
+        ...(after.supersededClaimRef === undefined ? {} : { supersededClaimRef: after.supersededClaimRef }),
         reviewedBy: after.reviewedBy,
         reviewedAt: at,
       },

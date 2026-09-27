@@ -56,6 +56,8 @@ export interface ClaimCandidate {
   reviewedAt?: string;
   /** Required before any projection (I-C6-8); `undefined` while `draft`. */
   decisionRelation?: CandidateRelation;
+  /** ★ The claim a `SUPERSEDE` decision replaces — part of the DECISION (persisted, not re-chosen). */
+  supersededClaimRef?: string;
   /** The real Claim this candidate became (filled in slice ④). */
   confirmedClaimRef?: string;
   /** Lineage: the same (blockHash, dimension) under a PREVIOUS extraction config. */

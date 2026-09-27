@@ -98,6 +98,23 @@ export class CandidateProjectionService {
       return { status: "already_projected", claimRef: candidate.confirmedClaimRef, candidate };
     }
 
+    // ★ Resolve the relation BEFORE reserving anything: an invalid decision must not leave a
+    // half-projected candidate behind (it may not even have a `projectionError` yet).
+    const storedSupersedes = candidate.supersededClaimRef;
+    if (
+      input.supersedesClaimRef !== undefined &&
+      storedSupersedes !== undefined &&
+      input.supersedesClaimRef !== storedSupersedes
+    ) {
+      throw new CandidateProjectionError(
+        `candidate ${candidateId} was decided with supersedes=${storedSupersedes}; a retry may not change the decision`,
+      );
+    }
+    const hint = relationHintFor(
+      candidate.decisionRelation as CandidateRelation,
+      storedSupersedes ?? input.supersedesClaimRef,
+    );
+
     // P1 — reserve a STABLE claim id (persisted before any cross-DB write, §C6.17)
     let reserved = candidate.reservedClaimId;
     if (reserved === undefined) {
@@ -117,8 +134,6 @@ export class CandidateProjectionService {
       }
     }
 
-    const hint = relationHintFor(candidate.decisionRelation as CandidateRelation, input.supersedesClaimRef);
-
     try {
       // P2 + P3 — the EXISTING path does the artifact write and the projection; the callback is the
       // candidate-level progress ledger. Both steps are idempotent, so a resume re-does nothing.
@@ -130,7 +145,8 @@ export class CandidateProjectionService {
             statement: candidate.statement,
             dimension: candidate.dimension,
             ...(candidate.confidence === undefined ? {} : { confidence: candidate.confidence }),
-            sourceRef: candidate.evidenceRefs[0],
+            // ★ `sourceRef` means a `research_source` ROW id — NOT an evidence id. The source is the
+            // stable `src-c6-<candidateId>` row created below; the evidence stays on the candidate.
             relationHint: hint,
           },
         ],

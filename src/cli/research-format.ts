@@ -711,6 +711,11 @@ export interface CandidateView {
   reviewStatus: string;
   decisionRelation?: string;
   evidenceRefCount: number;
+  /** ★ §C6.3 traceability: the evidence rows, where they sit in the material, and what they say. */
+  evidenceRefs?: string[];
+  sourceLocators?: string[];
+  excerpt?: string;
+  projectionStatus?: string;
   supersedesCandidateRef?: string;
   reviewedBy?: string;
 }
@@ -739,6 +744,17 @@ export function formatCandidateHuman(v: CandidateView): string {
     `  证据：${v.evidenceRefCount} 条`,
     `  审核状态：${v.reviewStatus}${v.decisionRelation === undefined ? "" : ` · relation=${v.decisionRelation}`}`,
   ];
+  if (v.projectionStatus !== undefined) lines.push(`  投影状态：${v.projectionStatus}`);
+  // ★ §C6.3: the reviewer must be able to FOLLOW the evidence back into the material.
+  if (v.evidenceRefs !== undefined) {
+    for (const [i, evidenceId] of v.evidenceRefs.entries()) {
+      const where = v.sourceLocators?.[i];
+      lines.push(`  证据 ${i + 1}：${evidenceId}${where === undefined ? "" : ` @ ${where}`}`);
+    }
+  }
+  if (v.excerpt !== undefined && v.excerpt.length > 0) {
+    lines.push(`  摘录（规范化 nfkc-lf-v1）：${v.excerpt}`);
+  }
   if (v.supersedesCandidateRef !== undefined) lines.push(`  取代（lineage）：${v.supersedesCandidateRef}`);
   if (v.reviewedBy !== undefined) lines.push(`  审核人：${v.reviewedBy}`);
   lines.push("");
