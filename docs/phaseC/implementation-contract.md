@@ -2178,5 +2178,62 @@ P4 收口（全部块 state='projected'）
 | 新测试落点 | `packages/research/src/c-mvp-r1.test.ts`（T-R1-1…T-R1-12，含**两个操作系统进程**的并发用例）+ `src/cli/c-mvp-r1-cli.test.ts`（五态区分 / 未完成渲染 / retry 拒绝） |
 | Agent 工具数 | 19 → **20**（新增**只读** `research_material_list`；`retry` / `--force` **不给** Agent） |
 
-**End of §29（rev5: §29.12 实现与验收闭环追加）.**
+## §29.13 复核修正（2026-09-26，验收者指出后）
+
+> ⚠️ 追加记录：§29.0 – §29.12 原文**一字未改**。本节记录**独立复核指出的两处代码缺陷**及其修正。
+
+### §29.13.1 缺陷 1 — 租约失去后旧进程仍可写入（**已修**）
+
+rev5 的 `updateMaterialProgress()` 只按 `material_id` 更新，**不校验持有者**；`renewMaterialLease()` 有 owner 检查却**没有调用点**。
+后果：某个块的处理时间超过租约 ⇒ B 认领 ⇒ A 恢复执行后仍可写回自己的 owner 与进度 ⇒ **两个进程都在写**。
+
+**修正（fencing token，标准做法）**：
+
+- `material` 新增 `ingest_generation INTEGER NOT NULL DEFAULT 0`；
+- `claimMaterialIngest(...)` 在**同一条 `UPDATE`** 里执行 `ingest_generation = ingest_generation + 1`，并用 **`RETURNING ingest_generation`** 把新代次返回给持有者（无匹配 ⇒ `undefined` ⇒ 返回 `null` ⇒ 未认领）；
+- `updateMaterialProgress(materialId, patch, generation)` 增加 `AND ingest_generation = ?`，返回 `changes() === 1`；
+- 服务的每次写入都经私有 `write()`：被拒 ⇒ 抛 `IngestLeaseLost` ⇒ **立即停止、不写任何东西**，对外报 `in_progress`；
+- `renewMaterialLease()` **删除**（死代码；续租由每块进度写入承担）。
+
+**验收**：`T-R1-13`（仓储层：租约过期被接管后，旧代次写入被拒、新代次写入成功）+ `T-R1-14`（服务层：第 1 次 artifact 写入后租约被窃取 ⇒ 返回 `in_progress`、owner 仍为 thief、status 不是 `completed`、`claim_refs` 为空）。
+
+### §29.13.2 缺陷 2 — 残骸重试未执行契约要求的孤儿 Claim 检测（**已修**）
+
+§29.2 (c) 要求 retry 前"按块内容检查已有 artifact 并复用对应 Claim"；rev5 里 `--accept-orphans` 只是一个风险开关。
+
+**修正**：新增 `detectOrphans()`（**纯应用层，不新增表 / 列**）：
+
+- 读该 subject 的 beliefs（`KnowledgeRepository.findKnowledgeBySubject` + `listBeliefs`）；
+- 由 `belief.claimRef`（`artifact:claim/<id>`）取回 Claim blob，建立 **statement → claimId** 映射；
+- 按 `parseClaims(rawText)` 的顺序把每个 ledger 块的 **statement** 与映射比对：命中 ⇒ **复用**该 `claimId` 并把块标记为 `projected`（⇒ `skipBlocks` 跳过，**不重复写 artifact、不重复投影**）；未命中 ⇒ 保留新分配的 id；
+- 注入点：`MaterialIngestOptions.knowledge`（组合根注入 `new KnowledgeRepository(db.db)`）。
+
+**验收**：`T-R1-15`（把一次正常导入的行改写成"残骸形态"后 retry：`claim_refs` **等于原有 ids**、所有块 `projected`、artifacts 仍每块一份、beliefs 不重复）。
+
+### §29.13.3 附带修正 — `artifacts.sqlite` 的跨进程写锁
+
+`research_artifact` 的连接也补了 `PRAGMA busy_timeout = 10000`：两个进程并发写入时缺它会让**输者**抛 `database is locked`，进而被材料流水线记成 `failed`（`T-R1-10` 实测暴露）。
+
+### §29.13.4 附带修正 — flaky `C1-02`
+
+`assert.ok(!/\d{10,}/.test(beliefId))` 会在随机 hex UUID 恰好含十连数字时误报（~1%）。改为断言"id 不含当前 wall-clock 片段"。与 `C1-29` 同类。
+
+### §29.13.5 仍未满足的条款（**需要裁决**）
+
+§29.6.1 (5a) 的"**未完成材料的 Claim 不得计入"已确认材料证据"汇总**"**仍未实现**（§29.12.3 第 5 项已如实记录）。两条路：
+
+- **(i)** 现在补反向溯源与汇总排除 —— 会触及 Report / Evaluation 的汇总口径，属 **Phase C 完整版** 范围；
+- **(ii)** 正式**修订 §29 的验收边界**，把该条移入 Phase C 完整版。
+
+**该条不随本次修正一起关闭** —— 需先裁决。
+
+### §29.13.6 验收（2026-09-26 实测）
+
+| 项 | 结果 |
+|---|---|
+| root `tsc` / research typecheck | 0 / 0 |
+| 全量测试 | **399 tests / 399 pass / 0 fail**（106 suites） |
+| 新增用例 | `T-R1-13`（fencing）· `T-R1-14`（租约被窃取）· `T-R1-15`（孤儿复用） |
+
+**End of §29（rev6: §29.13 复核修正）.**
 
