@@ -114,12 +114,12 @@ export interface ClaimCandidateLine {
   statement: string;
   reviewStatus: string;
   evidenceRefCount: number;
-  /** ★ The `fragment_evidence` rows behind this candidate — the reader can follow them. */
-  evidenceRefs: string[];
-  /** ★ Human-readable locators of those fragments (v1: `paragraph:<i>` / `char_range:<a>:<b>`). */
-  sourceLocators: string[];
-  /** ★ A short excerpt of the located (normalized) material text. */
-  excerpt: string;
+  /**
+   * ★ Every located source behind this candidate — ONE entry per `fragment_evidence` row: the
+   * evidence id, WHERE it sits in the material, and its OWN excerpt. A single shared excerpt could
+   * only ever describe the first source; a candidate citing two places must be able to show both.
+   */
+  evidence: Array<{ evidenceRef: string; locator: string; excerpt: string }>;
   /** `none` / `reserved` / `claim_written` / `projected` / `finalized` — §C6.17 progress. */
   projectionStatus: string;
   materialVersionId: string;

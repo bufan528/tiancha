@@ -300,15 +300,19 @@ export class ReportService {
             )
             .sort((a, b) => (a.candidateId < b.candidateId ? -1 : 1))
             .map((c): ClaimCandidateLine => {
-              const sourceLocators: string[] = [];
-              let excerpt = "";
+              // ★ ONE entry per evidence row — each with its OWN locator and excerpt, so a candidate
+              // citing two places shows both. A single shared excerpt hid every source after the first.
+              const evidence: ClaimCandidateLine["evidence"] = [];
               for (const evidenceId of c.evidenceRefs) {
-                const evidence = repo.getFragmentEvidence(evidenceId);
-                if (evidence === undefined) continue;
-                const fragment = repo.getFragment(evidence.fragmentId);
+                const row = repo.getFragmentEvidence(evidenceId);
+                if (row === undefined) continue;
+                const fragment = repo.getFragment(row.fragmentId);
                 if (fragment === undefined) continue;
-                sourceLocators.push(locatorKey(fragment.locator));
-                if (excerpt.length === 0) excerpt = fragment.text.slice(0, 140);
+                evidence.push({
+                  evidenceRef: evidenceId,
+                  locator: locatorKey(fragment.locator),
+                  excerpt: fragment.text.slice(0, 140),
+                });
               }
               return {
                 candidateRef: c.candidateId,
@@ -317,9 +321,7 @@ export class ReportService {
                 statement: c.statement,
                 reviewStatus: c.reviewStatus,
                 evidenceRefCount: c.evidenceRefs.length,
-                evidenceRefs: [...c.evidenceRefs],
-                sourceLocators,
-                excerpt,
+                evidence,
                 projectionStatus: c.projectionStatus,
                 materialVersionId: c.materialVersionId,
                 normalizationVersion: NORMALIZATION_VERSION,

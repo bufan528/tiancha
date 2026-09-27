@@ -60,6 +60,25 @@ const RAW = [
   "",
 ].join("\n\n");
 
+/** The SAME statement in TWO paragraphs ⇒ ONE candidate with TWO sources (C6 §C6.7 / T-C6-12). */
+const REPEATED = [
+  "第一段：市场规模约 500 亿元。",
+  "第二段：另一份口径也指向同一个数字。",
+  "[CANDIDATE]",
+  "dimension: market",
+  "kind: fact",
+  "statement: 2025 年全球出货约 2.5 万台",
+  "evidence: paragraph:0",
+  "[/CANDIDATE]",
+  "[CANDIDATE]",
+  "dimension: market",
+  "kind: fact",
+  "statement: 2025 年全球出货约 2.5 万台",
+  "evidence: paragraph:1",
+  "[/CANDIDATE]",
+  "",
+].join("\n\n");
+
 interface Env {
   dir: string;
   db: ResearchDb;
@@ -77,7 +96,7 @@ after(() => {
   for (const e of opened) e.close();
 });
 
-async function env(): Promise<Env> {
+async function env(rawText: string = RAW): Promise<Env> {
   const dir = mkdtempSync(join(tmpdir(), "tiancha-c6e-"));
   const db = new ResearchDb({ path: join(dir, "research.sqlite") });
   const artifacts = new SqliteArtifactStore({ path: join(dir, "artifacts.sqlite") });
@@ -95,8 +114,8 @@ async function env(): Promise<Env> {
     subjectId: industry.industryId,
     kind: "text",
     title: "report.md",
-    contentHash: sha256Hex(RAW),
-    rawText: RAW,
+    contentHash: sha256Hex(rawText),
+    rawText,
     claimRefs: [],
     receivedAt: AT,
     createdAt: AT,
@@ -106,7 +125,7 @@ async function env(): Promise<Env> {
     ingestBlocks: [],
     ingestOverlaps: [],
   });
-  const version = new MaterialVersionService(repo).registerVersion({ materialId: "mat-1", rawText: RAW, createdAt: AT })
+  const version = new MaterialVersionService(repo).registerVersion({ materialId: "mat-1", rawText, createdAt: AT })
     .version;
   const run = new CandidateExtractionService(repo, new ExplicitBlockExtractor(repo)).run(version, AT);
 
@@ -245,11 +264,13 @@ describe("\u00a7C6.3 / \u00a7C6.17 \u2014 a reader can FOLLOW the evidence, and 
     );
     assert.ok(row !== undefined, "the draft candidate must be in the report");
 
-    // \u2605 the reader gets the EVIDENCE, not just a count
-    assert.equal(row.evidenceRefs.length, row.evidenceRefCount);
-    assert.ok(row.evidenceRefs.length >= 1);
-    assert.equal(row.sourceLocators.length, row.evidenceRefs.length);
-    assert.ok(row.excerpt.length > 0, "an excerpt is shown so the reader can recognise the passage");
+    // \u2605 the reader gets the EVIDENCE, not just a count — ONE entry per source
+    assert.equal(row.evidence.length, row.evidenceRefCount);
+    assert.ok(row.evidence.length >= 1);
+    assert.ok(
+      row.evidence.every((ev) => ev.excerpt.length > 0),
+      "EVERY source carries its own excerpt, not just the first",
+    );
     assert.equal(row.projectionStatus, "none");
 
     // \u2605 END-TO-END: the reported locator really points back into the MATERIAL TEXT. Comparing
@@ -262,25 +283,58 @@ describe("\u00a7C6.3 / \u00a7C6.17 \u2014 a reader can FOLLOW the evidence, and 
     const normalized = normalizeText(version.rawText);
     assert.equal(sha256Hex(normalized), version.normalizedHash, "the version carries its own text");
 
-    // \u2605 EVERY reported locator resolves (not merely the first) — each to exactly its fragment
-    for (const [i, evidenceRef] of row.evidenceRefs.entries()) {
-      const evidence = e.repo.getFragmentEvidence(evidenceRef);
-      assert.ok(evidence !== undefined, `evidence ${evidenceRef} exists`);
+    // \u2605 EVERY source resolves — its own locator AND its own excerpt
+    for (const [i, ev] of row.evidence.entries()) {
+      const evidence = e.repo.getFragmentEvidence(ev.evidenceRef);
+      assert.ok(evidence !== undefined, `evidence ${ev.evidenceRef} exists`);
       const fragment = e.repo.getFragment(evidence.fragmentId);
       assert.ok(fragment !== undefined);
-      assert.equal(row.sourceLocators[i], locatorKey(fragment.locator), "the reported locator IS that position");
+      assert.equal(ev.locator, locatorKey(fragment.locator), "the reported locator IS that position");
       const resolved = resolveLocator(normalized, fragment.locator);
       assert.equal(resolved, fragment.text, "\u2605 the position resolves to EXACTLY the stored fragment text");
       assert.ok((resolved ?? "").length > 0, "a real passage, not an empty slice");
       assert.equal(fragment.textHash, evidence.quoteHash, "the quoted evidence matches the fragment");
+      // \u2605 THIS entry's excerpt comes from THIS entry's passage (never from another source)
+      assert.ok(
+        (resolved ?? "").startsWith(ev.excerpt.slice(0, 20)),
+        `evidence #${i + 1}'s excerpt prefixes ITS OWN resolved passage`,
+      );
+      assert.ok(normalizeText(material.rawText).includes(resolved ?? ""), "the passage exists in the material text");
     }
+  });
 
-    // \u2605 ...and the excerpt the reader sees really comes from a passage of the material
-    const firstLocator = e.repo.getFragment(e.repo.getFragmentEvidence(row.evidenceRefs[0])!.fragmentId)!.locator;
-    const firstResolved = resolveLocator(normalized, firstLocator) ?? "";
-    assert.ok(firstResolved.length > 0);
-    assert.ok(firstResolved.startsWith(row.excerpt.slice(0, 20)), "the excerpt prefixes the resolved passage");
-    assert.ok(normalizeText(material.rawText).includes(firstResolved), "the passage exists in the material text");
+  test("T-C6-28: a candidate citing TWO places shows BOTH, each with its own locator and excerpt", async () => {
+    // the same statement in two paragraphs ⇒ ONE candidate with TWO evidence rows (C6 \u00a7C6.7)
+    const e = await env(REPEATED);
+    const s = new ReportService(e.db.db).generateDossier(e.industryId).sections;
+    const rows = s.pendingCandidates.filter(
+      (r): r is Extract<typeof r, { candidateRef: string }> => "candidateRef" in r,
+    );
+    assert.equal(rows.length, 1, "the same statement is ONE candidate, not two");
+
+    const row = rows[0];
+    assert.equal(row.evidenceRefCount, 2, "and it keeps BOTH sources");
+    assert.equal(row.evidence.length, 2, "\u2605 both sources are reported, not just the first");
+    assert.deepEqual(
+      row.evidence.map((ev) => ev.locator).sort(),
+      ["paragraph:0", "paragraph:1"],
+    );
+    // \u2605 two DIFFERENT positions must carry two DIFFERENT excerpts (a shared excerpt could not)
+    assert.notEqual(row.evidence[0].excerpt, row.evidence[1].excerpt);
+
+    // \u2605 and each excerpt really belongs to ITS OWN locator in the material text
+    const version = e.repo.listMaterialVersions("mat-1")[0];
+    assert.ok(version !== undefined);
+    const normalized = normalizeText(version.rawText);
+    for (const ev of row.evidence) {
+      const evidence = e.repo.getFragmentEvidence(ev.evidenceRef);
+      assert.ok(evidence !== undefined);
+      const fragment = e.repo.getFragment(evidence.fragmentId);
+      assert.ok(fragment !== undefined);
+      assert.equal(ev.locator, locatorKey(fragment.locator));
+      assert.equal(resolveLocator(normalized, fragment.locator), fragment.text);
+      assert.ok(fragment.text.startsWith(ev.excerpt.slice(0, 20)), "\u2605 the excerpt is THIS source's text");
+    }
   });
 
   test("T-C6-11: a crash between P3 and P4 must NOT list the same claim as both fact and judgment", async () => {

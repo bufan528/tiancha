@@ -1204,16 +1204,19 @@ export interface CandidateReviewOptions {
 
 function toCandidateView(c: ClaimCandidate, repo?: ResearchRepository): CandidateView {
   // ★ §C6.3: resolve WHERE each piece of evidence sits, so a reader can go back to the material.
-  const sourceLocators: string[] = [];
-  let excerpt = "";
+  // ★ ONE entry per evidence row, each with its OWN excerpt (a shared excerpt hid the rest).
+  const evidence: NonNullable<CandidateView["evidence"]> = [];
   if (repo !== undefined) {
     for (const evidenceId of c.evidenceRefs) {
-      const evidence = repo.getFragmentEvidence(evidenceId);
-      if (evidence === undefined) continue;
-      const fragment = repo.getFragment(evidence.fragmentId);
+      const row = repo.getFragmentEvidence(evidenceId);
+      if (row === undefined) continue;
+      const fragment = repo.getFragment(row.fragmentId);
       if (fragment === undefined) continue;
-      sourceLocators.push(locatorKey(fragment.locator));
-      if (excerpt.length === 0) excerpt = fragment.text.slice(0, 140);
+      evidence.push({
+        evidenceRef: evidenceId,
+        locator: locatorKey(fragment.locator),
+        excerpt: fragment.text.slice(0, 140),
+      });
     }
   }
   return {
@@ -1226,9 +1229,7 @@ function toCandidateView(c: ClaimCandidate, repo?: ResearchRepository): Candidat
     reviewStatus: c.reviewStatus,
     ...(c.decisionRelation === undefined ? {} : { decisionRelation: c.decisionRelation }),
     evidenceRefCount: c.evidenceRefs.length,
-    evidenceRefs: [...c.evidenceRefs],
-    sourceLocators,
-    excerpt,
+    evidence,
     projectionStatus: c.projectionStatus,
     ...(c.supersedesCandidateRef === undefined ? {} : { supersedesCandidateRef: c.supersedesCandidateRef }),
     // ★ the explicit evolution targets — part of the DECISION, so the CLI prints what was decided

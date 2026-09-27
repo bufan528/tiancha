@@ -711,10 +711,12 @@ export interface CandidateView {
   reviewStatus: string;
   decisionRelation?: string;
   evidenceRefCount: number;
-  /** ★ §C6.3 traceability: the evidence rows, where they sit in the material, and what they say. */
-  evidenceRefs?: string[];
-  sourceLocators?: string[];
-  excerpt?: string;
+  /**
+   * ★ §C6.3 traceability: ONE entry per evidence row — the evidence id, where it sits in the
+   * material, and its OWN excerpt. Never a single shared excerpt (that hid every source after the
+   * first).
+   */
+  evidence?: Array<{ evidenceRef: string; locator: string; excerpt: string }>;
   projectionStatus?: string;
   supersedesCandidateRef?: string;
   /** ★ the SUPERSEDE target carried by the DECISION (part of the decision, never of one CLI call). */
@@ -749,15 +751,12 @@ export function formatCandidateHuman(v: CandidateView): string {
     `  审核状态：${v.reviewStatus}${v.decisionRelation === undefined ? "" : ` · relation=${v.decisionRelation}`}`,
   ];
   if (v.projectionStatus !== undefined) lines.push(`  投影状态：${v.projectionStatus}`);
-  // ★ §C6.3: the reviewer must be able to FOLLOW the evidence back into the material.
-  if (v.evidenceRefs !== undefined) {
-    for (const [i, evidenceId] of v.evidenceRefs.entries()) {
-      const where = v.sourceLocators?.[i];
-      lines.push(`  证据 ${i + 1}：${evidenceId}${where === undefined ? "" : ` @ ${where}`}`);
+  // ★ §C6.3: the reviewer must be able to FOLLOW every source back into the material.
+  if (v.evidence !== undefined) {
+    for (const [i, ev] of v.evidence.entries()) {
+      lines.push(`  证据 ${i + 1}：${ev.evidenceRef} @ ${ev.locator}`);
+      if (ev.excerpt.length > 0) lines.push(`    摘录（规范化 nfkc-lf-v1）：${ev.excerpt}`);
     }
-  }
-  if (v.excerpt !== undefined && v.excerpt.length > 0) {
-    lines.push(`  摘录（规范化 nfkc-lf-v1）：${v.excerpt}`);
   }
   if (v.supersedesCandidateRef !== undefined) lines.push(`  取代（lineage）：${v.supersedesCandidateRef}`);
   // ★ the explicit evolution target carried by the DECISION (D-C6-G / §C6.24 item 4) — shown here so

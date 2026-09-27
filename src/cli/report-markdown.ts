@@ -99,12 +99,12 @@ export function renderDossierMarkdown(d: IndustryDossier): string {
         out.push(
           `- **${row.dimension}** · ${row.contentKind} · ${row.reviewStatus}（投影 ${row.projectionStatus}）→ ${row.statement}`,
         );
-        for (const [i, evidenceId] of row.evidenceRefs.entries()) {
-          const where = row.sourceLocators[i];
-          out.push(`  - 证据 ${i + 1}：\`${evidenceId}\`${where === undefined ? "" : ` @ \`${where}\``}`);
-        }
-        if (row.excerpt.length > 0) {
-          out.push(`  - 摘录（规范化 ${row.normalizationVersion}）：${row.excerpt}`);
+        // ★ every source, EACH with its own locator and excerpt (a single excerpt hid the rest)
+        for (const [i, ev] of row.evidence.entries()) {
+          out.push(`  - 证据 ${i + 1}：\`${ev.evidenceRef}\` @ \`${ev.locator}\``);
+          if (ev.excerpt.length > 0) {
+            out.push(`    - 摘录（规范化 ${row.normalizationVersion}）：${ev.excerpt}`);
+          }
         }
       } else {
         out.push(`- **${row.dimension}** · belief 候选 → ${row.claimRef}`);
