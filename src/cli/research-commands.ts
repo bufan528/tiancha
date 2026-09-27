@@ -688,7 +688,7 @@ export async function runMaterialAttribute(
     return 1;
   }
   try {
-    const material = deps.materials.attributeClaim(claimRef, options.to);
+    const material = await deps.materials.attributeClaim(claimRef, options.to);
     const view = {
       claimRef,
       targetMaterialId: material.materialId,

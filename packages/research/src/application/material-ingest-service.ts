@@ -284,7 +284,7 @@ export class MaterialIngestService {
    * Only a `completed` material may own confirmed evidence (that is exactly what
    * `materialEvidenceIndex()` means by "attributed"), so the target is validated here.
    */
-  attributeClaim(claimRef: string, targetMaterialId: string): Material {
+  async attributeClaim(claimRef: string, targetMaterialId: string): Promise<Material> {
     const claimId = claimIdFromRef(claimRef);
     if (!claimId) {
       throw new Error(`'${claimRef}' is not a claim ref (expected artifact:claim/<claimId>)`);
@@ -295,6 +295,26 @@ export class MaterialIngestService {
       throw new Error(
         `material '${targetMaterialId}' is '${target.ingestStatus}', not 'completed' — only a ` +
           "completed material can own confirmed evidence",
+      );
+    }
+    // ★ §29.20 (review round 7): a syntactically valid ref is NOT proof that the Claim exists …
+    const record = await this.artifactStore.get(claimId);
+    if (!record) {
+      throw new Error(
+        `claim '${claimId}' does not exist — a Claim that was never written cannot be attributed`,
+      );
+    }
+    // … and a Claim from ANOTHER subject must never become evidence of this one.
+    const blob = record.blob as { subjectKind?: string; subjectId?: string } | undefined;
+    if (!blob || blob.subjectKind === undefined || blob.subjectId === undefined) {
+      throw new Error(
+        `claim '${claimId}' carries no subject provenance — refusing to attribute it (never guess)`,
+      );
+    }
+    if (blob.subjectKind !== target.subjectKind || blob.subjectId !== target.subjectId) {
+      throw new Error(
+        `claim '${claimId}' belongs to ${blob.subjectKind}/${blob.subjectId}, ` +
+          `not to ${target.subjectKind}/${target.subjectId}`,
       );
     }
     const updated = this.repo.attributeClaimsToMaterial(targetMaterialId, [claimId]);
