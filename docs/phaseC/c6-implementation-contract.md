@@ -12,6 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
+| **rev3** | **用户确认三项裁定**（§C6.15）+ **实现前复核**（§C6.16：预计文件清单 / T-C6 可测性 / 回归面 / 分片）+ 复核新发现的 3 项待定小项（§C6.16.5 D-C6-D/E/F）。**不改 scope** |
 | **rev2** | **验收者审查后的 5 处模型补清 + 3 项裁定**（**不改 scope**）：① 原文**保存位置与双 hash**（§C6.3）；② `evidence` 字段表 + `contentKind` **收窄为 `fact`/`judgment`** + **报告分类来源拆开**（§C6.4/§C6.5）；③ **确认/修订投影必须有显式 relation**，"仅编辑"不得投影（§C6.4）；④ **`extractionConfigKey` 纳入候选身份** + 三个对象的**确定性身份与失败重跑语义**（§C6.7）；⑤ **跨库写入顺序 + 崩溃窗口表 + 每个边界的故障注入**（§C6.7）。三项裁定见 **§C6.15** |
 
 ---
@@ -299,14 +300,15 @@ W4【跨库】       人工 confirm(with relation) → 既有 ingestClaims()
 ## §C6.14 授权声明
 
 > **本契约 rev2 为 DESIGN ONLY。实现 / commit / push 均未授权。**
-> 进入实现前需：① 用户**确认 §C6.15 的三项裁定**（或提出修改）；② **实现前复核**（预计文件清单 + T-C6-1…T-C6-9 可测性 + 回归面）。
+> ① **已完成**：用户已确认 §C6.15 三项裁定；② **已完成**：实现前复核见 **§C6.16**（其中 §C6.16.5 提出 3 项实现前待定小项 D-C6-D/E/F）。
+> **实现仍未被授权** —— 需用户单独授权（建议按片授权，见 §C6.16.4）。
 > 实现按片推进（**每片单独授权**）：**① 材料版本 + Fragment/Evidence（W1–W2）→ ② 候选生成与身份（W3）→ ③ 人工审阅入口（confirm/revise/reject + relation）→ ④ 确认后既有 Knowledge 投影（W4）→ ⑤ 报告引用与缺口回填**；每片用**本次试点的 11 条 Claim** 作真实基准，用**合成冲突**补边界。
 
 ---
 
-## §C6.15 裁定记录（2026-09-27）
+## §C6.15 裁定记录（2026-09-27，**用户已确认**）
 
-| # | 议题 | 结论（依验收者建议，待用户确认） |
+| # | 议题 | 结论（**已确认**） |
 |---|---|---|
 | **D-C6-A** | v1 支持的 locator | **(a) 仅文本**：`char_range` + `paragraph`；PDF 页码 / 音频时间戳**保留定义、暂不启用**，等真实输入需求出现再扩展 |
 | **D-C6-B** | `contentKind` 判定方与范围 | **(b) 模型提议 + 人工确认**，且**仅适用于 `fact` / `judgment`**；`candidate` / `conflict` / `open_question` **移出该枚举**，改由审核状态与领域对象（Conflict / Gap / Question）派生 |
@@ -315,3 +317,81 @@ W4【跨库】       人工 confirm(with relation) → 既有 ingestClaims()
 > 附：U-1～U-3 拆为独立可用性工作、`research chain` 继续人工触发、合成冲突仅用于隔离测试库 —— 均确认。
 
 **End of contract（rev2）.**
+
+
+---
+
+## §C6.16 实现前复核（2026-09-27）
+
+> 目的：在**不写代码**的前提下，把"落点 / 可测性 / 回归面 / 分片"核实到"可安全实现"的程度。
+> 结论摘要：**报告侧可不新增 section（不撞 C4-A 冻结断言）**；新增表需 PRAGMA 预检查；**3 项实现前小项**见 §C6.16.5。
+
+### §C6.16.1 预计文件清单（按片）
+
+| 片 | 生产文件 | 测试文件 |
+|---|---|---|
+| **① 材料版本 + Fragment/Evidence（W1–W2）** | `domain/source.ts`（扩展 `DocumentFragment` → 带 `locator`/`textHash`）· 新增 `domain/material-version.ts`（`MaterialVersion`）· 新增 `domain/evidence.ts` 扩展（`Evidence` + `stance`/`quoteHash`）· `storage/research-db.ts`（**新增 2–3 表** + PRAGMA 预检查）· `storage/research-repository.ts`（版本/片段/证据的确定性 identity + upsert）· 新增 `application/material-version-service.ts`（登记版本 + 切片段 + 规范化/双 hash） | 新增 `phase-c6-fragment.test.ts`（T-C6-1/T-C6-2 部分） |
+| **② 候选生成与身份（W3）** | 新增 `domain/claim-candidate.ts`（含 `contentKind` / `reviewStatus` / `decision`）· 新增 `application/candidate-extraction-service.ts`（`extractionConfigKey` + 确定性 `candidateId`）· `storage/`：`claim_candidate` + `candidate_review` + `extraction_run` 表 | 新增 `phase-c6-candidate.test.ts`（T-C6-6） |
+| **③ 人工审阅入口** | `src/cli/research-commands.ts`（`candidate list/show/confirm/revise/reject`）· `src/cli/research-format.ts` · `src/cli/tiancha.ts`（路由）· Agent：**只读** `research_candidate_list`（**不给写**） | 新增 `src/cli/phase-c6-cli.test.ts`（T-C6-3 的 CLI 面） |
+| **④ 确认后既有投影（W4）** | `application/candidate-review-service.ts`：`confirm` ⇒ **调用既有 `OpportunityDiscoveryService.ingestClaims()`**（**复用 C-MVP-R1 的 P1→P4**）· `confirmedClaimRef` 回填 | `phase-c6-projection.test.ts`（T-C6-2/T-C6-3/T-C6-8） |
+| **⑤ 报告引用与缺口回填** | `application/report-service.ts`（**按 `contentKind` 分流**既有分区 + 接入候选）· 可能 `domain/report.ts`（见 §C6.16.5 的 D-C6-E） | `phase-c6-report.test.ts`（T-C6-4/T-C6-7） |
+
+**表数量**：当前 26 张 → 预计 **+4~5 张**（`material_version` · `fragment` · `evidence` · `claim_candidate` · `extraction_run`；`candidate_review` 可并入 `extraction_run` 邻域或独立）。**每张新表都要 PRAGMA 预检查惯例**（与既有迁移一致）。
+
+### §C6.16.2 T-C6-1…T-C6-9 可测性
+
+| # | 可测性 | 所需基建 |
+|---|---|---|
+| T-C6-1 | ✅ `:memory:` 库 + 纯函数 `normalize()` + `slice` 即可断言；"改一个字符 ⇒ 转红"是天然 mutation | 无新基建 |
+| T-C6-2 | ✅ 复用试点用的**全状态指纹**（Pool/Gap/NextAction/Evaluation 输入） | 无 |
+| T-C6-3 | ✅ `confirm + relation` 后断言 belief 变化 + `confirmedClaimRef` 双向可追；"无 relation ⇒ 拒绝"是纯行为测试 | 无 |
+| T-C6-4 | ✅ **混合状态 fixture**（fact/judgment/candidate + 一条合成 conflict + 一个 open gap）⇒ 按 §C6.5 来源表核对 | 需 §C6.16.5 的 D-C6-E 定案 |
+| T-C6-5 | ✅ 隔离库 + `synthetic: true`；"真实库不得出现 synthetic 行"可用**同一进程开两个库**断言 | 无 |
+| T-C6-6 | ✅ 改 `extractionConfigKey` ⇒ 断言新候选 + `supersedesCandidateRef`；已 `confirmed` 不被改写 | 无 |
+| T-C6-7 | ✅ 断言三处输出含"证据充分度 + 规则版本"；critical 门控回归用**既有** S4 断言 | 无 |
+| T-C6-8 | ✅ **故障注入**：W1 用事务回滚；W2/W3 用 throwing store/repo 包装（**复用 C-MVP-R1 的 `FlakyArtifactStore` 手法**）；W4 直接复用 §29 的注入点 | 无（手法已有） |
+| T-C6-9 | ✅ 静态 + 行为各一条 | 无 |
+
+**结论**：9 条**全部可测**，且**不需要新测试基建** —— 试点与 C-MVP-R1 已经提供了全部手段（隔离库、全状态指纹、故障注入包装）。
+
+### §C6.16.3 回归面（**关键发现**）
+
+1. ★ **报告侧可不新增 section**：`ReportSections` **已含** C6 需要的全部落点 —— `keyFacts`（PoolItem）· `mainJudgments`（`state === "confirmed"` 的 belief）· **`pendingCandidates`（`state === "candidate"`）** · `conflicts`（open）· `gaps`（active）· `conflictHistory` / `revisedBeliefs` / `supersededBeliefs` / `rejectedBeliefs` / `conflictingBeliefs` / `state`。
+   ⇒ 因此 **C6 不需要给 `ReportSections` 加字段**，**不触碰 C4-A 的"section 集合精确"断言**（`phase-c4-a.test.ts` T-C4-6）。
+   ⇒ 需要改的只是**内容的分配规则**（按 `contentKind` 分流）+ 候选的接入（见 D-C6-E）。
+2. **C-MVP / C-MVP-R1 零改动**：C6 只**调用** `ingestClaims()`（W4），不改其签名与语义；`[CLAIM]` 路径完全不动。
+3. **I1–I16 无冲突**：新对象全部 append/版本化（I2）；候选不进 SoT（I1）；冲突并列（I3）；报告仍是投影（I14）；分值语义按 §C6.6 标注（不违反任何既有不变量）。
+4. **既有测试的影响面**：预计**零破坏** —— 新表、新 domain、新 service、新 CLI 子命令；唯一可能触及既有断言的是 **D-C6-E**（若选择"新增 section"则会动 T-C4-6，故**建议不新增**）。
+5. **真实库**：C6 不迁移老数据（只新增表）；`material_version` 与既有 `material` 是**父子关系**，既有 `material` 行**不需要**版本行即可继续工作（版本按需创建）。
+
+### §C6.16.4 分片与依赖（实现授权建议）
+
+```text
+① 材料版本 + Fragment/Evidence（W1–W2）   ← 无依赖，可先做
+② 候选生成与身份（W3）                     ← 依赖 ①
+③ 人工审阅入口（CLI/Agent 只读列表）        ← 依赖 ②
+④ 确认后既有投影（W4）                     ← 依赖 ③；复用 C-MVP-R1 §29.5b
+⑤ 报告引用与缺口回填                       ← 依赖 ④
+```
+
+* 每片**单独授权、单独收口**（`tsc` 两处 + 全量测试 + smoke）；
+* 每片都用**本次试点的 11 条 Claim** 作真实基准（`samples/` 材料 + 人工整理版本）；
+* **U-1/U-2/U-3** 三项可用性小步**独立于以上分片**，可随时插入。
+
+### §C6.16.5 复核新发现的 3 项实现前小项（**需裁决，但不阻塞契约**）
+
+| # | 议题 | 背景 | 候选方案 |
+|---|---|---|---|
+| **D-C6-D** | `contentKind` 如何**随确认传递到 Claim** | `contentKind` 现只存在于 `claim_candidate`；而报告要按它分流**已确认**的"事实 / 判断" | (a) `Claim` 加**可选** `contentKind?`（确认时复制，blob 为 JSON ⇒ 老数据无影响）★ 推荐 · (b) 报告侧用 `confirmedClaimRef` **反查**候选（不改 Claim，但每次投影多一次 join）· (c) v1 **只对候选**生效，已确认认知维持既有 `keyFacts`/`mainJudgments` 语义 |
+| **D-C6-E** | 报告"待确认候选"的**落点** | 既有 `pendingCandidates` 的行类型是 `KnowledgeLine`（含 `beliefId`/`claimRef`），**装不下** C6 候选（无 belief/claim） | (a) **扩展 `KnowledgeLine` 为可选字段**（`beliefId?`/`claimRef?` + `candidateRef?`）⇒ **不改 section 集合**，不撞 T-C4-6 ★ 推荐 · (b) 新增独立 section（**会**动 C4-A 断言）· (c) 专用 DTO 只用于"调研报告"渲染 |
+| **D-C6-F** | C6 的 **CLI 命令面** | 需人类入口查看/审核候选 | (a) `research candidate list/show/confirm/revise/reject`（与 `material` 平级）★ 推荐 · (b) 并入 `research material candidate …`（更长的路径） |
+
+> 三项都**只影响实现细节**，不影响 §C6.2 的链路与 I-C6-1…I-C6-8；建议在**授权第 ① 片之前**一并定案（其中 D-C6-D 影响 ⑤、D-C6-E 影响 ⑤、D-C6-F 影响 ③）。
+
+### §C6.16.6 复核结论
+
+* 契约 rev3 **可安全进入分片实现**（无阻塞项）；
+* **建议先定 §C6.16.5 的 D-C6-D / D-C6-E / D-C6-F**（都是小项，一次定完即可），然后**按片授权**，从 ① 开始；
+* 报告侧**不改 section 集合**这一点，使 C6 对已发布冻结面的影响降到最低。
+
+**End of contract（rev3）.**
