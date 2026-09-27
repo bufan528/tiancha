@@ -202,6 +202,18 @@ contentKind  : fact | judgment | candidate | conflict | open_question   ← "这
 
 ---
 
+### §C6.12b 拆出 C6 的三项可用性小步（**不属本契约范围**）
+
+试点暴露的三项**可用性**缺口，按验收者裁决**拆出** C6 核心，各自独立小步，**不阻塞**本契约：
+
+| 小步 | 内容 | 归属 |
+|---|---|---|
+| **U-1** | `research chain` **保持人工触发**（治理边界不动）；**Plan 渲染**在"建议研究位置"为空时**提示**执行 `tiancha research chain <行业>`（`research need` 已有同类提示，Plan 没有） | CLI 展示层小步 |
+| **U-2** | 新增只读 CLI：`research question list` / `research gap list` / `research next action list`（与既有 Agent 只读工具对齐；Plan 已有部分汇总，独立列表是研究者排查细节的便利入口） | 只读 CLI 小步 |
+| **U-3** | 对错误命令 `research state show` 增加**本地 fail-fast 提示**（避免落入模型调用路径），并在帮助信息中明确正确命令是 `state show` | CLI 路由小步 |
+
+> 三者**都不涉及** Evidence / 候选的数据模型，因此**不与 C6 同阶段实现**；可先行或后行，各自单独授权。
+
 ## §C6.13 待裁决（3 项，**阻塞实现授权**）
 
 | # | 议题 | 候选方案 |
