@@ -18,7 +18,7 @@
 | HEAD / 远端 | **代码验证基线 `5fa0ca3`**（= 本轮最后一个 `test:` 提交）；**基线取法**：`git log --oneline` 中第一个非 `docs:` 提交；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不把 `docs:` 提交的 hash 写进本表**（它每次同步都会变，写了必然很快失准） |
 | 验证基线 | root `tsc` 0 · research typecheck 0 · **411 tests / 411 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev16**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，§29.22 = 基线维护规则，**§29.23 = 状态文档一致性校准**）—— **无剩余未满足条款**；下一步候选：**C6 / Phase C 完整版（Material → Fragment → Evidence 链）** —— **未授权**，且按建议应先做**真实行业试点**再定契约范围 |
+| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev16**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，§29.22 = 基线维护规则，**§29.23 = 状态文档一致性校准**）—— **无剩余未满足条款**。**下一步：C6 / Phase C 完整版契约已落盘**（`docs/phaseC/c6-implementation-contract.md` rev1，**DESIGN ONLY**；总契约 §30 为索引）—— 基于**单行业试点**实测（真实材料：11 条人工 Claim 驱动全链、critical 门控生效、重复导入幂等；边界：普通文本不产生 Claim、来源定位无结构、分值只是证据充分度）；**实现未授权**，且**待裁决 D-C6-A / D-C6-B / D-C6-C** |
 | 之后 | Phase D（外环：Experience → Pattern → 方法论候选）· Phase E（Wind + 自动发现）—— 未授权 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
@@ -530,7 +530,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 |---|---|---|
 | **A** | 单行业研究闭环 | **S1–S7 已完成**（含 DATA-R1 legacy 修复、C-MVP 材料入口） |
 | **B** | Research Planning / 调研准备链 | **B1–B5 已全部实现**（`docs/phaseB/implementation-contract.md` §12：无剩余 Step） |
-| **C** | 调研回填闭环 | **进行中**：C1–C5-D 与 **C-MVP-R1 全部已实现并发布**；C6（Material → Claim → Knowledge Evolution）未授权 |
+| **C** | 调研回填闭环 | C1–C5-D 与 **C-MVP-R1 全部已实现并发布**；**C6 / Phase C 完整版（资料闭环）契约已落盘**（`phaseC/c6-implementation-contract.md` rev1，DESIGN ONLY，待裁决 D-C6-A…C）—— **实现未授权** |
 | **D** | 双体系协同闭环（外环） | Research Experience → Pattern → Methodology Candidate → Human Gate |
 | **E** | 自动化与规模化 | 自动搜集 + 赛道识别 + Wind 接入（**入口能力**） |
 | F（横向） | Report（投影） | 任何阶段可生成；不占 Phase |
@@ -667,6 +667,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/phaseB/implementation-contract.md` | **Phase B v1 实现契约（B1–B5 已全部实现，见其 §12）**：Need → Position → Target → Fit → Diligence 的字段/identity/不变量/写入边界/T-B 验收 |
 | `docs/phaseC/implementation-contract.md` | **Phase C 总契约**（C1 语义 / SoT 边界 / 演化 / Human Gate / 幂等 / 不变量 / 验收场景）+ **§29 = C-MVP-R1（材料导入可靠性）—— 已实现并发布**；§29.12–§29.22 为实现闭环与八轮复核修正（**检测重叠但不推断来源**、**人工登记归属**、§29.22 = 基线维护规则） |
 | `docs/phaseC/c5-implementation-contract.md` | **C5-A → C5-D 单文件谱系契约**（§19 C5-B · §20 C5-C · §21 C5-D；**§21.11 = 实现与验收闭环**） |
+| `docs/phaseC/c6-implementation-contract.md` | **C6 资料闭环契约（rev1，DESIGN ONLY）**：材料版本 / Fragment 结构化定位 / Evidence / Claim 候选 / 人工闸门 / 内容类型 vs 审核状态 / 分值语义 / 重跑审计；含试点实测依据与 T-C6-1…T-C6-9 —— 总契约 §30 仅为索引 |
 | `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
 | `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
 | `docs/architecture-review/01/02/03-*` | 早期 Gap Report / Blueprint v2 / v2.1-final-lock / rebaseline v3.1（**历史，部分过时**） |
