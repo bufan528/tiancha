@@ -389,4 +389,54 @@ describe("candidate identity for repeated text, and evidence validation", () => 
     assert.match(r.error ?? "", /does not exist/);
     assert.equal(e.repo.listClaimCandidates(version.materialVersionId).length, 0);
   });
+
+  test("T-C6-13b: evidence that EXISTS but belongs to ANOTHER material version is refused", () => {
+    const e = env();
+    // version 1 really produces evidence of its own
+    const v1 = versionOf(e);
+    const r1 = e.x.run(v1, AT);
+    assert.equal(r1.created, 2);
+    const foreignEvidence = e.repo.getClaimCandidate(r1.candidateIds[0])?.evidenceRefs[0] ?? "";
+    assert.ok(foreignEvidence.length > 0, "v1 produced real evidence");
+    assert.equal(e.repo.getFragmentEvidence(foreignEvidence)?.materialVersionId, v1.materialVersionId);
+
+    // version 2 is a DIFFERENT version of the same material
+    const RAW2 = [
+      "第一段：另一份口径的产能数据。",
+      "[CANDIDATE]",
+      "dimension: market",
+      "kind: fact",
+      "statement: 2026 年产能约 4 万台",
+      "evidence: paragraph:0",
+      "[/CANDIDATE]",
+      "",
+    ].join("\n\n");
+    const v2 = versionOf(e, RAW2);
+    assert.notEqual(v2.materialVersionId, v1.materialVersionId);
+
+    // a draft that points at v1's evidence, submitted under v2, must be refused — existing is not
+    // the same as belonging here (a model may not borrow a source from another document version).
+    const svc = new CandidateExtractionService(e.repo, {
+      modelVersion: "none",
+      promptVersion: "none",
+      extract: () => [
+        {
+          dimension: "market",
+          statement: "跨版本引用",
+          contentKind: "fact" as CandidateContentKind,
+          evidenceRefs: [foreignEvidence],
+        },
+      ],
+    });
+    const r2 = svc.run(v2, AT2);
+    assert.equal(r2.status, "failed");
+    assert.match(r2.error ?? "", /belongs to material version/);
+    assert.match(r2.error ?? "", new RegExp(v1.materialVersionId));
+    assert.equal(e.repo.getExtractionRun(r2.extractionId)?.status, "failed");
+    assert.equal(e.repo.listClaimCandidates(v2.materialVersionId).length, 0, "no cross-version candidate");
+
+    // \u2605 and v1's own candidates / evidence are untouched by the refusal
+    assert.equal(e.repo.listClaimCandidates(v1.materialVersionId).length, 2);
+    assert.equal(e.repo.getFragmentEvidence(foreignEvidence)?.materialVersionId, v1.materialVersionId);
+  });
 });

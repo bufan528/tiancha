@@ -28,7 +28,7 @@ import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
 import { EvaluationService } from "./application/evaluation-service.js";
 import { ReportService } from "./application/report-service.js";
-import { sha256Hex } from "./domain/material-source.js";
+import { locatorKey, normalizeText, resolveLocator, sha256Hex } from "./domain/material-source.js";
 
 const AT = "2026-09-27T00:00:00.000Z";
 const AT2 = "2026-09-27T01:00:00.000Z";
@@ -252,20 +252,35 @@ describe("\u00a7C6.3 / \u00a7C6.17 \u2014 a reader can FOLLOW the evidence, and 
     assert.ok(row.excerpt.length > 0, "an excerpt is shown so the reader can recognise the passage");
     assert.equal(row.projectionStatus, "none");
 
-    // \u2605 END-TO-END: the reported locator really points back into the material
+    // \u2605 END-TO-END: the reported locator really points back into the MATERIAL TEXT. Comparing
+    // the stored fragment/evidence metadata with itself proves nothing — the position has to
+    // resolve inside the material a reader holds.
     const version = e.repo.listMaterialVersions("mat-1")[0];
     assert.ok(version !== undefined);
     const material = e.repo.getMaterial("mat-1");
     assert.ok(material !== undefined);
-    const locator = row.sourceLocators[0];
-    const fragment = e.repo.getFragment(row.evidenceRefs[0].length > 0 ? e.repo.getFragmentEvidence(row.evidenceRefs[0])!.fragmentId : "");
-    assert.ok(fragment !== undefined);
-    assert.equal(locator, `paragraph:${(fragment.locator as { index: number }).index}`);
-    // the excerpt is a prefix of exactly what that locator resolves to in the material
-    const evidence = e.repo.getFragmentEvidence(row.evidenceRefs[0]);
-    assert.ok(evidence !== undefined);
-    assert.ok(fragment.text.startsWith(row.excerpt.slice(0, 20)));
-    assert.equal(fragment.textHash, evidence.quoteHash, "the quoted evidence matches the fragment");
+    const normalized = normalizeText(version.rawText);
+    assert.equal(sha256Hex(normalized), version.normalizedHash, "the version carries its own text");
+
+    // \u2605 EVERY reported locator resolves (not merely the first) — each to exactly its fragment
+    for (const [i, evidenceRef] of row.evidenceRefs.entries()) {
+      const evidence = e.repo.getFragmentEvidence(evidenceRef);
+      assert.ok(evidence !== undefined, `evidence ${evidenceRef} exists`);
+      const fragment = e.repo.getFragment(evidence.fragmentId);
+      assert.ok(fragment !== undefined);
+      assert.equal(row.sourceLocators[i], locatorKey(fragment.locator), "the reported locator IS that position");
+      const resolved = resolveLocator(normalized, fragment.locator);
+      assert.equal(resolved, fragment.text, "\u2605 the position resolves to EXACTLY the stored fragment text");
+      assert.ok((resolved ?? "").length > 0, "a real passage, not an empty slice");
+      assert.equal(fragment.textHash, evidence.quoteHash, "the quoted evidence matches the fragment");
+    }
+
+    // \u2605 ...and the excerpt the reader sees really comes from a passage of the material
+    const firstLocator = e.repo.getFragment(e.repo.getFragmentEvidence(row.evidenceRefs[0])!.fragmentId)!.locator;
+    const firstResolved = resolveLocator(normalized, firstLocator) ?? "";
+    assert.ok(firstResolved.length > 0);
+    assert.ok(firstResolved.startsWith(row.excerpt.slice(0, 20)), "the excerpt prefixes the resolved passage");
+    assert.ok(normalizeText(material.rawText).includes(firstResolved), "the passage exists in the material text");
   });
 
   test("T-C6-11: a crash between P3 and P4 must NOT list the same claim as both fact and judgment", async () => {
