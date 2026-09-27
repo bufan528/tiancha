@@ -848,3 +848,219 @@ describe("C-MVP-R1 · 5a: unconfirmed material evidence is never counted as conf
 
 import { ReportService } from "./application/report-service.js";
 import { EvaluationService } from "./application/evaluation-service.js";
+
+// ===========================================================================
+// T-R1-18 … T-R1-21 — §29.15 (review round 2):
+//   18  the "projected but not yet ledgered" window must NOT look like confirmed evidence
+//   19  an unattributable残骸 forces the conservative downgrade
+//   20  an artifact-only残骸 Claim (never projected) is still discovered and reused
+//   21  an AMBIGUOUS orphan set fails explicitly — sources are never merged by guessing
+// ===========================================================================
+
+/** Writes a Claim artifact exactly the way the pre-R1 field-research pipe did. */
+async function putOrphanClaim(
+  store: ArtifactStore,
+  subjectId: string,
+  claimId: string,
+  statement: string,
+): Promise<void> {
+  await store.put({
+    artifact: {
+      artifactId: claimId,
+      kind: "claim",
+      schemaVersion: "2",
+      ref: { artifactId: claimId, kind: "claim", locator: { type: "sqlite", id: claimId } },
+      createdAt: new Date().toISOString(),
+      taskId: "field-research-ingest",
+      attemptId: "ingest-claims",
+      runId: "backfill-orphan",
+    },
+    blob: {
+      claimId,
+      statement,
+      claimType: "descriptive",
+      provenance: "user",
+      conflictOfInterest: false,
+      factIds: [],
+      evidenceIds: [],
+      subjectKind: "industry",
+      subjectId,
+      temporalRelation: "current",
+      isRealExternalData: true,
+    },
+  });
+}
+
+describe("C-MVP-R1 · 5a crash window and conservative downgrade (§29.15)", () => {
+  test("T-R1-18: projected-but-not-yet-ledgered Claims are NOT confirmed evidence", async () => {
+    const t = await setup("R1 行业 window");
+    try {
+      const done = await submit(t.healthy(), t.sid);
+      const claimIds = done.material.claimRefs.slice();
+      assert.equal(claimIds.length, VALID_BLOCKS);
+
+      // Reproduce the crash window: the projections DID happen, the ledger callback did not run.
+      t.db.db
+        .prepare(
+          `UPDATE material
+              SET ingest_status = 'projecting', ingest_stage = 'projecting',
+                  claim_refs_json = '[]', ingest_blocks_json = ?
+            WHERE material_id = ?`,
+        )
+        .run(
+          JSON.stringify(done.material.ingestBlocks.map((b) => ({ ...b, state: "artifact_written" }))),
+          done.material.materialId,
+        );
+      assert.deepEqual(t.repo.getMaterial(done.material.materialId)!.claimRefs, [], "fixture: refs are empty");
+
+      const report = new ReportService(t.db.db).generateReport("industry", t.sid);
+      for (const id of claimIds) {
+        assert.ok(
+          !report.sections.recentEvidence.includes(`artifact:claim/${id}`),
+          `T-R1-18: ${id} must not be counted as confirmed evidence during the window`,
+        );
+      }
+      const evaluation = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      for (const dim of evaluation.dimensionEvaluations) {
+        for (const id of claimIds) {
+          assert.ok(
+            !dim.evidenceRefs.includes(`artifact:claim/${id}`),
+            `T-R1-18: ${id} must not be among the confirmed evidence refs`,
+          );
+        }
+      }
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+
+  test("T-R1-19: with an unattributable残骸 present, unattributable Claims are withheld", async () => {
+    const t = await setup("R1 行业 residual");
+    try {
+      const done = await submit(t.healthy(), t.sid);
+      const claimIds = done.material.claimRefs.slice();
+      const confirmedBefore = new ReportService(t.db.db).generateReport("industry", t.sid);
+      assert.ok(
+        claimIds.every((id) => confirmedBefore.sections.recentEvidence.includes(`artifact:claim/${id}`)),
+        "fixture: while COMPLETED they are confirmed evidence",
+      );
+
+      // The migration's残骸 shape: no ledger, no refs ⇒ its Claims become UNATTRIBUTABLE.
+      t.db.db
+        .prepare(
+          `UPDATE material SET ingest_status = 'legacy_failed', ingest_stage = 'parsed',
+                  ingest_error = 'LEGACY_PARTIAL_IMPORT', ingest_blocks_json = '[]',
+                  claim_refs_json = '[]', ingest_generation = 0, ingest_owner = NULL,
+                  ingest_lease_until = NULL
+            WHERE material_id = ?`,
+        )
+        .run(done.material.materialId);
+
+      const report = new ReportService(t.db.db).generateReport("industry", t.sid);
+      for (const id of claimIds) {
+        assert.ok(
+          !report.sections.recentEvidence.includes(`artifact:claim/${id}`),
+          `T-R1-19: ${id} is not attributable while the残骸 is unresolved — it must NOT be confirmed`,
+        );
+      }
+      const evaluation = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      const confirmedRefs = evaluation.dimensionEvaluations.flatMap((d) => d.evidenceRefs);
+      for (const id of claimIds) {
+        assert.ok(!confirmedRefs.includes(`artifact:claim/${id}`), `T-R1-19: ${id} withheld`);
+      }
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+});
+
+describe("C-MVP-R1 · orphan scan reach and ambiguity (§29.15)", () => {
+  test("T-R1-20: an artifact-only Claim (never projected) IS discovered and reused", async () => {
+    const t = await setup("R1 行业 orphan2");
+    try {
+      const knowledge = new KnowledgeRepository(t.db.db);
+      const claims = parseClaims(MATERIAL).claims;
+      const written: string[] = [];
+      for (let i = 0; i < claims.length; i += 1) {
+        const claimId = `claim-orphan-${i}`;
+        await putOrphanClaim(t.inner, t.sid, claimId, claims[i]!.statement);
+        written.push(claimId);
+      }
+      assert.equal(
+        knowledge.findKnowledgeBySubject("industry", t.sid)?.beliefs.length ?? 0,
+        0,
+        "fixture: nothing was ever projected — there is not a single belief",
+      );
+
+      const materials = new MaterialIngestService(t.repo, new EchoDataProvider(), t.inner, {
+        ownerId: "orphan-scan-2",
+        knowledge,
+      });
+      const result = await materials.ingest({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        title: "纪要",
+        text: MATERIAL,
+      });
+      assert.equal(result.outcome, "created");
+      assert.deepEqual(
+        result.material.ingestBlocks.map((b) => b.claimId),
+        written,
+        "T-R1-20: the artifact-only Claims (no belief) were found and REUSED — not re-created",
+      );
+      const runId = `ingest-${ingestIdFor("industry", t.sid, result.material.contentHash)}`;
+      assert.equal(
+        (await t.inner.listByRun("backfill-orphan")).length,
+        VALID_BLOCKS,
+        "the pre-existing artifacts are untouched (still one per block)",
+      );
+      void runId;
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+
+  test("T-R1-21: TWO Claims with the same content are AMBIGUOUS — retry fails, never merges", async () => {
+    const t = await setup("R1 行业 ambiguous");
+    try {
+      const knowledge = new KnowledgeRepository(t.db.db);
+      const claims = parseClaims(MATERIAL).claims;
+      // Two independent sources that happen to say the same thing ⇒ two Claim ids per statement.
+      for (let i = 0; i < claims.length; i += 1) {
+        await putOrphanClaim(t.inner, t.sid, `claim-amb-${i}-a`, claims[i]!.statement);
+        await putOrphanClaim(t.inner, t.sid, `claim-amb-${i}-b`, claims[i]!.statement);
+      }
+
+      const materials = new MaterialIngestService(t.repo, new EchoDataProvider(), t.inner, {
+        ownerId: "orphan-scan-3",
+        knowledge,
+      });
+      const result = await materials.ingest({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        title: "纪要",
+        text: MATERIAL,
+      });
+      assert.equal(result.outcome, "failed", "T-R1-21: ambiguity is a HUMAN decision");
+      assert.match(
+        result.outcome === "failed" ? result.error : "",
+        /ORPHAN_CLAIM_AMBIGUOUS/,
+        "T-R1-21: the reason is explicit — no silent merge of two sources",
+      );
+      // …and nothing was written on the way out.
+      assert.equal(
+        (knowledge.findKnowledgeBySubject("industry", t.sid)?.beliefs.length ?? 0),
+        0,
+        "T-R1-21: no projection happened",
+      );
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+});
+
+import { parseClaims } from "./domain/material-parser.js";
