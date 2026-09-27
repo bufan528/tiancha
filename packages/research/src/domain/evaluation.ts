@@ -33,6 +33,12 @@ export interface DimensionEvaluation {
   scoreScale?: string;
   rationale: string;
   evidenceRefs: string[];
+  /**
+   * ★ §29.14 (5a): evidence that came from a material which is NOT `completed`. It is NOT counted
+   * as confirmed evidence (`evidenceRefs`), but it is not hidden either — optional / additive, so
+   * it never breaks an existing consumer.
+   */
+  unconfirmedEvidenceRefs?: string[];
   sufficiency: EvidenceSufficiency;
   /** Present only for `conflicting`. */
   conflictingClaimRefs?: string[];

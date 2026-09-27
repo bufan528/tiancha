@@ -24,6 +24,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { ResearchRepository } from "../storage/research-repository.js";
+import { unconfirmedClaimRefs } from "./material-confirmation.js";
 import { MethodologyService } from "./methodology-service.js";
 import { poolSlotKey } from "../domain/identity.js";
 import {
@@ -159,13 +160,21 @@ export class EvaluationService {
   evaluateDimension(subjectId: string, dim: MethodologyDimension): DimensionEvaluation {
     const assessment = this.assessEvidence(subjectId, dim);
 
+    // ★ §29.14 (5a): split the evidence into CONFIRMED and UNCONFIRMED — a Claim from a material
+    // that is not `completed` is not confirmed evidence. It stays VISIBLE (its own optional field)
+    // but it is no longer counted as `evidenceRefs`. The union is unchanged, so nothing is lost.
+    const unconfirmed = unconfirmedClaimRefs(new ResearchRepository(this.db), subjectId);
+    const confirmedRefs = assessment.evidenceRefs.filter((ref) => !unconfirmed.has(ref));
+    const unconfirmedRefs = assessment.evidenceRefs.filter((ref) => unconfirmed.has(ref));
+
     const evaluation: DimensionEvaluation = {
       dimension: dim.key,
       status: assessment.status,
       rationale: rationaleFor(assessment.status, dim, assessment.sufficiency),
-      evidenceRefs: assessment.evidenceRefs,
+      evidenceRefs: confirmedRefs,
       sufficiency: assessment.sufficiency,
     };
+    if (unconfirmedRefs.length > 0) evaluation.unconfirmedEvidenceRefs = unconfirmedRefs;
     if (assessment.conflictingClaimRefs && assessment.conflictingClaimRefs.length > 0) {
       evaluation.conflictingClaimRefs = assessment.conflictingClaimRefs;
     }
