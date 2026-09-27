@@ -2433,6 +2433,35 @@ overlaps 初始值 = 材料已持久化的 ingestOverlaps（续跑必须记住�
 **修正**：候选集在比对前**排除本材料自己的 claim id**（`material.claimRefs` ∪ 本次 `ledger` 的 id）——
 "既有重叠"的定义是**不属于本材料**的 Claim。这同时让 T-R1-25 的 ④（force 重跑）与 ⑤（归属解决后清空）都成立。
 
-**End of §29（rev11: §29.18 复核修正 5）.**
+## §29.19 复核修正 6（2026-09-26，验收者指出后）
+
+> ⚠️ 追加记录。§29.0 – §29.18 原文**一字未改**。
+
+### §29.19.1 缺陷 12 — 没有受支持的入口来"解决归属"（**已修**）
+
+§29.17/§29.18 建立了这条链：**检测重叠 → 记录 `ingestOverlaps` → 保守降级 → `--force` 重算 → 候选已被 `completed` 材料归属则标记清空**。
+但**没有任何入口**让用户 ① 看到 `ingestOverlaps`、② **登记**"这个 Claim 属于哪份已完成材料" —— `T-R1-25` 第 ④ 步只能**直接改库**（`UPDATE material SET claim_refs_json = …`）。那不是可交付的操作闭环。
+
+**修正 —— 补齐"查看 / 登记 / 重算"三步的受支持流程**：
+
+| 步骤 | 入口 | 说明 |
+|---|---|---|
+| **查看** | `tiancha research material list <行业>`（human 与 `--json`）· Agent 只读工具 `research_material_list` | 显示每份材料的 `ingestOverlaps`（未归属的重叠 claim ref）**以及解决它的确切命令** |
+| **登记归属** | **`tiancha research material attribute <artifact:claim/xxx> --to <materialId>`**（新） | 人工声明"该既有 Claim 属于那份**已完成**材料"。校验：claimRef 形态 / 目标存在 / 目标 `ingestStatus === 'completed'`；**幂等、只增不减** |
+| **重算** | `tiancha research material retry <materialId> --force` | 重算该材料的重叠 ⇒ 已被归属的候选不再记入 ⇒ **标记清空** ⇒ 降级解除 |
+
+* **Agent 不给** `attribute` 工具（与 `retry` / `--force` 同一治理：这是**人**对来源的判断，不是模型）。
+* `attribute` 的输出**必须**提示下一步（`retry <检测到重叠的材料> --force`），否则用户不知道标记何时失效。
+* 目标材料不是 `completed` ⇒ **明确报错**（只有 completed 材料能拥有"已确认证据" —— 这正是 `materialEvidenceIndex()` 的 `attributed` 语义）。
+
+### §29.19.2 验收
+
+| # | 场景 | 期望 |
+|---|---|---|
+| **T-R1-26** | ① 导入材料产生 overlap；② `material list`（human + `--json`）；③ `attribute` 的三种非法输入；④ `attribute` 到该 completed 材料；⑤ `retry --force` | ① 标记已记录；② **输出能看到**该 ref 与解决命令；③ 各自 exit 1 且给出原因；④ exit 0、「已登记归属」、该 claim 进入目标 `claim_refs`（此时标记**仍在**）；⑤ 标记**清空**、该 Claim **重新成为已确认证据** |
+| mutation | `material list` 不显示 `ingestOverlaps` | T-R1-26 的 ② 必须转红 |
+| mutation | `attribute` 允许非 `completed` 目标 | T-R1-26 的 ③ 必须转红 |
+
+**End of §29（rev12: §29.19 复核修正 6）.**
 
 
