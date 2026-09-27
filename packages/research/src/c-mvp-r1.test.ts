@@ -711,53 +711,37 @@ describe("C-MVP-R1 · fencing: a stale holder can never overwrite the new one (�
   });
 });
 
-describe("C-MVP-R1 · the orphan Claim scan of a残骸 retry (§29.2 (c))", () => {
-  test("T-R1-15: retry REUSES the Claims a previous attempt already wrote", async () => {
-    const t = await setup("R1 行业 orphan");
+describe("C-MVP-R1 · a same-content Claim is NOT an ownership proof (§29.16)", () => {
+  test("T-R1-15: two materials with the same statements keep TWO independent sources", async () => {
+    const t = await setup("R1 行业 overlap");
     try {
       const knowledge = new KnowledgeRepository(t.db.db);
-      // 1) a normal import writes the claims + beliefs …
-      const first = await submit(t.healthy(), t.sid);
-      const originalRefs = first.material.claimRefs.slice();
-      assert.equal(originalRefs.length, VALID_BLOCKS);
+      const a = await submit(t.healthy(), t.sid);
+      assert.equal(a.outcome, "created");
+      const aRefs = a.material.claimRefs.slice();
+      assert.equal(aRefs.length, VALID_BLOCKS);
 
-      // 2) … then the row is turned into exactly what the one-shot migration produces for a残骸:
-      //    no ledger, no refs, status legacy_failed (the pre-R1 shape).
-      t.db.db
-        .prepare(
-          `UPDATE material
-              SET ingest_status = 'legacy_failed', ingest_stage = 'parsed',
-                  ingest_error = 'LEGACY_PARTIAL_IMPORT', ingest_blocks_json = '[]',
-                  claim_refs_json = '[]', ingest_generation = 0, ingest_owner = NULL,
-                  ingest_lease_until = NULL
-            WHERE material_id = ?`,
-        )
-        .run(first.material.materialId);
-
-      // 3) the retry runs the orphan scan FIRST (knowledge is wired here) …
-      const materials = new MaterialIngestService(t.repo, new EchoDataProvider(), t.inner, {
-        ownerId: "orphan-scan",
-        knowledge,
+      // A DIFFERENT material (different text, different fingerprint) that happens to carry the
+      // SAME [CLAIM] statements — a completely normal situation.
+      const body = MATERIAL.split("访谈纪要正文。")[1] ?? MATERIAL;
+      const b = await t.healthy().ingest({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        title: "另一份纪要",
+        text: `另一份材料的正文（不同来源）。${body}`,
       });
-      const retried = await materials.retry(first.material.materialId, { acceptOrphanRisk: true });
-      assert.equal(retried.outcome, "resumed");
-      assert.deepEqual(
-        retried.material.claimRefs,
-        originalRefs,
-        "T-R1-15: the pre-existing Claims were REUSED, not written a second time",
-      );
-      assert.equal(
-        retried.material.ingestBlocks.every((b) => b.state === "projected"),
-        true,
-        "every block is marked projected ⇒ the ledger reports them as already done",
-      );
-      const runId = `ingest-${ingestIdFor("industry", t.sid, retried.material.contentHash)}`;
-      assert.equal((await t.inner.listByRun(runId)).length, VALID_BLOCKS, "still one artifact per block");
+      assert.equal(b.outcome, "created");
+      assert.notEqual(b.material.materialId, a.material.materialId, "it is a SEPARATE material");
+
+      // ★ §29.16: no id may be adopted — merging them would destroy `independentSources`.
+      for (const id of b.material.claimRefs) {
+        assert.ok(!aRefs.includes(id), "T-R1-15: an id from the other material was NOT adopted");
+      }
       const k = knowledge.findKnowledgeBySubject("industry", t.sid)!;
       assert.equal(
         knowledge.listBeliefs(k.knowledgeId).length,
-        VALID_BLOCKS,
-        "no duplicate beliefs — content was reused, not re-projected",
+        VALID_BLOCKS * 2,
+        "T-R1-15: each statement has TWO independent Claims — one per source",
       );
     } finally {
       await t.inner.close();
@@ -1005,18 +989,15 @@ describe("C-MVP-R1 · orphan scan reach and ambiguity (§29.15)", () => {
         text: MATERIAL,
       });
       assert.equal(result.outcome, "created");
-      assert.deepEqual(
-        result.material.ingestBlocks.map((b) => b.claimId),
-        written,
-        "T-R1-20: the artifact-only Claims (no belief) were found and REUSED — not re-created",
+      assert.ok(
+        result.material.ingestBlocks.every((b) => !written.includes(b.claimId)),
+        "T-R1-20: a同文 candidate is NOT proof of ownership — no id was adopted",
       );
-      const runId = `ingest-${ingestIdFor("industry", t.sid, result.material.contentHash)}`;
       assert.equal(
         (await t.inner.listByRun("backfill-orphan")).length,
         VALID_BLOCKS,
-        "the pre-existing artifacts are untouched (still one per block)",
+        "the pre-existing artifacts are left untouched",
       );
-      void runId;
     } finally {
       await t.inner.close();
       t.db.close();
@@ -1056,11 +1037,93 @@ describe("C-MVP-R1 · orphan scan reach and ambiguity (§29.15)", () => {
         0,
         "T-R1-21: no projection happened",
       );
+
+      // ★ §29.16: the ambiguity must STAY identifiable as a残骸 …
+      const stored = t.repo.getMaterial(result.material.materialId)!;
+      assert.equal(
+        stored.ingestStatus,
+        "legacy_failed",
+        "T-R1-21: an ambiguous overlap leaves a残骸 a human has to resolve",
+      );
+      assert.equal(stored.ingestStage, "migration");
+      assert.match(stored.ingestError ?? "", /ORPHAN_CLAIM_AMBIGUOUS/);
+
+      // … so this subject's pre-existing Claims are NOT confirmed evidence any more.
+      // Simulate the old pipe having projected one of them: a Claim WITH a belief that belongs to
+      // no completed material.
+      const discovery = new OpportunityDiscoveryService(t.repo, new EchoDataProvider(), t.inner);
+      await discovery.ingestClaims({
+        subjectKind: "industry",
+        subjectId: t.sid,
+        claims: [{ statement: claims[0]!.statement, dimension: "market" }],
+      });
+      const legacyRefs = (await t.inner.listByTask("field-research-ingest")).map(
+        (a) => `artifact:claim/${a.artifactId}`,
+      );
+      const report = new ReportService(t.db.db).generateReport("industry", t.sid);
+      for (const ref of legacyRefs) {
+        assert.ok(
+          !report.sections.recentEvidence.includes(ref),
+          `T-R1-21: ${ref} must NOT be counted as confirmed while the ambiguity is unresolved`,
+        );
+      }
+      const afterEval = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      const confirmedRefs = afterEval.dimensionEvaluations.flatMap((d) => d.evidenceRefs);
+      for (const ref of legacyRefs) {
+        assert.ok(!confirmedRefs.includes(ref), `T-R1-21: ${ref} withheld from the confirmed refs`);
+      }
     } finally {
       await t.inner.close();
       t.db.close();
     }
   });
 });
+
+  test("T-R1-22: a残骸 retry does NOT adopt a same-content Claim it cannot attribute", async () => {
+    const t = await setup("R1 行业 orphan3");
+    try {
+      const knowledge = new KnowledgeRepository(t.db.db);
+      const claims = parseClaims(MATERIAL).claims;
+      // a pre-R1 artifact-only Claim for this subject …
+      await putOrphanClaim(t.inner, t.sid, "claim-legacy-0", claims[0]!.statement);
+      // … and a残骸 row with NO ledger and NO refs (exactly the migration shape).
+      t.db.db
+        .prepare(
+          `INSERT INTO material (material_id, subject_kind, subject_id, kind, title, content_hash,
+              raw_text, claim_refs_json, received_at, created_at, ingest_status, ingest_stage,
+              ingest_error, parser_version, ingest_blocks_json)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          "mat-legacy-orphan", "industry", t.sid, "text", "legacy", "hash-legacy", MATERIAL,
+          "[]", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z",
+          "legacy_failed", "parsed", "LEGACY_PARTIAL_IMPORT", "material-parser/v1", "[]",
+        );
+
+      const materials = new MaterialIngestService(t.repo, new EchoDataProvider(), t.inner, {
+        ownerId: "orphan-scan-4",
+        knowledge,
+      });
+      const result = await materials.retry("mat-legacy-orphan", { acceptOrphanRisk: true });
+      assert.equal(result.outcome, "resumed", "one unambiguous candidate is NOT an error …");
+      assert.ok(
+        result.material.ingestBlocks.every((b) => b.claimId !== "claim-legacy-0"),
+        "T-R1-22: …but it is also NOT an ownership proof — the id was NOT adopted",
+      );
+      const after = await t.inner.listByTask("field-research-ingest");
+      assert.ok(
+        after.some((a) => a.artifactId === "claim-legacy-0"),
+        "the pre-existing artifact still exists (it was not rewritten)",
+      );
+      assert.equal(
+        after.length,
+        VALID_BLOCKS + 1,
+        "the残骸's own Claims were written IN ADDITION to the un-attributable one",
+      );
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
 
 import { parseClaims } from "./domain/material-parser.js";
