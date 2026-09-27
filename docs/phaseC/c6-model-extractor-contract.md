@@ -1,6 +1,6 @@
 # Phase C6 · 模型提取器 Implementation Contract（D-C6-H / D-C6-I / D-C6-J）
 
-> 状态：**rev4 — DESIGN ONLY（实现未授权）**。本文档只锁定语义、边界、失败与恢复规则、验收；**模型适配器的实现须在本契约定稿后单独授权**。rev2 = 第一轮审查的四处补齐（§M2.1）；rev3 = 第二轮审查的收口（§M2.2）；rev4 = 第三轮审查的收口（超长段落末片与分隔符边界 · 原子认领的可执行机制 · 调用次数承诺修正 · 快照记录生成参数 · 成本基准更正，见 §M2.3）。
+> 状态：**rev5 — DESIGN ONLY（实现未授权）**。本文档只锁定语义、边界、失败与恢复规则、迁移与验收；**模型适配器的实现须在本契约定稿后单独授权**。rev2 = 第一轮审查的四处补齐（§M2.1）；rev3 = 第二轮审查的收口（§M2.2）；rev4 = 第三轮审查的收口（§M2.3）；rev5 = 第四轮审查的收口（**历史运行行迁移规则** + **跨接管幂等键构成**，见 §M2.4）。
 > 依据：用户 2026-09-27 的三项结构性裁决（§M2）。用户原话要点：**输入按可追溯片段分批**、**模型只提交引用文本与位置且 ID 由天查生成**、**模型调用异步且整次运行全部验证后再落候选**。
 > 前置契约：`docs/phaseC/c6-implementation-contract.md` §C6.18–§C6.27（资料闭环：材料版本 / Fragment / Evidence / 候选 / 人工闸门 / 投影；其中 `[CANDIDATE]` 确定性提取器 **已交付**）· `docs/HANDOFF.md` §10（**LLM 边界**：禁止 LLM 直接产生 `Claim` / `Fact` / `Knowledge` / `PoolItem` / `Evaluation` 或 0–100 分；模型只能**起草**带来源定位的候选且**必须人工确认**）。
 > 文件定位：**C6 模型提取器专项契约**（同 `c2-*` / `c5-*` / `c6-implementation-contract.md`）；总契约 `implementation-contract.md` §30 只做索引。
@@ -75,6 +75,13 @@
 | **并发测试手段不足**（单进程只证明进程内串行化） | §M7.1a ⑥ + T-C6-37：**必须用两个独立进程，或至少两个独立数据库连接**；**租约接管**用例断言**旧代次零残留**（无候选 / 无 Evidence / 未 `completed`） |
 | **配置快照没记录生成参数本身**（`model` 只有版本串；把参数塞进 `promptVersion` 无法还原当时请求） | §M7.3 快照新增 **`generation` 对象**（`temperature` / `topP` / `maxOutputTokens` / `seed` / `toolConfig` / `extra`）；`promptVersion` **只标识提示词**（§M9 #10 改写）；`generation` **参与配置身份**（`generationHash`，§M9 #5）；T-C6-30 增参数身份用例 |
 | **成本提示算错**（审查者自行更正：`+43%` 的比较基准被混淆） | §M4.3 改为**写明两个基准**：`600` 相对**零重叠** = `2000/1400` = **+42.9%**；`600` 相对 **`500`** = `1500/1400` = **+7.1%**（真实代价）—— 并给出 `step = maxChars − overlapChars` 算式 |
+
+### §M2.4 rev5 的收口（第四轮审查意见 —— 逐条核实后**全部成立**）
+
+| 审查发现 | rev5 处理 |
+|---|---|
+| **旧 `extraction_run` 行迁移后会卡死认领**：加列后历史 `running` 行的 `owner` / `lease_until` 为 `NULL` ⇒ `>= now` 与 `< now` **都不成立** ⇒ 既不算"占用"也不算"可接管" ⇒ 新认领 INSERT 被**部分唯一索引拒绝**；若旧库有多条同配置 `running`，**建索引本身就会失败** | 新增 **§M7.1b 迁移规则**：① 加列 ② **回填 `attempt_seq` / `generation`**（按 `(version, config, started_at, extraction_id)` 升序，确定性）③ **无租约证据的历史 `running` ⇒ `failed` / `error='legacy_interrupted'`**（**不删、不静默**，对齐 `migrateMaterialIngestState()` 的残骸降级）④ 清理后**仍冲突 ⇒ FAIL FAST 并列出冲突行** ⑤ **最后**才建索引（顺序不可颠倒）。§M9 新增 **#4c**（迁移方法），并要求 #4b 的索引**在迁移之后**创建；新增 **T-C6-38** 迁移验收（含"不卡死"与"冲突中止"两面） |
+| **幂等键含 `attemptSeq` ⇒ 去重不了接管后的重复请求**：接管生成新 `attemptSeq` ⇒ 新键 ⇒ 服务商视为**新请求** | §M7.1a ⑤ 更正键的构成：`idempotencyKey = deterministicId("xidem", materialVersionId \| extractionConfigKey \| windowId)` —— **不含 `attemptSeq`** ⇒ **同一逻辑批次（同一窗口）在接管后仍用同一个键**，不同窗口互不相同；`attemptSeq` 只留在审计里。服务商不支持该语义时，rev4 已写明的"允许重复请求"边界依然有效 |
 
 ---
 
@@ -481,12 +488,46 @@ rev3 说"任意并发下模型调用恰好一次"，这与"租约过期后可接
 | **租约接管后** | **允许**出现第二次（乃至更多次）模型请求 |
 | **但** | **只有当前代次能提交结果**；旧代次的结果一律丢弃（fencing） |
 | **最终收敛** | 同一 `(versionId, configKey)` 最终**只有一条 `completed`**，其候选集**唯一** |
-| **远端严格去重（可选）** | 若要求"连请求也不重复"，**必须**依赖**服务商支持的幂等键**：适配器可声明 `supportsIdempotencyKey: boolean` 并接受 `idempotencyKey`（建议值 = `extractionConfigKey + attemptSeq` 的确定性串）；**未声明支持时不得声称严格去重** |
+| **远端严格去重（可选）** | 若要求"连请求也不重复"，**必须**依赖**服务商支持的幂等键**：适配器可声明 `supportsIdempotencyKey: boolean` 并接受 `idempotencyKey`。★ **rev5 更正键的构成**：`idempotencyKey = deterministicId("xidem", materialVersionId + "\|" + extractionConfigKey + "\|" + windowId)` —— **不含 `attemptSeq`**。理由（审查意见成立）：接管会生成**新的 `attemptSeq`**，若键里含它，新请求在服务商看来就是**另一个请求**，**去重不了旧进程仍在处理的那个**；而 `(materialVersionId, extractionConfigKey, windowId)` 是**同一逻辑批次**的稳定身份 ⇒ 接管后同一窗口**继续用同一个键**，不同窗口仍互不相同。`attemptSeq` 只留在**运行审计**里。**未声明支持时不得声称严格去重** |
 
 #### ⑥ 测试要求（★ rev4 加严）
 
 * **并发用例必须用两个独立进程**（或**至少两个独立数据库连接**）—— 单进程内的 `Promise.all` 只证明"进程内串行化"，**不足以**证明互斥（审查意见成立）。
 * **租约接管用例**必须断言旧代次**零残留**：无新增 `claim_candidate`、无新增 `fragment_evidence`、运行未被写成 `completed`；且新代次正常完成。
+
+### §M7.1b 历史 `extraction_run` 行的迁移规则（★ rev5 新增，审查意见）
+
+**问题**（审查意见成立）：现有表**没有** `owner` / `lease_until` / `generation` 等新列。`addColumnIfMissing` 之后，**旧的 `status='running'` 行**在这些字段上为 `NULL`：
+
+* `lease_until >= now` ⇒ **不成立**（`NULL` 参与比较得 `NULL`，非真）；
+* `lease_until < now` ⇒ **同样不成立** ⇒ 该行**既不算"有效占用"、也不算"可接管"**；
+* ⇒ 随后新认领 INSERT 另一条 `running` ⇒ 被**部分唯一索引拒绝** ⇒ **认领静默卡死**。
+* 更糟：若旧库里已有**多条**同配置 `running`，**创建部分唯一索引本身就会失败**。
+
+**迁移顺序**（与项目既有范式一致：**加列 → 唯一性检查 FAIL FAST → 迁移降级**，见 `research-db.ts:601-603`；`migrateMaterialIngestState()` 的 `legacy_failed` 就是"残骸保守降级"先例）：
+
+```
+1) addColumnIfMissing：chunker_version / methodology_version_id / dimension_set_hash /
+   max_quote_chars / attempt_seq / config_snapshot_json / owner / lease_until / generation
+2) 回填身份：attempt_seq IS NULL 的行，按
+      (material_version_id, extraction_config_key, started_at, extraction_id) 升序 赋 1..N
+   （确定性；同一 (材料版本, 配置) 内连续 ⇒ 满足 UNIQUE(version, config, attempt_seq)）
+   并把 generation 回填为 attempt_seq（代际初始值 = 尝试号）
+3) 处理"无租约证据"的历史 running：
+     status='running' 且 (owner IS NULL OR lease_until IS NULL)
+       ⇒ 标为 failed，error='legacy_interrupted'
+   ★ 依据：这些行的持有者/租约**不可知**，**无法证明**仍有进程在写 ⇒ 保守降级。
+   ★ **不静默删除**（保留行与原始 error 上下文），**也不静默卡住**。
+4) 冲突检查（FAIL FAST）：若清理后**仍有**同一 (material_version_id, extraction_config_key)
+   多条 status='running' ⇒ **抛错中止迁移**，错误信息列出冲突行的 extraction_id + attempt_seq
+   （对齐既有 ensureMaterialContentUniqueness() 的 FAIL FAST 语义）。
+5) **最后**才创建部分唯一索引 idx_extraction_run_single_active（§M9 #4b）—— 顺序不可颠倒，
+   否则索引创建可能先于清理而失败。
+```
+
+**明确不做**：删除历史 `running` 行 · 把无法判定的历史运行当作 `completed`（那会伪造"已提取"）· 冲突时**静默**选一条留下。
+
+**迁移验收**：**T-C6-38**（§M10）—— 带**旧 `running` 行**与**同配置重复运行行**的库必须按上述规则迁移，且迁移后认领/复用均正常工作。
 
 **候选层面的不覆盖**（既有语义 + 本次收紧）：
 
@@ -564,7 +605,8 @@ interface ExtractionConfigSnapshot {
 | 2 | `CandidateExtractionService.run` → `async` + 接受 `{ timeoutMs }` | 同上；超时与取消见 §M6.2a |
 | 3 | `run()` **单事务收口** | 改为"先算后写 + 一个事务"；失败记录写在事务之外（§M6.3） |
 | 4 | `ExtractionRun` + `extraction_run` 增**审计与认领列**：`chunker_version` · `methodology_version_id` · `dimension_set_hash` · `max_quote_chars` · **`attempt_seq`** · **`config_snapshot_json`** · **`owner`** · **`lease_until`** · **`generation`** | 建表列 + `addColumnIfMissing`（PRAGMA 预检查，同 `superseded_claim_ref` 法）；**表数仍 32**（加列不加表）。★ 审计要能**逐字还原当时配置**（§M7.3 快照）；后四列服务 §M7.1a 的并发互斥与运行身份 |
-| 4b | **部分唯一索引** `idx_extraction_run_single_active`：`UNIQUE(material_version_id, extraction_config_key) WHERE status = 'running'` | §M7.1a ①：在**数据库层**保证同一配置最多一个 `running`。项目已有多处 `CREATE UNIQUE INDEX` 范式（`research-db.ts:377` / `:392` / `:452`）。**不新增表** |
+| 4b | **部分唯一索引** `idx_extraction_run_single_active`：`UNIQUE(material_version_id, extraction_config_key) WHERE status = 'running'` —— ★ **必须在 §M7.1b 迁移之后创建** | §M7.1a ① + §M7.1b 第 5 步：在**数据库层**保证同一配置最多一个 `running`。项目已有多处 `CREATE UNIQUE INDEX` 范式（`research-db.ts:377` / `:392` / `:452`）。**不新增表** |
+| 4c | **新增迁移方法** `migrateExtractionRunState()`，在 `migrate()` 内、`ensureMaterialIngestColumns()` 一带之后、**建索引之前**调用 | §M7.1b：回填 `attempt_seq` / `generation` · 无租约的历史 `running` ⇒ `failed` / `legacy_interrupted`（**不删、不静默**）· 仍有冲突 ⇒ **FAIL FAST 并列出冲突行**；对齐既有 `migrateMaterialIngestState()` 范式（`research-db.ts:832`） |
 | 5 | `extractionConfigKeyFor` 增 **`chunkerVersion`**（含 `WINDOW_RULE_VERSION` + `maxChars` + `overlapChars`）· **`methodologyVersionId`** · **`dimensionSetHash`** · **`maxQuoteChars`** · **`generationHash`**（`generation` 实际参数值的稳定 hash） | 这些**都会改变哪些输出被产出 / 被接受** ⇒ 必须进身份（审查意见成立）。`dimensionSetHash = sha256Hex(dimensionHints.join("|"))`，`dimensionHints` 取**方法论声明的原始顺序**（**不 sort**，§M3.4），与传给模型的有序列表**逐位一致**；`generationHash` 对**稳定序列化后的 `generation` 对象**计算（键序固定） |
 | 6 | Evidence 追加**仅限 `draft`** | §M7.1 |
 | 7 | `RunResult` 增 **`reused`**（§M7.1 复用）、**`skippedReviewed`**（§M7.1 表）与 **`in_progress`**（§M7.1a 未抢到认领时） | 让"复用 / 跳过已审核 / 正在跑"**可见**而非静默 |
@@ -578,7 +620,7 @@ interface ExtractionConfigSnapshot {
 
 ---
 
-## §M10 验收（T-C6-29…T-C6-37；实现轮落地）
+## §M10 验收（T-C6-29…T-C6-38；实现轮落地）
 
 | 用例 | 必须断言的行为 |
 |---|---|
@@ -591,6 +633,7 @@ interface ExtractionConfigSnapshot {
 | **T-C6-35 已审核候选不被改动** | 先 `confirm` / `reject` 某候选 ⇒ **候选写入阶段**遇到同 id ⇒ 该候选 `reviewStatus` / `statement` / `evidenceRefs` **一字不变**，并计入 `skippedReviewed`；`draft` 候选仍可合并 Evidence（`merged` 计入） |
 | **T-C6-36 无适配器 ⇒ 明确失败** | 未配置 `ModelExtractionAdapter` ⇒ **报错** `ADAPTER_NOT_CONFIGURED`；**不静默退回** `[CANDIDATE]`；**不写任何表** |
 | **T-C6-37 复用与并发认领**（★ rev3 加并发 · **rev4 修正承诺与测试手段**） | **串行**：同 `(materialVersionId, extractionConfigKey)` 第二次调用 ⇒ 既有 `candidateIds` + `reused = true` + `completed`；**适配器调用次数仍为 1**；**不写任何表**（指纹不变）；适配器**故意不可用**时也不受影响。<br>**并发 —— 必须用两个独立进程，或至少两个独立数据库连接**（单进程 `Promise.all` 只证明进程内串行化，**不算**）：① 断言**有效租约内只有 1 次模型调用**、**`completed` 运行只有 1 条**；未抢到者拿到**复用结果**或显式 **`in_progress`**，**且没有第二次模型调用**；② **租约接管**：令持有者过期 ⇒ 新代次可认领（新 `attemptSeq`；此时**出现第二次模型请求是允许的**）⇒ 断言**旧代次零残留**（无新增 `claim_candidate`、无新增 `fragment_evidence`、运行未被写成 `completed`），新代次正常 `completed`；③ 断言**部分唯一索引**确实阻止两个 `running` 并存（§M7.1a ①） |
+| **T-C6-38 历史运行行的迁移**（★ rev5 新增，审查意见） | 构造一个**旧结构**库：手工插入 ① 一条 `status='running'` 且 `owner` / `lease_until` 为 `NULL` 的历史运行 ② 同一 `(materialVersionId, extractionConfigKey)` 下的**两条** `running` 行。打开库（触发迁移）后断言：<br>① 历史行**未被删除**，且被标为 `failed` + `error='legacy_interrupted'`；<br>② 所有行的 `attempt_seq` / `generation` 已回填，且在同配置内**连续、唯一**；<br>③ 部分唯一索引**已建立**，且同配置**不再有两条 `running`**；<br>④ 随后**认领成功**（新 `attempt_seq`），**复用与 `in_progress` 路径也都正常**（即认领**不再被历史行卡死**）；<br>⑤ 反面用例：构造**清理后仍冲突**的局面（例如两条都带有效租约的 `running`）⇒ 迁移**抛错中止**，错误信息**列出冲突行的 `extraction_id` + `attempt_seq`**，且**库未被写坏** |
 
 **测试纪律（沿用 C6 标准）**：断言**行为与身份**（行数、状态、id、hash、指纹），**不断言文案**；每条正例必须证明"**真的**落库且可追溯"（Evidence → Fragment → 规范化位置）；每条反例必须证明"**零残留**"；并做至少一次 **mutation 反证**（例如把 V3 的逐字比较改成 `startsWith` ⇒ T-C6-32 必须失败）。
 
@@ -626,9 +669,10 @@ interface ExtractionConfigSnapshot {
 
 | 版本 | 变更 |
 |---|---|
-| **rev4** | **第三轮审查意见的收口**（§M2.3，逐条核实后全部成立）：① **超长段落末片吞分隔符**（rev3 只让"普通窗口"吞 ⇒ 其后 `\n{2,}` 无人覆盖、并集仍有缺口），并明确 **`maxChars` 只约束正文**；② **原子认领落到可执行机制**（**INSERT 新尝试行**而非 UPDATE 已有行 · **部分唯一索引** `WHERE status='running'` · 单事务四步认领 · 三种情况的数据库结果表 · 提交带 `generation` 校验；§M9 #4b）；③ **修正"模型调用恰好一次"**（与租约接管矛盾）：有效租约内只一个持有者调用 · 接管后允许重复请求 · 只有当前代次能提交 · 远端严格去重须靠**服务商幂等键**；④ **并发测试改用两个独立进程/连接**，接管用例断言旧代次**零残留**；⑤ **快照新增 `generation` 对象**（实际生成参数）并**参与配置身份**，`promptVersion` 只管提示词；⑥ **成本提示更正为显式基准**（`600` vs 零重叠 `+42.9%`；`600` vs `500` `+7.1%`） |
+| **rev5** | **第四轮审查意见的收口**（§M2.4，逐条核实后全部成立）：① **历史 `extraction_run` 行的迁移规则**（§M7.1b）—— 加列后历史 `running` 行的 `owner`/`lease_until` 为 `NULL` ⇒ `>= now` 与 `< now` **都不成立** ⇒ 会**卡死认领**（新 INSERT 撞部分唯一索引），旧库多条同配置 `running` 还会让**建索引失败**；规则为「加列 → 回填 `attempt_seq`/`generation` → 无租约的历史 `running` 标 `failed`/`legacy_interrupted`（**不删不静默**）→ 仍冲突则 **FAIL FAST 列出冲突行** → **最后**建索引」，并对齐既有加列/唯一性/降级范式（`research-db.ts:601-603`、`migrateMaterialIngestState()`）；§M9 新增 **#4c**、#4b 注明须在迁移之后；新增 **T-C6-38** 迁移验收；② **跨接管幂等键构成更正**：`idempotencyKey` 改为 `materialVersionId + extractionConfigKey + windowId`（**不含 `attemptSeq`**）—— 否则接管后键变、服务商视为新请求，**去重不了旧进程仍在处理的请求**（§M7.1a ⑤） |
+| **rev4** | **第三轮审查意见的收口**（§M2.3）：① **超长段落末片吞分隔符**（否则其后 `\n{2,}` 无人覆盖、并集有缺口），且 **`maxChars` 只约束正文**；② **原子认领落到可执行机制**（INSERT 新尝试行 · 部分唯一索引 `WHERE status='running'` · 单事务四步认领 · 三种情况的数据库结果表 · 提交带 `generation` 校验）；③ **修正"模型调用恰好一次"**（与租约接管矛盾）：有效租约内只一个持有者调用 · 接管后允许重复请求 · 只有当前代次能提交；④ **并发测试用两个独立进程/连接**，接管用例断言旧代次**零残留**；⑤ **快照新增 `generation` 对象**并参与配置身份，`promptVersion` 只管提示词；⑥ **成本提示更正为显式基准**（`600` vs 零重叠 `+42.9%`；`600` vs `500` `+7.1%`） |
 | **rev3** | **第二轮审查意见的收口**（§M2.2）：① **窗口覆盖规则拆分**（段落组窗口首尾相接 / 超长段落切片重叠 / 全文按**区间并集**检查无缺口；不变量 I4–I6 按窗口种类分别断言）；② **同配置并发互斥**（§M7.1a 原子认领 + 租约 + 代际 token）；③ **运行身份**改用 `attemptSeq`（`startedAt` 只作审计字段）；④ **审计升级为不可变配置快照** `config_snapshot_json`；⑤ **`dimensionHints` 顺序**定为方法论声明序（不排序），`dimensionSetHash` 对**同一有序列表**计算；⑥ **删除"同版本必须可复现"**的过强承诺；⑦ 文档收尾（§M10 标题、全仓日期 `2026-09-27`） |
 | **rev2** | **第一轮审查意见的四处补齐**（§M2.1）：① **引文即 Fragment**（精确 `char_range`）+ 更正 `fragmentEvidenceIdFor` 的 `stance` 参数 + "四者一致"不变量；② **分隔符归前一窗口** ⇒ 窗口覆盖全文；明确**坐标单位 = UTF-16 code unit**；补配置约束；明确**首版不承诺跨段落组边界的整条引文**；③ **配置身份与运行审计**补入分块器 / **方法论版本** / **维度集合 hash** / **`maxQuoteChars`**，审计保留原值；④ **重跑语义收紧**为"已有成功运行 ⇒ 复用，不再调用模型"。另：`stance` 的语义与**审核界面可见性**（§M5.5）· 超时的**边界与取消**（`AbortSignal`，§M6.2a）· 删除无法失败的"不连续"检查并补 V4（长度上限）验收 · T-C6-33 改为**完整下游状态指纹** · 新增 T-C6-37 |
 | **rev1** | 首版（DESIGN ONLY）：D-C6-H/I/J 三项裁定落为可执行规则 —— 窗口协议（`para-greedy-v1` + 重叠 + 规则进身份）· 模型输出 schema 与 V1–V5 引用校验 · 异步化与"全成或全败"单事务 · 不覆盖已审核候选 · 验收 T-C6-29…T-C6-36 · 改动清单（含 `chunker_version` 加列） |
 
-**End of contract（rev4: 模型提取器契约，DESIGN ONLY —— 实现未授权）.**
+**End of contract（rev5: 模型提取器契约，DESIGN ONLY —— 实现未授权）.**
