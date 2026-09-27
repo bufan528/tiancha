@@ -36,8 +36,11 @@ import { PRIORITY_POLICY_V1 } from "./domain/priority-policy.js";
  *  the exact set (never remove from it): C5-A/B added target_proposal + target_proposal_decision,
  *  C6 slice 1 added material_version + fragment + fragment_evidence.) §7.4. */
 const TABLES_24 = [
+  "candidate_review",
+  "claim_candidate",
   "company",
   "diligence_preparation",
+  "extraction_run",
   "fragment",
   "fragment_evidence",
   "human_gate",

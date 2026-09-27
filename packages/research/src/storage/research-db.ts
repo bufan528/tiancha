@@ -407,6 +407,80 @@ export class ResearchDb {
       CREATE INDEX IF NOT EXISTS idx_fragment_evidence_version ON fragment_evidence(material_version_id);
       CREATE INDEX IF NOT EXISTS idx_fragment_evidence_fragment ON fragment_evidence(fragment_id);
 
+      -- ============ C6 slice ②: claim candidates (§C6.4 / §C6.5 / §C6.7) ============
+      -- A candidate is a PROPOSAL, never knowledge (I-C6-1). reviewStatus ("did a human look?") and
+      -- content_kind ("fact | judgment") are ORTHOGONAL (I-C6-3): 'confirmed' never means "objective
+      -- truth". Nothing here can reach ingestClaims() - projection happens in slice ④, with an
+      -- explicit relation (I-C6-8).
+      CREATE TABLE IF NOT EXISTS claim_candidate (
+        candidate_id TEXT PRIMARY KEY,
+        material_version_id TEXT NOT NULL,
+        subject_kind TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        dimension TEXT NOT NULL,
+        block_hash TEXT NOT NULL,
+        statement TEXT NOT NULL,
+        -- fact | judgment ONLY (candidate/conflict/open_question belong to status or domain objects)
+        content_kind TEXT NOT NULL,
+        confidence REAL,
+        evidence_refs_json TEXT NOT NULL,
+        extraction_id TEXT NOT NULL,
+        extraction_config_key TEXT NOT NULL,
+        review_status TEXT NOT NULL DEFAULT 'draft',
+        reviewed_by TEXT,
+        reviewed_at TEXT,
+        -- ★ I-C6-8: required before ANY projection (SUPPORT | REVISE | CONFLICT | SUPERSEDE)
+        decision_relation TEXT,
+        confirmed_claim_ref TEXT,
+        -- lineage: same (block_hash, dimension) under a PREVIOUS extraction config
+        supersedes_candidate_ref TEXT,
+        -- §C6.17: declared now, USED in slice ④ (avoids a second migration later)
+        projection_status TEXT NOT NULL DEFAULT 'none',
+        reserved_claim_id TEXT,
+        projection_error TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_claim_candidate_version ON claim_candidate(material_version_id);
+      CREATE INDEX IF NOT EXISTS idx_claim_candidate_subject ON claim_candidate(subject_kind, subject_id);
+      -- Identity (§C6.7): same material version + same block + same dimension + same config ⇒ same candidate
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_candidate_identity
+        ON claim_candidate(material_version_id, block_hash, dimension, extraction_config_key);
+
+      -- candidate_review -- APPEND-ONLY human-review trail. One row per action; never updated or
+      -- deleted. This is what keeps "a human edited this candidate" durable across later re-runs.
+      CREATE TABLE IF NOT EXISTS candidate_review (
+        review_id TEXT PRIMARY KEY,
+        candidate_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        operator TEXT NOT NULL,
+        comment TEXT,
+        before_json TEXT,
+        after_json TEXT,
+        at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_candidate_review_candidate ON candidate_review(candidate_id, at);
+
+      -- extraction_run -- one run per (material version, extraction config). The config key is made
+      -- of model/prompt/parser/schema versions, which is what makes "new config ⇒ new candidates"
+      -- and "same config re-run ⇒ identical ids" hold at the same time.
+      CREATE TABLE IF NOT EXISTS extraction_run (
+        extraction_id TEXT PRIMARY KEY,
+        material_version_id TEXT NOT NULL,
+        model_version TEXT NOT NULL,
+        prompt_version TEXT NOT NULL,
+        parser_version TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        extraction_config_key TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        status TEXT NOT NULL,
+        candidate_ids_json TEXT NOT NULL DEFAULT '[]',
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_extraction_run_version
+        ON extraction_run(material_version_id, extraction_config_key);
+
+
       -- Phase B v1: ResearchPosition — a TEMPLATE INSTANCE (not chain truth).
       CREATE TABLE IF NOT EXISTS research_position (
         position_ref TEXT PRIMARY KEY,

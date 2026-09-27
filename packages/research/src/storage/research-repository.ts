@@ -37,6 +37,15 @@ import type {
   FragmentEvidence,
   FragmentLocator,
   FragmentEvidenceStance,
+  ClaimCandidate,
+  CandidateContentKind,
+  CandidateReviewStatus,
+  CandidateRelation,
+  CandidateProjectionStatus,
+  CandidateReview,
+  CandidateReviewAction,
+  ExtractionRun,
+  ExtractionStatus,
 } from "../domain/index.js";
 
 export class ResearchRepository {
@@ -950,6 +959,163 @@ export class ResearchRepository {
     ).map(rowToFragmentEvidence);
   }
 
+  // ---- C6 slice ②: claim candidates / reviews / extraction runs (§C6.4, §C6.7) ----
+
+  /**
+   * INSERT-ONLY. An existing candidate is left EXACTLY as it is: it may already carry a human edit
+   * or a review decision, and a re-run must never clobber that (I-C6-5).
+   */
+  insertClaimCandidate(c: ClaimCandidate): void {
+    this.db
+      .prepare(
+        `INSERT INTO claim_candidate
+         (candidate_id, material_version_id, subject_kind, subject_id, dimension, block_hash, statement,
+          content_kind, confidence, evidence_refs_json, extraction_id, extraction_config_key,
+          review_status, reviewed_by, reviewed_at, decision_relation, confirmed_claim_ref,
+          supersedes_candidate_ref, projection_status, reserved_claim_id, projection_error, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(candidate_id) DO NOTHING`,
+      )
+      .run(
+        c.candidateId,
+        c.materialVersionId,
+        c.subjectKind,
+        c.subjectId,
+        c.dimension,
+        c.blockHash,
+        c.statement,
+        c.contentKind,
+        c.confidence ?? null,
+        JSON.stringify(c.evidenceRefs),
+        c.extractionId,
+        c.extractionConfigKey,
+        c.reviewStatus,
+        c.reviewedBy ?? null,
+        c.reviewedAt ?? null,
+        c.decisionRelation ?? null,
+        c.confirmedClaimRef ?? null,
+        c.supersedesCandidateRef ?? null,
+        c.projectionStatus,
+        c.reservedClaimId ?? null,
+        c.projectionError ?? null,
+        c.createdAt,
+      );
+  }
+
+  getClaimCandidate(candidateId: string): ClaimCandidate | undefined {
+    const row = this.db.prepare("SELECT * FROM claim_candidate WHERE candidate_id = ?").get(candidateId) as
+      | Record<string, unknown>
+      | undefined;
+    return row === undefined ? undefined : rowToClaimCandidate(row);
+  }
+
+  listClaimCandidates(materialVersionId: string): ClaimCandidate[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM claim_candidate WHERE material_version_id = ? ORDER BY created_at, candidate_id")
+        .all(materialVersionId) as Record<string, unknown>[]
+    ).map(rowToClaimCandidate);
+  }
+
+  listClaimCandidatesBySubject(subjectKind: string, subjectId: string): ClaimCandidate[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM claim_candidate WHERE subject_kind = ? AND subject_id = ? ORDER BY created_at, candidate_id",
+        )
+        .all(subjectKind, subjectId) as Record<string, unknown>[]
+    ).map(rowToClaimCandidate);
+  }
+
+  /** APPEND-ONLY: a review row is never updated or deleted (I-C6-5's durable trail). */
+  insertCandidateReview(r: CandidateReview): void {
+    this.db
+      .prepare(
+        `INSERT INTO candidate_review
+         (review_id, candidate_id, action, operator, comment, before_json, after_json, at)
+         VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(review_id) DO NOTHING`,
+      )
+      .run(
+        r.reviewId,
+        r.candidateId,
+        r.action,
+        r.operator,
+        r.comment ?? null,
+        r.before === undefined ? null : JSON.stringify(r.before),
+        r.after === undefined ? null : JSON.stringify(r.after),
+        r.at,
+      );
+  }
+
+  listCandidateReviews(candidateId: string): CandidateReview[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM candidate_review WHERE candidate_id = ? ORDER BY at, review_id")
+        .all(candidateId) as Record<string, unknown>[]
+    ).map(rowToCandidateReview);
+  }
+
+  insertExtractionRun(r: ExtractionRun): void {
+    this.db
+      .prepare(
+        `INSERT INTO extraction_run
+         (extraction_id, material_version_id, model_version, prompt_version, parser_version,
+          schema_version, extraction_config_key, started_at, finished_at, status, candidate_ids_json, error)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(extraction_id) DO NOTHING`,
+      )
+      .run(
+        r.extractionId,
+        r.materialVersionId,
+        r.modelVersion,
+        r.promptVersion,
+        r.parserVersion,
+        r.schemaVersion,
+        r.extractionConfigKey,
+        r.startedAt,
+        r.finishedAt ?? null,
+        r.status,
+        JSON.stringify(r.candidateIds),
+        r.error ?? null,
+      );
+  }
+
+  updateExtractionRun(
+    extractionId: string,
+    patch: { status: ExtractionStatus; finishedAt?: string; candidateIds?: string[]; error?: string },
+  ): boolean {
+    const res = this.db
+      .prepare(
+        `UPDATE extraction_run
+         SET status = ?, finished_at = ?, candidate_ids_json = ?, error = ?
+         WHERE extraction_id = ?`,
+      )
+      .run(
+        patch.status,
+        patch.finishedAt ?? null,
+        JSON.stringify(patch.candidateIds ?? []),
+        patch.error ?? null,
+        extractionId,
+      );
+    return Number(res.changes) === 1;
+  }
+
+  getExtractionRun(extractionId: string): ExtractionRun | undefined {
+    const row = this.db.prepare("SELECT * FROM extraction_run WHERE extraction_id = ?").get(extractionId) as
+      | Record<string, unknown>
+      | undefined;
+    return row === undefined ? undefined : rowToExtractionRun(row);
+  }
+
+  listExtractionRuns(materialVersionId: string): ExtractionRun[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM extraction_run WHERE material_version_id = ? ORDER BY started_at, extraction_id")
+        .all(materialVersionId) as Record<string, unknown>[]
+    ).map(rowToExtractionRun);
+  }
+
   upsertPosition(p: ResearchPosition): void {
     this.db
       .prepare(
@@ -1655,6 +1821,80 @@ function rowToFragmentEvidence(row: any): FragmentEvidence {
     createdAt: row.created_at,
   };
   if (row.note !== null && row.note !== undefined) out.note = row.note as string;
+  return out;
+}
+
+function rowToClaimCandidate(row: any): ClaimCandidate {
+  const out: ClaimCandidate = {
+    candidateId: row.candidate_id,
+    materialVersionId: row.material_version_id,
+    subjectKind: row.subject_kind,
+    subjectId: row.subject_id,
+    dimension: row.dimension,
+    blockHash: row.block_hash,
+    statement: row.statement,
+    contentKind: row.content_kind as CandidateContentKind,
+    evidenceRefs: JSON.parse(row.evidence_refs_json) as string[],
+    extractionId: row.extraction_id,
+    extractionConfigKey: row.extraction_config_key,
+    reviewStatus: row.review_status as CandidateReviewStatus,
+    projectionStatus: row.projection_status as CandidateProjectionStatus,
+    createdAt: row.created_at,
+  };
+  if (row.confidence !== null && row.confidence !== undefined) out.confidence = row.confidence as number;
+  if (row.reviewed_by !== null && row.reviewed_by !== undefined) out.reviewedBy = row.reviewed_by as string;
+  if (row.reviewed_at !== null && row.reviewed_at !== undefined) out.reviewedAt = row.reviewed_at as string;
+  if (row.decision_relation !== null && row.decision_relation !== undefined) {
+    out.decisionRelation = row.decision_relation as CandidateRelation;
+  }
+  if (row.confirmed_claim_ref !== null && row.confirmed_claim_ref !== undefined) {
+    out.confirmedClaimRef = row.confirmed_claim_ref as string;
+  }
+  if (row.supersedes_candidate_ref !== null && row.supersedes_candidate_ref !== undefined) {
+    out.supersedesCandidateRef = row.supersedes_candidate_ref as string;
+  }
+  if (row.reserved_claim_id !== null && row.reserved_claim_id !== undefined) {
+    out.reservedClaimId = row.reserved_claim_id as string;
+  }
+  if (row.projection_error !== null && row.projection_error !== undefined) {
+    out.projectionError = row.projection_error as string;
+  }
+  return out;
+}
+
+function rowToCandidateReview(row: any): CandidateReview {
+  const out: CandidateReview = {
+    reviewId: row.review_id,
+    candidateId: row.candidate_id,
+    action: row.action as CandidateReviewAction,
+    operator: row.operator,
+    at: row.at,
+  };
+  if (row.comment !== null && row.comment !== undefined) out.comment = row.comment as string;
+  if (row.before_json !== null && row.before_json !== undefined) {
+    out.before = JSON.parse(row.before_json) as Record<string, unknown>;
+  }
+  if (row.after_json !== null && row.after_json !== undefined) {
+    out.after = JSON.parse(row.after_json) as Record<string, unknown>;
+  }
+  return out;
+}
+
+function rowToExtractionRun(row: any): ExtractionRun {
+  const out: ExtractionRun = {
+    extractionId: row.extraction_id,
+    materialVersionId: row.material_version_id,
+    modelVersion: row.model_version,
+    promptVersion: row.prompt_version,
+    parserVersion: row.parser_version,
+    schemaVersion: row.schema_version,
+    extractionConfigKey: row.extraction_config_key,
+    startedAt: row.started_at,
+    status: row.status as ExtractionStatus,
+    candidateIds: JSON.parse(row.candidate_ids_json) as string[],
+  };
+  if (row.finished_at !== null && row.finished_at !== undefined) out.finishedAt = row.finished_at as string;
+  if (row.error !== null && row.error !== undefined) out.error = row.error as string;
   return out;
 }
 
