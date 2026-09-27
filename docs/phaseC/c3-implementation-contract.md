@@ -454,6 +454,14 @@ Layer 3 — 真实 SQLite / child-session 行为证据（真实库演练 + smoke
 
 ### 7.4 24 表基线（不得增删）
 
+> ★ **后续扩展记录（追加注记，上文一字未改）**：
+> * **C5-A / C5-B** 加入 `target_proposal` · `target_proposal_decision`（**24 → 26 表**）；
+> * **C6 第 ① 片**（commit `6407d49`）加入 `material_version` · `fragment` · `fragment_evidence`（**26 → 29 表**）。
+>
+> §7.4 的"不得增删"约束 **C3 阶段内**（C3 不得改 schema）；后续 Phase 追加表属**同类合法扩展**，
+> 须同步更新 `phase-c3-b.test.ts` 的集合断言与相关文档表数。
+
+
 ```text
 company, diligence_preparation, human_gate, industry, industry_knowledge,
 information_pool_entry, information_pool_item, information_pool_slot,

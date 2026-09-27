@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev4 — DESIGN ONLY。Implementation / Commit / Push 均未授权。**
+> 状态：**rev5 — 第 ① 片已授权实现并交付（§C6.18）；片 ②–⑤ 仍未授权。**
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -12,6 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
+| **rev5** | **第 ① 片（材料版本 + Fragment/Evidence，W1–W2）实现并交付**（`6407d49`）：新增 3 表（26 → 29）· 独立类型而非扩展既有类型 · 双 hash · v1 定位 · 确定性身份与幂等 · 9 例验收全绿 · 全量 420/420 + smoke PASS。**片 ②–⑤ 未授权**。详见 §C6.18 |
 | **rev4** | **验收者第二轮契约审查后的 4 处校准确认**（**不改 scope**）：① **版本头/基线**修正（头部 rev2→rev4；起始基线不再写作"当前 HEAD"）；② **表数修正为 6 张**（`candidate_review` **独立成表**、append-only、与 `extraction_run` 生命周期不同）；③ **D-C6-D = 反查方案**（`confirmedClaimRef` 作分类关联；补数据流、落库、按 subject 查询与"历史 `[CLAIM]` 无 `contentKind`"的展示规则）；④ **D-C6-E = 联合类型**（保留 `KnowledgeLine` 的身份字段必填；新增 `ClaimCandidateLine`，`pendingCandidates` 收判别联合；并修正"零破坏"说法）；⑤ **D-C6-F 补审计参数**（`--operator` 必填、`--relation` 必填、`revise` 只记录修改并保持 draft）；⑥ **新增 §C6.17 候选级恢复协议**（W4 细化：预留/进度/并发/回填前崩溃）并据此改写 T-C6-8 |
 | **rev3** | **用户确认三项裁定**（§C6.15）+ **实现前复核**（§C6.16：预计文件清单 / T-C6 可测性 / 回归面 / 分片）+ 复核新发现的 3 项待定小项（§C6.16.5 D-C6-D/E/F）。**不改 scope** |
 | **rev2** | **验收者审查后的 5 处模型补清 + 3 项裁定**（**不改 scope**）：① 原文**保存位置与双 hash**（§C6.3）；② `evidence` 字段表 + `contentKind` **收窄为 `fact`/`judgment`** + **报告分类来源拆开**（§C6.4/§C6.5）；③ **确认/修订投影必须有显式 relation**，"仅编辑"不得投影（§C6.4）；④ **`extractionConfigKey` 纳入候选身份** + 三个对象的**确定性身份与失败重跑语义**（§C6.7）；⑤ **跨库写入顺序 + 崩溃窗口表 + 每个边界的故障注入**（§C6.7）。三项裁定见 **§C6.15** |
@@ -509,4 +510,25 @@ P4 回填【主库】confirmedClaimRef = reservedClaimId；projectionStatus = fi
 
 **与 T-C6-8 的关系**：T-C6-8 必须**逐点覆盖 P1–P4 的 4 个崩溃点**，而不是笼统说"复用 §29 注入点"。
 
-**End of contract（rev4）.**
+---
+
+## §C6.18 第 ① 片实现记录（2026-09-27，**已授权并交付**）
+
+| 项 | 内容 |
+|---|---|
+| Commit | **`6407d49`**（代码 + 测试；文档单独提交） |
+| 范围 | **W1–W2**：`material_version`（版本 + 双 hash）· `fragment`（v1 定位）· `fragment_evidence`（一个片段一个立场） |
+| 新表 | **3 张** ⇒ 代码 schema **26 → 29**；**加法迁移**，既有表零改动 |
+| 类型落点 | ★ **未扩展** `DocumentFragment` / `Evidence`：它们的 `documentId` / `claimId` **必填**，与"绑 `materialVersionId`"和"evidence 指向片段而非 claim"冲突 ⇒ 新增独立类型 `MaterialVersion` / `MaterialFragment` / `FragmentEvidence`（`domain/material-source.ts`）。§C6.16.1 写的"扩展"据此修正为"新增独立类型" |
+| 规范化 | **`nfkc-lf-v1`**：先换行统一（`\r\n?` → `\n`）再 **NFKC**；**只有规范化文本**用于定位与 `textHash` |
+| 双 hash | `rawHash` = sha256(**原始字节**)；`normalizedHash` = sha256(**规范化文本**)。实测：CRLF 版与 LF 版 ⇒ **同 `normalizedHash`、不同 `rawHash`** ⇒ 判为**新版本**（正是 `rawHash` 的用途）；两者从不混用 |
+| 定位 | v1 启用 `char_range`（**UTF-16 code unit**）+ `paragraph`（按 `\n{2,}` 切分、**剥掉尾随换行**）；`page` / `timestamp` **保留定义但显式抛错**（D-C6-A = (a)） |
+| 身份 | `material_version` = `det(materialId, rawHash, normalizationVersion)` · `fragment` = `det(versionId, locatorKey)` · `fragment_evidence` = `det(versionId, fragmentId, stance, quoteHash)` ⇒ **所有写入幂等** |
+| ★ 语义发现 | **NFKC 会把全角标点规范化为半角**（`：` → `:`）⇒ `fragment.text` 是**规范化文本**，不再是原文的字面。⇒ ⑤ 片做报告引用时，必须**标注规范化版本**或改用原文切片，否则"引用能回到原文"在标点上对不上 |
+| 验收 | `phase-c6-fragment.test.ts`：T-C6-1（复算正确）· T-C6-1b（**改一字符 ⇒ 转红**＋双 hash 不混用）· T-C6-1c（规范化幂等）· T-C6-1d（v1 拒 `page`/`timestamp`）· §C6.7 身份与幂等（版本 / 片段 / 证据）· 表存在性 —— **9 例全绿** |
+| 既有断言适配 | `phase-c3-b.test.ts` 的 `TABLES_24`（**精确集合**断言）追加 3 个表名；`c3-implementation-contract.md` §7.4 **追加注记**（原文一字未改） |
+| 收口 | root `tsc` **0** · research typecheck **0** · **420 tests / 420 pass / 0 fail**（117 suites）· `research smoke` **PASS**（child-session=real） |
+| 真实运行证据 | 隔离库 `D:\reasonix-data\tiancha-c6-slice1-*`：W1 `created=true` + 双 hash + 两个 locator **recompute=true**；W2 evidence 的 quote **取自片段**；**重跑 ⇒ `created=false` / versions=1 / fragments=2 / evidence=1**；`TABLES: 29` |
+| 未做（按授权边界） | 候选 / 审阅 / 提取运行（片 ②）· AI 审阅入口（片 ③）· 投影（片 ④）· 报告接入（片 ⑤）· CLI / Agent 面 —— **全部未授权** |
+
+**End of contract（rev5: §C6.18 第 ① 片实现记录）.**
