@@ -80,10 +80,12 @@ import {
 import { renderDossierMarkdown, reportFileName } from "./report-markdown.js";
 // ★ C6 slice ③: the human gate for claim candidates (no projection lives here).
 import { CandidateReviewService, type ClaimCandidate } from "@tiancha/research";
+import { CandidateProjectionService } from "@tiancha/research";
 import {
   formatCandidateHuman,
   formatCandidateListHuman,
   formatCandidateReviewHuman,
+  formatProjectionHuman,
   type CandidateView,
 } from "./research-format.js";
 
@@ -103,6 +105,8 @@ export interface ResearchCliDeps {
   materialMigration?: { completedWithRefs: number; completedWithoutClaims: number; legacyFailed: number };
   /** ★ C6 slice ③: candidate review (the human gate; confirmation only — projection is slice ④). */
   candidates?: CandidateReviewService;
+  /** ★ C6 slice ④: the projection into the EXISTING ingestClaims path (absent ⇒ record only). */
+  projection?: CandidateProjectionService;
   /** B2: the ONLY writer of ResearchTarget — human-confirmed subjects. */
   targets: TargetService;
   /** B5: projects the chain template into `research_position` (idempotent, system-side). */
@@ -1187,6 +1191,8 @@ export interface CandidateReviewOptions {
   statement?: string;
   kind?: string;
   confidence?: number;
+  /** Only for `SUPERSEDE`: which existing claim is superseded. */
+  supersedes?: string;
 }
 
 function toCandidateView(c: ClaimCandidate): CandidateView {
@@ -1291,10 +1297,62 @@ export async function runCandidateConfirm(
     });
     if (opts.json) {
       deps.out(toJson(toCandidateView(updated)));
+    } else {
+      deps.out(
+        formatCandidateReviewHuman(
+          toCandidateView(updated),
+          "confirm",
+          [],
+          deps.projection === undefined ? "not_wired" : "attempted",
+        ),
+      );
+    }
+    // ★ C6 slice ④: a confirmed candidate is PROJECTED through the existing ingestClaims path.
+    if (deps.projection === undefined) {
+      if (!opts.json) {
+        deps.out("  （未配置投影服务：本次仅记录决定。稍后可用 tiancha research candidate project <id> --operator <名> 完成投影）");
+      }
       return 0;
     }
-    deps.out(formatCandidateReviewHuman(toCandidateView(updated), "confirm"));
-    return 0;
+    const projected = await deps.projection.project(candidateId, {
+      operator: opts.operator,
+      ...(opts.supersedes === undefined ? {} : { supersedesClaimRef: opts.supersedes }),
+    });
+    if (!opts.json) {
+      deps.out(formatProjectionHuman(toCandidateView(projected.candidate), projected.status, projected.claimRef, projected.error));
+    }
+    return projected.status === "failed" ? 1 : 0;
+  } catch (err) {
+    return fail(deps, err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** `candidate project` — resume/redo a projection at ANY point (idempotent by design, §C6.17). */
+export async function runCandidateProject(
+  candidateId: string | undefined,
+  opts: CandidateReviewOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (candidateId === undefined) {
+    return fail(deps, "usage: tiancha research candidate project <candidateId> --operator <名> [--supersedes-claim <claimRef>]");
+  }
+  if (opts.operator === undefined) return fail(deps, "--operator is required (every human decision must be attributable)");
+  if (deps.projection === undefined) {
+    return fail(deps, "no projection service is wired in this context — run the CLI (tiancha research candidate project …)");
+  }
+  try {
+    const result = await deps.projection.project(candidateId, {
+      operator: opts.operator,
+      ...(opts.supersedes === undefined ? {} : { supersedesClaimRef: opts.supersedes }),
+    });
+    if (opts.json) {
+      deps.out(toJson({ status: result.status, claimRef: result.claimRef, error: result.error }));
+      return result.status === "failed" ? 1 : 0;
+    }
+    deps.out(
+      formatProjectionHuman(toCandidateView(result.candidate), result.status, result.claimRef, result.error),
+    );
+    return result.status === "failed" ? 1 : 0;
   } catch (err) {
     return fail(deps, err instanceof Error ? err.message : String(err));
   }

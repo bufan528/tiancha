@@ -66,8 +66,10 @@ import {
   runCandidateRevise,
   runCandidateShow,
 } from "./research-commands.js";
+import { runCandidateProject } from "./research-commands.js";
 import { KnowledgeRepository } from "@tiancha/research";
 import { CandidateReviewService } from "@tiancha/research";
+import { CandidateProjectionService } from "@tiancha/research";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -507,6 +509,11 @@ async function run(): Promise<void> {
         materialMigration: db.materialMigrationSummary,
         // ★ C6 slice ③: candidate review; confirmation is recorded, PROJECTION is slice ④.
         candidates: new CandidateReviewService(repo),
+        // ★ C6 slice ④: projection goes through the SAME ingestClaims path field research uses.
+        projection: new CandidateProjectionService(
+          repo,
+          new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts),
+        ),
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),
         err: (line) => console.error(line),
@@ -539,6 +546,12 @@ async function run(): Promise<void> {
           );
         } else if (sub === "reject") {
           process.exitCode = await runCandidateReject(id, { json, operator, comment }, deps);
+        } else if (sub === "project") {
+          process.exitCode = await runCandidateProject(
+            id,
+            { json, operator, supersedes: flagValue(args, "--supersedes-claim") },
+            deps,
+          );
         } else {
           deps.err("usage: tiancha research candidate list|show|confirm|revise|reject ...");
           process.exitCode = 1;

@@ -749,14 +749,40 @@ export function formatCandidateHuman(v: CandidateView): string {
  * The result of a review action. ★ It must SAY that nothing has been projected yet: slice ③ only
  * records the human decision; the projection into Claim/Knowledge is slice ④ and is unauthorized.
  */
-export function formatCandidateReviewHuman(v: CandidateView, action: string, notes: string[] = []): string {
+export function formatCandidateReviewHuman(
+  v: CandidateView,
+  action: string,
+  notes: string[] = [],
+  projection: "none" | "attempted" | "not_wired" = "none",
+): string {
+  const projectionLine =
+    projection === "attempted"
+      ? "  → 正在通过既有 ingestClaims 路径投影（结果见下）。"
+      : projection === "not_wired"
+        ? "  ⚠ 尚未投影：此处未配置投影服务；请在 CLI 执行 tiancha research candidate project <id> --operator <名>。"
+        : "  投影：本动作不触发投影（候选保持待确认）。";
   const lines = [
     "",
     `已记录人工动作：${action} · 候选 ${v.candidateId}`,
     `  审核状态：${v.reviewStatus}${v.decisionRelation === undefined ? "" : ` · relation=${v.decisionRelation}`}`,
-    `  ⚠ 尚未投影：本片只记录人工决定；候选→Claim/Knowledge 的投影在后续片启用。`,
+    projectionLine,
   ];
   for (const n of notes) lines.push(`  ${n}`);
+  lines.push("");
+  return lines.join("\n");
+}
+
+/** The outcome of a projection attempt. ★ The Claim ref shown here IS the real Claim. */
+export function formatProjectionHuman(
+  v: CandidateView,
+  status: string,
+  claimRef: string | undefined,
+  error: string | undefined,
+): string {
+  const lines = ["", `候选 ${v.candidateId} · 投影结果：${status}`];
+  if (claimRef !== undefined) lines.push(`  已生成 Claim：${claimRef}（可双向追溯：候选 ↔ Claim）`);
+  if (error !== undefined) lines.push(`  ⚠ 未完成：${error}`);
+  lines.push("  说明：投影走的是既有 ingestClaims 路径；重复执行不会产生第二个 Claim。");
   lines.push("");
   return lines.join("\n");
 }

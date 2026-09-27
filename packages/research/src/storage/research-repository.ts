@@ -1095,6 +1095,50 @@ export class ResearchRepository {
     return Number(res.changes) === 1;
   }
 
+  /**
+   * §C6.17 candidate-level progress. `expectedStatus` (optional) makes the transition atomic:
+   * the update only lands when the row is still in that state, which is what fences a concurrent
+   * projector away from a double projection.
+   */
+  updateCandidateProjection(
+    candidateId: string,
+    patch: {
+      projectionStatus?: CandidateProjectionStatus;
+      reservedClaimId?: string;
+      confirmedClaimRef?: string;
+      projectionError?: string;
+    },
+    expectedStatus?: CandidateProjectionStatus,
+  ): boolean {
+    const sets: string[] = [];
+    const args: (string | null)[] = [];
+    if (patch.projectionStatus !== undefined) {
+      sets.push("projection_status = ?");
+      args.push(patch.projectionStatus);
+    }
+    if (patch.reservedClaimId !== undefined) {
+      sets.push("reserved_claim_id = ?");
+      args.push(patch.reservedClaimId);
+    }
+    if (patch.confirmedClaimRef !== undefined) {
+      sets.push("confirmed_claim_ref = ?");
+      args.push(patch.confirmedClaimRef);
+    }
+    if (patch.projectionError !== undefined) {
+      sets.push("projection_error = ?");
+      args.push(patch.projectionError);
+    }
+    if (sets.length === 0) return false;
+    let sql = `UPDATE claim_candidate SET ${sets.join(", ")} WHERE candidate_id = ?`;
+    args.push(candidateId);
+    if (expectedStatus !== undefined) {
+      sql += " AND projection_status = ?";
+      args.push(expectedStatus);
+    }
+    const res = this.db.prepare(sql).run(...args);
+    return Number(res.changes) === 1;
+  }
+
   insertExtractionRun(r: ExtractionRun): void {
     this.db
       .prepare(
