@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev5 — 第 ① 片已授权实现并交付（§C6.18）；片 ②–⑤ 仍未授权。**
+> 状态：**rev6 — 第 ① 片已实现、修订并交付（§C6.18 / §C6.19）；片 ②–⑤ 仍未授权。**
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -12,6 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
+| **rev6** | **第 ① 片修订（slice-1 review 闭环，§C6.19）**：W1 **真正原子**（单事务，嵌套安全）· 版本**必须属于既有 Material** 且 subject 从 Material 读取 · 版本**不可变**（insert-only，同 id 不同内容**报错**）· locator 合法性校验（整数/非空/范围内）· **完整性与定位检查分离**（`verifyVersionIntegrity` vs `verifyFragmentLocation`）· 分段规则与**引用口径**写入契约 · 表名同步为 `fragment_evidence`。测试 9 → **13** 例；全量 **424/424** |
 | **rev5** | **第 ① 片（材料版本 + Fragment/Evidence，W1–W2）实现并交付**（`6407d49`）：新增 3 表（26 → 29）· 独立类型而非扩展既有类型 · 双 hash · v1 定位 · 确定性身份与幂等 · 9 例验收全绿 · 全量 420/420 + smoke PASS。**片 ②–⑤ 未授权**。详见 §C6.18 |
 | **rev4** | **验收者第二轮契约审查后的 4 处校准确认**（**不改 scope**）：① **版本头/基线**修正（头部 rev2→rev4；起始基线不再写作"当前 HEAD"）；② **表数修正为 6 张**（`candidate_review` **独立成表**、append-only、与 `extraction_run` 生命周期不同）；③ **D-C6-D = 反查方案**（`confirmedClaimRef` 作分类关联；补数据流、落库、按 subject 查询与"历史 `[CLAIM]` 无 `contentKind`"的展示规则）；④ **D-C6-E = 联合类型**（保留 `KnowledgeLine` 的身份字段必填；新增 `ClaimCandidateLine`，`pendingCandidates` 收判别联合；并修正"零破坏"说法）；⑤ **D-C6-F 补审计参数**（`--operator` 必填、`--relation` 必填、`revise` 只记录修改并保持 draft）；⑥ **新增 §C6.17 候选级恢复协议**（W4 细化：预留/进度/并发/回填前崩溃）并据此改写 T-C6-8 |
 | **rev3** | **用户确认三项裁定**（§C6.15）+ **实现前复核**（§C6.16：预计文件清单 / T-C6 可测性 / 回归面 / 分片）+ 复核新发现的 3 项待定小项（§C6.16.5 D-C6-D/E/F）。**不改 scope** |
@@ -91,6 +92,13 @@ C-MVP 已证明「明确写成 `[CLAIM]` 的内容」可驱动既有链路；C6 
 * **计量与规范化（必须写死）**：偏移以 **UTF-16 code unit** 计（与 JS `String#slice` 一致）；规范化版本 = **`nfkc-lf-v1`**（NFKC + 换行统一 `\n`）；**规范化后的文本**才用于定位与 `textHash`。
 * **引用校验（验收必须真跑）**：`normalize(raw_text).slice(start,end) === fragment.text` **且** `sha256(fragment.text) === fragment.textHash`；故意改一个字符 ⇒ **必须转红**。
 * Fragment **不得**跨材料、不得跨版本。
+
+### v1 分段与引用口径（第 ① 片落地补记）
+
+* ★ **段落切分规则（写死）**：`paragraph` 按 **`\n{2,}`（一个或多个空行）** 切分，并**剥掉段落的尾随换行**（文档末尾的换行不是段落内容）。写库与 `resolveLocator` 使用**同一函数**，因此复算精确。
+* ★ **引用口径（⑤ 片前必须定；v1 结论）**：`locator` 与 `fragment.text` 都在**规范化文本**上，所以
+  * 报告 / 界面展示规范化摘录时**必须标注 `nfkc-lf-v1`**；
+  * **若要原文字面引用**（PDF 页码、原文标点），**单有当前 locator 不足** ⇒ ⑤ 片必须引入 **"规范化位置 → 原文位置"映射**（或额外保存原文切片字段）—— **列为 ⑤ 片的前置条件**。
 
 ---
 
@@ -338,7 +346,7 @@ W4【跨库】       人工 confirm(with relation) → 既有 ingestClaims()
 | **④ 确认后既有投影（W4）** | `application/candidate-review-service.ts`：`confirm` ⇒ **调用既有 `OpportunityDiscoveryService.ingestClaims()`**（**复用 C-MVP-R1 的 P1→P4**）· `confirmedClaimRef` 回填 | `phase-c6-projection.test.ts`（T-C6-2/T-C6-3/T-C6-8） |
 | **⑤ 报告引用与缺口回填** | `application/report-service.ts`（**按 `contentKind` 分流**既有分区 + 接入候选）· 可能 `domain/report.ts`（见 §C6.16.5 的 D-C6-E） | `phase-c6-report.test.ts`（T-C6-4/T-C6-7） |
 
-**表数量（rev4 修正）**：当前 **26** 张 → 预计 **+6 张 = 32**：`material_version` · `fragment` · `evidence` · `claim_candidate` · **`candidate_review`** · `extraction_run`。
+**表数量（rev4 修正）**：当前 **26** 张 → 预计 **+6 张 = 32**：`material_version` · `fragment` · **`fragment_evidence`** · `claim_candidate` · **`candidate_review`** · `extraction_run`。
 
 * ★ **`candidate_review` 独立成表、且必须独立**：**审阅历史与提取运行是两个不同的生命周期**（前者由人驱动、后者由提取驱动），不能互相承载；
 * ★ **它必须 append-only**：每次审阅**只追加一行**（`candidateId` · `action` · `operator` · `comment?` · `at` · `before`/`after`），**永不 UPDATE / DELETE 既有行**（与 `report_snapshot` 同一纪律，I-C6-5 的落点）；
@@ -531,4 +539,43 @@ P4 回填【主库】confirmedClaimRef = reservedClaimId；projectionStatus = fi
 | 真实运行证据 | 隔离库 `D:\reasonix-data\tiancha-c6-slice1-*`：W1 `created=true` + 双 hash + 两个 locator **recompute=true**；W2 evidence 的 quote **取自片段**；**重跑 ⇒ `created=false` / versions=1 / fragments=2 / evidence=1**；`TABLES: 29` |
 | 未做（按授权边界） | 候选 / 审阅 / 提取运行（片 ②）· AI 审阅入口（片 ③）· 投影（片 ④）· 报告接入（片 ⑤）· CLI / Agent 面 —— **全部未授权** |
 
-**End of contract（rev5: §C6.18 第 ① 片实现记录）.**
+---
+
+## §C6.19 第 ① 片修订记录（2026-09-27，**slice-1 review 闭环**）
+
+> 验收者对第 ① 片做静态复核，指出 3 处数据完整性问题 + 3 处校验缺口 + 2 处契约同步；**全部成立**，已修复并补验收。
+
+### §C6.19.1 数据完整性（3 项）
+
+| # | 缺陷 | 修复 |
+|---|---|---|
+| 1 | ★ **W1 并不原子**：`registerWithFragments()` 先单独写版本、再对片段批次开事务 ⇒ 两步之间崩溃会留下**没有片段的版本行** | `registerWithFragments()` 改为在 **`repo.transaction(...)` 内**执行"版本 + 初始片段"；共享的 `transaction()` helper 在**已在事务中时加入外层事务**（SQLite 不允许嵌套 BEGIN）⇒ **W1 真正原子** |
+| 2 | ★ **版本没有验证它属于对应的 C-MVP Material**：subject / rawText 全由调用方传入，拼错 `materialId` 或配对不一致的 subject 都能登记 | `registerVersion({ materialId, rawText })` **必须**取出既有 Material（不存在则**报错**），并**从 Material 读取 subject**（调用方无法伪造）；测试先 `seedMaterial` 再登记 |
+| 3 | ★ **版本宣称不可变，仓储却能覆盖**：`upsertMaterialVersion` 在主键冲突时更新 `raw_text` / hash / subject | 改为 **`insertMaterialVersion`（insert-only）**：同 id + 同内容 ⇒ **no-op**；同 id + 不同不可变字段 ⇒ **显式报错**（静默覆盖会让已定位的片段全部失效） |
+
+* ★ **契约关系同步（诚实化）**：§C6.3 早先写"Material 侧记录当前版本引用"，但 `Material` 类型/表**没有** `currentVersionId`，第 ① 片也**不写** Material 侧 ⇒ 修订为：**"当前版本"由查询派生**（`listMaterialVersions` 取最新），**本片不做 Material 侧回写**；这会作为**未来集成项**（不写成"已实现"）。
+
+### §C6.19.2 校验缺口（3 项）
+
+| # | 缺口 | 修复 |
+|---|---|---|
+| 4 | `char_range` 直接交给 `slice()`：负数 / 越界 / `start === end` 会产出**看似合法、实为空**的片段，且**复算同样通过** | 新增 **`assertValidLocator`**：整数 + `0 <= start < end <= normalizedText.length`（`paragraph` 同样要求整数非负）；拒绝时**不写任何行** |
+| 5 | `verifyVersionIntegrity` 缺失：只查规范化文本 hash + 切片 ⇒ **NFKC 可让原文的变化"隐身"**（全角/半角冒号互换后 rawHash 变了、定位检查仍绿） | **拆成两个检查**：`verifyVersionIntegrity`（`rawHash` + `normalizedHash` + 规范化版本）与 `verifyFragmentLocation`（定位 + `textHash`）；`MaterialVersionService.verifyVersion` 返回**两部分 + 合并 `ok`**。测试用"ASCII 冒号 ↔ 全角冒号"实证：定位检查仍绿，完整性检查**转红** |
+| 6 | 精确引用的口径未定 | 见 §C6.3 新增的 **"v1 分段与引用口径"**：`paragraph` 按 `\n{2,}` 切分并剥尾随换行；**报告展示必须标注 `nfkc-lf-v1`**；若要**原文字面**，⑤ 片须引入"规范化位置 → 原文位置"映射（**⑤ 片前置条件**） |
+
+### §C6.19.3 契约同步（2 项）
+
+| # | 项 | 处置 |
+|---|---|---|
+| 7 | 分段规则：实现用 `\n{2,}`，契约早先写 `\n\n` | **统一写入契约**（§C6.3 补记）与测试（T-C6-1 断言 `paragraph` 文本 + 复算） |
+| 8 | 分片清单仍称表为 `evidence` | 同步为实际表名 **`fragment_evidence`**（§C6.16.1 清单已更新） |
+
+### §C6.19.4 修订后的验证（实测）
+
+| 项 | 结果 |
+|---|---|
+| 测试 | `phase-c6-fragment.test.ts` **9 → 13 例**（新增 T-C6-1d 非法区间、T-C6-1e 完整性 vs 定位、T-C6-1f 原子性、T-C6-1g 归属、T-C6-1h 不可变） |
+| 全量 | root `tsc` **0** · research typecheck **0** · **424 tests / 424 pass / 0 fail**（117 suites）· `research smoke` **PASS** |
+| 真实证据（隔离库） | 缺 Material ⇒ **报错**；W1 `created=true` + `integrity` 三项全 true + 两个 locator `locationOk=true`；**坏 locator ⇒ 版本回滚**（versions 1 → 1）；**覆盖版本 ⇒ 报错**；W2 evidence quote 取自片段；`TABLES: 29` |
+
+**End of contract（rev6: §C6.19 第 ① 片修订记录）.**
