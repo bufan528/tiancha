@@ -2494,6 +2494,29 @@ overlaps 初始值 = 材料已持久化的 ingestOverlaps（续跑必须记住�
 | mutation | 去掉存在性校验 | T-R1-27 的 ① 必须转红 |
 | mutation | 去掉 subject 校验 | T-R1-27 的 ② 必须转红 |
 
-**End of §29（rev13: §29.20 复核修正 7）.**
+## §29.21 复核修正 8（2026-09-26，验收者指出后）
+
+> ⚠️ 追加记录。§29.0 – §29.20 原文**一字未改**。
+
+### §29.21.1 缺陷 14 — `attribute` 未校验 artifact 的 **kind**（**已修**）
+
+`ArtifactStore` 存的不只是 Claim：`domain/artifact.ts` 的 `ArtifactKind` 还包含 **fact / evidence / score / report / dossier**。
+§29.20 校验了"存在 + subject 一致"，但**没看 kind** ⇒ 一个**真实存在、同 subject、却是别的 kind** 的 artifact，只要引用写成 `artifact:claim/<id>`，就能被登记为材料的 Claim 归属。
+
+**修正**：写入前增加 `record.artifact.kind === "claim"` 校验，否则报错
+`artifact '<id>' is a '<kind>', not a 'claim' — refusing to attribute it`。
+
+至此 `attribute` 的写入前置校验共 **5 项**：ref 形态 · 目标存在 · 目标 `completed` · **artifact 存在且 kind = claim** · **subject 与目标一致**。
+
+### §29.21.2 验收
+
+| # | 场景 | 期望 |
+|---|---|---|
+| **T-R1-28** | 一个**真实存在、同 subject、kind = `fact`** 的 artifact，引用写成 `artifact:claim/fact-1` | exit 1 + `not a 'claim'`；目标 `claim_refs` **不变** |
+| **T-R1-27（回归）** | 不存在 / 跨 subject | 仍然各自 exit 1 |
+| **T-R1-26（回归）** | 正常"查看 → 登记 → `--force`" | 仍然全部通过 |
+| mutation | 去掉 kind 校验 | T-R1-28 必须转红 |
+
+**End of §29（rev14: §29.21 复核修正 8）.**
 
 
