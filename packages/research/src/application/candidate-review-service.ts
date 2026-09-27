@@ -139,13 +139,10 @@ export class CandidateReviewService {
       reviewedBy: input.operator,
       reviewedAt: at,
     };
-    this.apply(before, after, at);
-    this.appendReview({
-      candidateId,
+    this.applyAndAudit(before, after, at, {
       action: "confirm",
       operator: input.operator,
-      at,
-      comment: input.comment,
+      ...(input.comment === undefined ? {} : { comment: input.comment }),
       before: {
         reviewStatus: before.reviewStatus,
         decisionRelation: before.decisionRelation ?? null,
@@ -187,13 +184,10 @@ export class CandidateReviewService {
       reviewedBy: input.operator,
       reviewedAt: at,
     };
-    this.apply(before, after, at);
-    this.appendReview({
-      candidateId,
+    this.applyAndAudit(before, after, at, {
       action: "edit",
       operator: input.operator,
-      at,
-      comment: input.comment,
+      ...(input.comment === undefined ? {} : { comment: input.comment }),
       before: { statement: before.statement, contentKind: before.contentKind, confidence: before.confidence ?? null },
       after: { statement: after.statement, contentKind: after.contentKind, confidence: after.confidence ?? null },
     });
@@ -211,13 +205,10 @@ export class CandidateReviewService {
       reviewedBy: input.operator,
       reviewedAt: at,
     };
-    this.apply(before, after, at);
-    this.appendReview({
-      candidateId,
+    this.applyAndAudit(before, after, at, {
       action: "reject",
       operator: input.operator,
-      at,
-      comment: input.comment,
+      ...(input.comment === undefined ? {} : { comment: input.comment }),
       before: { reviewStatus: before.reviewStatus },
       after: { reviewStatus: after.reviewStatus },
     });
@@ -269,6 +260,39 @@ export class CandidateReviewService {
         `candidate ${before.candidateId} changed underneath this review (concurrent update refused)`,
       );
     }
+  }
+
+  /**
+   * ★ Close-out fix: the state update and its audit row are ONE unit of work. If the audit insert
+   * fails, the state change must not survive — otherwise a candidate could end up `confirmed` with
+   * no record of who decided it, which defeats the point of the human gate. The repository's
+   * `transaction()` is nesting-safe (`BEGIN` is skipped when one is already open), so this stays
+   * composable with callers that already hold a transaction.
+   */
+  private applyAndAudit(
+    before: ClaimCandidate,
+    after: ClaimCandidate,
+    at: string,
+    review: {
+      action: CandidateReviewAction;
+      operator: string;
+      comment?: string;
+      before?: Record<string, unknown>;
+      after?: Record<string, unknown>;
+    },
+  ): void {
+    this.repo.transaction(() => {
+      this.apply(before, after, at);
+      this.appendReview({
+        candidateId: before.candidateId,
+        action: review.action,
+        operator: review.operator,
+        at,
+        ...(review.comment === undefined ? {} : { comment: review.comment }),
+        ...(review.before === undefined ? {} : { before: review.before }),
+        ...(review.after === undefined ? {} : { after: review.after }),
+      });
+    });
   }
 
   private appendReview(input: {

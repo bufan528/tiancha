@@ -267,3 +267,72 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// The decision and its audit row are ONE unit of work (close-out follow-up)
+// ---------------------------------------------------------------------------
+
+describe("a human decision and its audit row are atomic", () => {
+  test("T-C6-19: if the audit insert fails, the decision is rolled back — for confirm, revise AND reject", () => {
+    for (const action of ["confirm", "revise", "reject"] as const) {
+      const e = env();
+      const id = e.candidateIds[0];
+      const statementBefore = e.repo.getClaimCandidate(id)?.statement;
+
+      // ★ make ONLY the audit write fail. The state write still succeeds, which is exactly the
+      // dangerous case: before this fix the candidate stayed `confirmed` with no trace of who
+      // decided it or why.
+      const repo = e.repo as unknown as { insertCandidateReview: (r: unknown) => void };
+      const original = repo.insertCandidateReview.bind(e.repo);
+      repo.insertCandidateReview = () => {
+        throw new Error("audit store exploded");
+      };
+
+      assert.throws(() => {
+        if (action === "confirm") e.review.confirm(id, { operator: "analyst", relation: "SUPPORT" });
+        else if (action === "revise") e.review.revise(id, { operator: "analyst", statement: "改过的陈述" });
+        else e.review.reject(id, { operator: "analyst" });
+      }, /audit store exploded/);
+
+      const after = e.repo.getClaimCandidate(id);
+      assert.equal(after?.reviewStatus, "draft", `${action}: the status must NOT survive a failed audit`);
+      assert.equal(after?.decisionRelation, undefined, `${action}: no relation may leak`);
+      assert.equal(after?.statement, statementBefore, `${action}: the content must NOT survive`);
+      assert.equal(after?.reviewedBy, undefined, `${action}: no reviewer may be recorded`);
+      assert.equal(e.repo.listCandidateReviews(id).length, 0, `${action}: no audit row`);
+      assert.equal(isProjectable(after!), false, `${action}: still not projectable (I-C6-8)`);
+
+      // the gate works normally once the audit store recovers — nothing was left half-done
+      repo.insertCandidateReview = original;
+      if (action === "confirm") e.review.confirm(id, { operator: "analyst", relation: "SUPPORT" });
+      else if (action === "revise") e.review.revise(id, { operator: "analyst", statement: "改过的陈述" });
+      else e.review.reject(id, { operator: "analyst" });
+      assert.equal(e.repo.listCandidateReviews(id).length, 1, `${action}: exactly one audit row after recovery`);
+      if (action === "revise") {
+        assert.equal(e.repo.getClaimCandidate(id)?.statement, "改过的陈述", "the edit landed");
+        assert.equal(e.repo.getClaimCandidate(id)?.reviewStatus, "draft", "an edit is not an acceptance");
+      } else {
+        assert.notEqual(e.repo.getClaimCandidate(id)?.reviewStatus, "draft", `${action}: the retry lands`);
+      }
+    }
+  });
+
+  test("T-C6-20: the failure is a ROLLBACK, not a partial write — the connection stays usable", () => {
+    const e = env();
+    const [a] = e.candidateIds;
+    const repo = e.repo as unknown as { insertCandidateReview: (r: unknown) => void };
+    const original = repo.insertCandidateReview.bind(e.repo);
+    repo.insertCandidateReview = () => {
+      throw new Error("audit store exploded");
+    };
+    assert.throws(() => e.review.confirm(a, { operator: "analyst", relation: "SUPPORT" }), /audit store exploded/);
+    repo.insertCandidateReview = original;
+
+    // ★ the connection is NOT left inside a transaction
+    assert.equal(e.db.db.isTransaction, false, "no transaction may be left open");
+    // and the retry lands BOTH writes
+    e.review.confirm(a, { operator: "analyst", relation: "SUPPORT" });
+    assert.equal(e.repo.getClaimCandidate(a)?.reviewStatus, "confirmed");
+    assert.equal(e.repo.listCandidateReviews(a).length, 1);
+  });
+});
