@@ -765,3 +765,86 @@ describe("C-MVP-R1 · the orphan Claim scan of a残骸 retry (§29.2 (c))", () =
     }
   });
 });
+
+// ===========================================================================
+// T-R1-16/17 — §29.14 (5a): a NOT-completed material's Claims stay VISIBLE (5a accepts partial
+// visibility) but are NEVER counted as confirmed evidence; they ARE counted once it completes.
+// ===========================================================================
+
+describe("C-MVP-R1 · 5a: unconfirmed material evidence is never counted as confirmed (§29.14)", () => {
+  test("T-R1-16/17: excluded while unfinished, included after completion", async () => {
+    const t = await setup("R1 行业 5a");
+    try {
+      // Let block #1 project, then fail on block #2 ⇒ a genuinely PARTIAL projection exists.
+      const partial = await submit(t.broken(2), t.sid);
+      assert.equal(partial.outcome, "failed");
+      const projected = partial.material.ingestBlocks
+        .filter((b) => b.state === "projected")
+        .map((b) => b.claimId);
+      assert.ok(projected.length > 0, "fixture: at least one Claim reached the projection");
+
+      // 5a: the partial evidence IS visible downstream (beliefs exist) …
+      const knowledge = new KnowledgeRepository(t.db.db);
+      const k = knowledge.findKnowledgeBySubject("industry", t.sid)!;
+      const beliefRefs = new Set(knowledge.listBeliefs(k.knowledgeId).map((b) => b.claimRef));
+      assert.ok(
+        projected.some((id) => beliefRefs.has(`artifact:claim/${id}`)),
+        "5a: partial visibility is accepted — the Claim really did reach Knowledge",
+      );
+
+      // … but no SUMMARY may present it as confirmed evidence.
+      const report = new ReportService(t.db.db).generateReport("industry", t.sid);
+      for (const id of projected) {
+        assert.ok(
+          !report.sections.recentEvidence.includes(`artifact:claim/${id}`),
+          `T-R1-16: ${id} must NOT be listed as recent (confirmed) evidence`,
+        );
+      }
+      const evaluation = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      for (const dim of evaluation.dimensionEvaluations) {
+        for (const id of projected) {
+          assert.ok(
+            !dim.evidenceRefs.includes(`artifact:claim/${id}`),
+            `T-R1-16: ${id} must NOT be among the confirmed evidence refs of ${dim.dimension}`,
+          );
+        }
+      }
+      // The split is strictly ADDITIVE: the two buckets never overlap, so nothing that WAS in
+      // `evidenceRefs` is lost. (If the projected view never referenced a Claim — e.g. it never
+      // reached a Pool item — both buckets simply omit it: the contract forbids COUNTING it as
+      // confirmed evidence, it does not require it to be surfaced everywhere.)
+      assert.ok(
+        evaluation.dimensionEvaluations.every((d) =>
+          (d.unconfirmedEvidenceRefs ?? []).every((ref) => !d.evidenceRefs.includes(ref)),
+        ),
+        "T-R1-16: confirmed and unconfirmed evidence never overlap",
+      );
+
+      // ---- T-R1-17: completing the material confirms every Claim again
+      const finished = await submit(t.healthy(), t.sid);
+      assert.equal(finished.outcome, "resumed");
+      assert.equal(finished.material.ingestStatus, "completed");
+      const after = new ReportService(t.db.db).generateReport("industry", t.sid);
+      const counted = finished.material.claimRefs.filter((id) =>
+        after.sections.recentEvidence.includes(`artifact:claim/${id}`),
+      );
+      assert.equal(
+        counted.length,
+        finished.material.claimRefs.length,
+        "T-R1-17: once COMPLETED, every Claim of the material counts as evidence again",
+      );
+      const afterEval = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      assert.equal(
+        afterEval.dimensionEvaluations.flatMap((d) => d.unconfirmedEvidenceRefs ?? []).length,
+        0,
+        "T-R1-17: nothing is left unconfirmed",
+      );
+    } finally {
+      await t.inner.close();
+      t.db.close();
+    }
+  });
+});
+
+import { ReportService } from "./application/report-service.js";
+import { EvaluationService } from "./application/evaluation-service.js";
