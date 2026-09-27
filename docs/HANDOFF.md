@@ -1,7 +1,7 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **Phase C · C5-D 与 C-MVP-R1 均已实现并发布（含四轮复核修正与 5a 落地）** · **代码 HEAD `9ea3e06`**（= `origin/main`，ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对（2026-09-26，第七轮）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **407 tests / 407 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修） · `research smoke` PASS · 表 **26 张**。
+> **Phase C · C5-D 与 C-MVP-R1 均已实现并发布（含五轮复核修正与 5a 落地）** · **代码 HEAD `536022b`**（= `origin/main`，ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对（2026-09-26，第八轮）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **408 tests / 408 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修） · `research smoke` PASS · 表 **26 张**。
 > 取代此前所有版本的 HANDOFF。README.md 已同步。**C6 / Phase C 完整版仍未授权**（本文件 §0.1 已同步实现与授权状态）。
 
 ---
@@ -14,9 +14,9 @@
 |---|---|
 | 当前阶段 | **Phase C · C1→C5-D 与 C-MVP-R1 全部 FINAL LOCK 且已实现发布**；**C6 / Phase C 完整版未授权** |
 | 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影）—— 已实现并发布（`dc64c33` + `aa4dc95`）** · **C-MVP-R1（材料导入可靠性：状态机 + 续跑 + 并发原子认领 + 块级账本 + 五态返回）—— 已实现并发布（`e0fe004` … `709447e`）** |
-| 验收状态 | C1–C5-D 与 **C-MVP-R1** 全部**已实现、已发布**；C5-D 闭环见 `c5-implementation-contract.md` §21.11；C-MVP-R1 闭环见 **`phaseC/implementation-contract.md` §29.12**，复核修正见 **§29.13**（fencing）、**§29.14**（5a 汇总排除）、**§29.15**（5a 崩溃窗口 + 残骸保守降级 + 扫描范围与歧义）、**§29.16**（取消按内容复用；歧义须保持 `legacy_failed`）、**§29.17**（**Agent 入口与 CLI 同一装配**；单个无法归属的重叠也触发保守降级）—— **无剩余未满足条款** |
-| HEAD / 远端 | **`9ea3e06`**（`test: cover the Agent tool surface and the single un-owned overlap`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
-| 验证基线 | root `tsc` 0 · research typecheck 0 · **407 tests / 407 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修）· `research smoke` PASS |
+| 验收状态 | C1–C5-D 与 **C-MVP-R1** 全部**已实现、已发布**；C5-D 闭环见 `c5-implementation-contract.md` §21.11；C-MVP-R1 闭环见 **`phaseC/implementation-contract.md` §29.12**，复核修正见 **§29.13**（fencing）、**§29.14**（5a 汇总排除）、**§29.15**（5a 崩溃窗口 + 残骸保守降级 + 扫描范围与歧义）、**§29.16**（取消按内容复用；歧义须保持 `legacy_failed`）、**§29.17**（Agent 入口与 CLI 同一装配；单个无法归属的重叠也触发保守降级）、**§29.18**（**overlap 标记只增不减**，仅 `--force` 重算；扫描排除本材料自己的 Claim）—— **无剩余未满足条款** |
+| HEAD / 远端 | **`536022b`**（`test: cover the sticky overlap marker across resume and --force`）＝ `origin/main`（**ahead/behind = 0/0**，worktree CLEAN） |
+| 验证基线 | root `tsc` 0 · research typecheck 0 · **408 tests / 408 pass / 0 fail**（`C1-29` / `C1-02` flaky 已修）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 26 张表**，但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
 | 下一步 | **C-MVP-R1 已完整实现并发布（`§29` rev7：状态机 + 续跑 + 并发认领 + fencing + 块级账本 + 五态 + 孤儿复用 + 5a 汇总排除），无剩余未满足条款**；下一步候选：**C6（Material → Claim → Knowledge Evolution）** 或 **Phase C 完整版（Fragment / Evidence 链）** —— **均未授权** |
 | 之后 | Phase D（外环：Experience → Pattern → 方法论候选）· Phase E（Wind + 自动发现）—— 未授权 |
@@ -521,7 +521,7 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 | **C5-B** | **Human-Gated Decision**：`research confirm\|reject <proposalRef> --operator <name>`；**`confirm` 是产出 `research_target` 的唯一路径**；Agent **不获得**该写权限 | ✅ |
 | **C5-C** | **Plan 只读消费 Proposal/Decision**：`research plan` 展示 `positions[].proposals`（含 decision 与 `targetRef` 校验）+ `orphanProposals`；`--json` 向后兼容；零写用**内容指纹**证明 | ✅ |
 | **C5-D** | **Diligence Preparation 边界冻结 + `ResearchPlan → Preparation` 只读摘要投影**（`{preparationRef, status, questionCount} \| null`）：契约 LOCK（`7672a49`）→ **已实现（`dc64c33`）+ 测试（`aa4dc95`）+ 独立复验收口（§21.11）**；`New tables = 0, Migration = 0` | ✅ |
-| **C-MVP-R1** | **Material 导入可靠性**（状态机 + 续跑 + 查重语义 + 五态返回 + 跨库恢复 + 并发原子认领 + **fencing token** + 块级账本 + **孤儿重叠检测（不推断归属；歧义交人工）** + **5a 未确认证据排除（含崩溃窗口 + 残骸保守降级）**）：契约 **§29 rev10** → 实现 `e0fe004` / 修正 `709447e` / `18341aa` / `5f016c3` / `7f8187d` / `dd452cc` / **`01873c0`** + 测试 `f6a0a2c` / `6a0bc63` / `a83946f` / `3c6a6f7` / `28bcf71` / **`9ea3e06`**；闭环见 §29.12–**§29.17** | ✅ |
+| **C-MVP-R1** | **Material 导入可靠性**（状态机 + 续跑 + 查重语义 + 五态返回 + 跨库恢复 + 并发原子认领 + **fencing token** + 块级账本 + **孤儿重叠检测（不推断归属；歧义交人工）** + **5a 未确认证据排除（含崩溃窗口 + 残骸保守降级）**）：契约 **§29 rev11** → 实现 `e0fe004` / 修正 `709447e` / `18341aa` / `5f016c3` / `7f8187d` / `dd452cc` / `01873c0` / **`af9eae1`** + 测试 `f6a0a2c` / `6a0bc63` / `a83946f` / `3c6a6f7` / `28bcf71` / `9ea3e06` / **`536022b`**；闭环见 §29.12–**§29.18** | ✅ |
 
 ### 9.3 后续 Phase（用户建议，按**业务闭环**排，非模块依赖）
 
@@ -701,7 +701,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | C1–C4（Knowledge 语义 / Planning / Priority 验证 / Report） | ✅ | ✅ | ✅ | ❌ | — |
 | C5-A / C5-B（推荐 / 人工决定） | ✅ | ✅ | ✅ | ❌ | **真实库尚无 `target_proposal*` 两张表** |
 | C5-C / C5-D（Plan 只读消费 / Preparation 摘要） | ✅ | ✅ | ✅ | ❌ | — |
-| **C-MVP-R1**（材料导入可靠性） | ✅ 契约 §29 rev10 | ✅ | ✅（T-R1-1…T-R1-24 + **Agent 工具面**：两个**操作系统进程**并发、**fencing**、**同文不合并**、**artifact-only 重叠**、**歧义失败且可识别**、**单条无法归属重叠的保守降级**、**5a 证据拆分**、**5a 崩溃窗口**） | ❌ | **真实库仍未用过材料导入**（`material` = 0 行） |
+| **C-MVP-R1**（材料导入可靠性） | ✅ 契约 §29 rev11 | ✅ | ✅（T-R1-1…T-R1-25 + **Agent 工具面**：两个**操作系统进程**并发、**fencing**、**同文不合并**、**artifact-only 重叠**、**歧义失败且可识别**、**单条无法归属重叠的保守降级**、**标记粘性（续跑/force）**、**5a 证据拆分**、**5a 崩溃窗口**） | ❌ | **真实库仍未用过材料导入**（`material` = 0 行） |
 | C6 / Phase C 完整版（Material → Fragment → Evidence → Claim） | ⛔ 未授权 | ❌ | ❌ | ❌ | `DocumentFragment` 仅类型；`evidence/evidence-engine.ts` 返回 `[]` |
 | Phase D（外环：Experience → Pattern → 方法论候选） | ⛔ 未授权 | ❌ | ❌ | ❌ | 红线 9：不预造空壳表 |
 | Phase E（Wind / 自动发现行业） | ⛔ 未授权 | ❌ | ❌ | ❌ | `echo-data-provider.ts` 仍是占位（`isRealExternalData=false`） |

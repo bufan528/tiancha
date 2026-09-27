@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
 [![Status](https://img.shields.io/badge/Phase%20C%20C5--D%20done-green.svg)](#开发路线)
-[![Tests](https://img.shields.io/badge/tests-407%20passing-brightgreen.svg)](#开发)
+[![Tests](https://img.shields.io/badge/tests-408%20passing-brightgreen.svg)](#开发)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -139,7 +139,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 - 当前数据源是 **Echo 占位 Provider**，所有 Evidence 标记 `isRealExternalData=false` / `sourceType=echo_placeholder`。**不能据此做真实投资判断、不给"值得/不值得"结论**；真实 Wind/Web/上传文档在 Phase E 接入。
 - 默认评分规则是**证据强度分**（确定性、可解释），**不是投资锚点评分**；真实锚点评分属 Methodology 的 Evaluation Policy。
 - **尚未实现**：Field Research 全链（Material→Fragment→Evidence→Claim）、真实数据源与自动发现行业、Research Experience（外环）、提纲中的 `requestedMaterials`/`risks`（无真实来源时不臆造）—— 见「开发路线」。
-- **C5-D / C-MVP-R1 状态说明**：两者**均已实现、已测试、已发布** —— C5-D（`dc64c33` + `aa4dc95`，闭环见 `docs/phaseC/c5-implementation-contract.md` §21.11）；**C-MVP-R1**（材料导入可靠性：状态机 + 续跑 + 跨进程原子认领 + **fencing token** + 块级账本 + 五态返回 + **残骸重试的孤儿 Claim 复用** + **未完成材料的 Claim 不计入已确认证据汇总**，`e0fe004` … `a83946f`，闭环、实现细化与四轮复核修正见 `docs/phaseC/implementation-contract.md` §29.12 / §29.13 / §29.14 / §29.15 / §29.16 / §29.17）。材料导入是**五态**（`created` / `duplicate` / `resumed` / `failed` / `in_progress`，**没有布尔**），未完成的材料在 CLI（`research material list`）与 Agent（`research_material_list`）侧都**显式标注进度与错误**。**尚未授权**的是 **C6 / Phase C 完整版（Material → Fragment → Evidence）** 与 Phase D / E。
+- **C5-D / C-MVP-R1 状态说明**：两者**均已实现、已测试、已发布** —— C5-D（`dc64c33` + `aa4dc95`，闭环见 `docs/phaseC/c5-implementation-contract.md` §21.11）；**C-MVP-R1**（材料导入可靠性：状态机 + 续跑 + 跨进程原子认领 + **fencing token** + 块级账本 + 五态返回 + **残骸重试的孤儿 Claim 复用** + **未完成材料的 Claim 不计入已确认证据汇总**，`e0fe004` … `a83946f`，闭环、实现细化与五轮复核修正见 `docs/phaseC/implementation-contract.md` §29.12 / §29.13 / §29.14 / §29.15 / §29.16 / §29.17 / §29.18）。材料导入是**五态**（`created` / `duplicate` / `resumed` / `failed` / `in_progress`，**没有布尔**），未完成的材料在 CLI（`research material list`）与 Agent（`research_material_list`）侧都**显式标注进度与错误**。**尚未授权**的是 **C6 / Phase C 完整版（Material → Fragment → Evidence）** 与 Phase D / E。
 
 ---
 
@@ -175,7 +175,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 npx tsc --noEmit                                  # 根类型检查
 npm --prefix packages/research run typecheck      # 研究包类型检查
 npm run build:cli                                 # esbuild 产出 dist/cli/tiancha.js
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 407 tests
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 408 tests
 node --import tsx src/cli/tiancha.ts research smoke
 ```
 
