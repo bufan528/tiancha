@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev10 — 第 ①–⑤ 片全部已授权实现并交付（§C6.18–§C6.23）：C6 实现完成。** 未授权项：模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+> 状态：**rev11 — 第 ①–⑤ 片全部交付，并完成收口复核修订（§C6.18–§C6.24）**。仍未实现/未授权：原文切片（位置映射）· 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -12,6 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
+| **rev11** | **C6 收口复核修订**（`8e617c6`）：① 报告/审核面**展示证据与定位**（含端到端验收）· ② P3/P4 恢复窗口下**分类回退 `reservedClaimId`** 且半成品候选仍可见 · ③ **`sourceRef` 类型修正**（不再传 evidence id）· ④ **SUPERSEDE 目标进入决定**（新增列 + 预留前校验 + 不可改）· ⑤ 重复文本**合并 Evidence** · ⑥ `evidenceRef` **存在性/版本校验** · 文档同步。全量 **453/453** + smoke PASS。详见 §C6.24 |
 | **rev10** | **第 ⑤ 片（报告接入）实现并交付 → C6 实现全部完成**（`0e5a92a`）：按 D-C6-D 用候选行**反查** `contentKind` 分流 `keyFacts`/`mainJudgments`（无候选的历史 `[CLAIM]` 保持原行为）· `pendingCandidates` 收**判别联合** （不新增 section key）· 渲染摘录标注 `nfkc-lf-v1` · 2 例验收 · 全量 **449/449** + smoke PASS。**仍留后续：原文切片（位置映射）未做**。详见 §C6.23 |
 | **rev9** | **第 ④ 片（投影到既有认知路径）实现并交付**（`13db5d1`）：`CandidateProjectionService` **只调用** 既有 `ingestClaims()`（不改其语义）· confirm 记录即投影 + `candidate project` 幂等续跑 · `reservedClaimId` 在 P1 持久化 ⇒ 崩溃后**找回同一 Claim** · 重跑不产生第二个 Claim/belief · `confirmedClaimRef` 用统一 claimRef 形状 · 6 例验收 · 全量 **447/447** + smoke PASS。**片 ⑤ 未授权**。详见 §C6.22 |
 | **rev8** | **第 ③ 片（人工审阅入口）实现并交付**（`57259e7`）：CLI `candidate list/show/confirm/revise/reject` · `--operator` 必填 · `confirm` 需 `--relation`（I-C6-8）· **`revise` 只编辑并保持 draft** · append-only 审计 · Agent 只读工具（20 → 21）· **确认≠投影**（实测下游全 0）· 8 例验收 · 全量 **441/441** + smoke PASS。**片 ④–⑤ 未授权**。详见 §C6.21 |
@@ -742,4 +743,31 @@ Markdown:
 
 **仍未授权**：模型提取器（`CandidateExtractor` 的模型实现 —— 见 §C6.16.1 与 `HANDOFF` §10）· U-1/U-2/U-3 可用性小步 · Wind · 自动发现 · Phase D。
 
-**End of contract（rev10: §C6.23 第 ⑤ 片实现记录 · C6 实现全部完成）.**
+---
+
+## §C6.24 C6 收口复核修订（2026-09-27，**验收者复核后的 6 项闭环**）
+
+> 验收者对 C6 五片做收口复核，指出 4 项实现问题 + 1 项身份风险 + 文档状态不同步。**全部成立**，已修复。
+
+| # | 问题 | 修复 |
+|---|---|---|
+| 1 | ★ **报告与审核界面不展示证据位置** —— 读者看不到支持候选的 Evidence / Fragment / 定位 / 摘录，无法从报告找到材料位置 | `ClaimCandidateLine` 增加 **`evidenceRefs` + `sourceLocators` + `excerpt` + `projectionStatus`**；`candidate show` 打印**证据 id + 定位（如 `@ paragraph:2`）+ 规范化摘录**；Markdown 逐条列出。**T-C6-10 端到端证明**报告的定位能解析回材料文本 |
+| 2 | ★ **P3 成功、P4 回填前崩溃 ⇒ 同一 Claim 可能同时被列为事实与判断**（`confirmedClaimRef` 在 P4 才写）；已确认但未 finalize 的候选还会**消失** | 分类映射**回退到 `reservedClaimId`**（`artifact:claim/<id>`）；`pendingCandidates` 收 `draft` **或** `projectionStatus !== "finalized"`，并显示进度。**T-C6-11** 断言"绝不同时出现在两区"且候选**仍可见** |
+| 3 | ★ **投影把 Evidence ID 当 `sourceRef`** —— `sourceRef` 的语义是 `research_source` 行 id | **不再传** `sourceRef`；来源就是投影创建的稳定 `src-c6-<candidateId>` 行；evidence 关系**保留在候选上** |
+| 4 | ★ **`SUPERSEDE` 目标未进入审核决定** —— 重跑须再提供、且可换；缺目标时在 `try/catch` 之前抛错（可能已预留却无 `projectionError`） | 目标**属于决定**：新增列 `superseded_claim_ref`（PRAGMA 预检查迁移）· 在**预留前**校验 · 写入候选与审计行 · **续跑只能用原目标**（换目标 ⇒ 报错）· 被拒的决定**不留预留、不留 error** |
+| 5 | **候选身份不含来源块** —— 同材料两处相同陈述 ⇒ 同一候选 ⇒ 第二处 Evidence 被跳过（丢来源） | 明确设计意图为**合并**：同一句在**一个候选**上**合并全部 Evidence**（`appendCandidateEvidence`，只增不改）；提取运行报告 `merged` 计数。**T-C6-12** 覆盖重复文本 |
+| 6 | **`evidenceRef` 只校验非空** —— 模型返回的引用字符串无法证伪 | `validateDrafts` 增加**存在性 + 属于本材料版本**校验（**T-C6-13**：引用不存在 ⇒ 整 run `failed`，零候选） |
+
+**文档同步（同一轮）**：`HANDOFF.md`（§0.1 / §9.3 / §13 / §14 能力矩阵）· `README.md` · `INDEX.md` —— 统一为
+**"C6 代码管线五片已交付；规范化引用与证据定位已展示；原文切片（位置映射）与模型提取器尚未实现/未授权"**。
+
+**验证**：root `tsc` **0** · research typecheck **0** · **453 tests / 453 pass / 0 fail**（123 suites）· `research smoke` **PASS**。
+**真实证据**：`candidate show` ⇒ `证据 1：ev-9d36… @ paragraph:2` + `摘录（规范化 nfkc-lf-v1）：Para C: …`；`confirm --relation SUPERSEDE`（无目标）⇒ **exit 1**（决策阶段拒绝）。
+
+### §C6.24.1 仍然未实现（保持诚实）
+
+* **原文切片**（§C6.3 的"规范化位置 → 原文位置"映射）：仍未做 —— 当前是**规范化摘录 + 版本标注**；
+* **模型提取器**（`CandidateExtractor` 的模型实现）：**未授权**（`HANDOFF` §10）；
+* U-1/U-2/U-3 可用性小步 · Wind · 自动发现 · Phase D：**未授权**。
+
+**End of contract（rev11: §C6.24 C6 收口复核修订）.**
