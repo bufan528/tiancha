@@ -59,7 +59,15 @@ import {
 import { readFileSync } from "node:fs";
 import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
 import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runMaterialAttribute, runMaterialList, runMaterialRetry, runResearchCommand, runTargetAdd, runTargetList, type ResearchCliDeps } from "./research-commands.js";
+import {
+  runCandidateConfirm,
+  runCandidateList,
+  runCandidateReject,
+  runCandidateRevise,
+  runCandidateShow,
+} from "./research-commands.js";
 import { KnowledgeRepository } from "@tiancha/research";
+import { CandidateReviewService } from "@tiancha/research";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -464,9 +472,11 @@ async function run(): Promise<void> {
   // ★ C-MVP-R1: `material` is its own sub-tree (add / list / retry) because it is the ONLY
   // writable research entry point; `retry` / `--force` stay CLI-only.
   const isMaterialCmd = args[0] === "research" && args[1] === "material";
+  // ★ C6 slice ③: `candidate` is its own sub-tree — the human gate for claim candidates.
+  const isCandidateCmd = args[0] === "research" && args[1] === "candidate";
   const isTargetCmd =
     args[0] === "research" && args[1] === "target" && (args[2] === "add" || args[2] === "list");
-  if (tianchaBrand && (isResearchSub || isMaterialCmd || isTargetCmd)) {
+  if (tianchaBrand && (isResearchSub || isMaterialCmd || isTargetCmd || isCandidateCmd)) {
     const { dbPath, artifactDbPath } = foundationPaths();
     const db = new ResearchDb({ path: dbPath });
     const artifacts = new SqliteArtifactStore({ path: artifactDbPath });
@@ -495,12 +505,45 @@ async function run(): Promise<void> {
         decisions: new ProposalDecisionService(db.db),
         // ★ C-MVP-R1 (§29.2): the one-shot historical-material triage summary of THIS run.
         materialMigration: db.materialMigrationSummary,
+        // ★ C6 slice ③: candidate review; confirmation is recorded, PROJECTION is slice ④.
+        candidates: new CandidateReviewService(repo),
         reportDir: join(homedir(), ".tiancha", "reports"),
         out: (line) => console.log(line),
         err: (line) => console.error(line),
       };
       const json = args.includes("--json");
-      if (isMaterialCmd) {
+      if (isCandidateCmd) {
+        const sub = args[2];
+        const id = args[3];
+        const operator = flagValue(args, "--operator");
+        const comment = flagValue(args, "--comment");
+        if (sub === "list") {
+          process.exitCode = await runCandidateList(
+            id,
+            { json, materialVersionId: flagValue(args, "--material-version"), status: flagValue(args, "--status") },
+            deps,
+          );
+        } else if (sub === "show") {
+          process.exitCode = await runCandidateShow(id, { json }, deps);
+        } else if (sub === "confirm") {
+          process.exitCode = await runCandidateConfirm(
+            id,
+            { json, operator, relation: flagValue(args, "--relation"), comment },
+            deps,
+          );
+        } else if (sub === "revise") {
+          process.exitCode = await runCandidateRevise(
+            id,
+            { json, operator, statement: flagValue(args, "--statement"), kind: flagValue(args, "--kind"), comment },
+            deps,
+          );
+        } else if (sub === "reject") {
+          process.exitCode = await runCandidateReject(id, { json, operator, comment }, deps);
+        } else {
+          deps.err("usage: tiancha research candidate list|show|confirm|revise|reject ...");
+          process.exitCode = 1;
+        }
+      } else if (isMaterialCmd) {
         const sub = args[2];
         if (sub === "add") {
           process.exitCode = await runMaterialAdd(args[3], args[4], { json }, deps);
@@ -616,3 +659,11 @@ run().catch((err) => {
   console.error(err);
   process.exitCode = 1;
 });
+
+/** Read `--flag value` (undefined when absent, or when the next token is another flag). */
+function flagValue(args: string[], flag: string): string | undefined {
+  const at = args.indexOf(flag);
+  if (at < 0) return undefined;
+  const value = args[at + 1];
+  return value === undefined || value.startsWith("--") ? undefined : value;
+}

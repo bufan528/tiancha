@@ -35,3 +35,4 @@ export * from "./application/target-recommendation-service.js";
 export * from "./application/proposal-decision-service.js";
 export * from "./application/material-version-service.js";
 export * from "./application/candidate-extraction-service.js";
+export * from "./application/candidate-review-service.js";

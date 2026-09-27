@@ -697,3 +697,66 @@ export function formatMaterialListHuman(v: MaterialListView): string {
   }
   return lines.join("\n");
 }
+
+// ---------------- C6 slice ③: candidate views (human gate) ----------------
+
+/** A read-only view of a claim candidate (§C6.4). No Claim is implied by any field here. */
+export interface CandidateView {
+  candidateId: string;
+  materialVersionId: string;
+  subjectId: string;
+  dimension: string;
+  contentKind: string;
+  statement: string;
+  reviewStatus: string;
+  decisionRelation?: string;
+  evidenceRefCount: number;
+  supersedesCandidateRef?: string;
+  reviewedBy?: string;
+}
+
+export function formatCandidateListHuman(views: CandidateView[], subjectLabel: string): string {
+  if (views.length === 0) return `\n${subjectLabel} 暂无候选。`;
+  const lines: string[] = ["", `候选（${subjectLabel}，共 ${views.length}）：`];
+  for (const v of views) {
+    const rel = v.decisionRelation === undefined ? "" : ` · relation=${v.decisionRelation}`;
+    lines.push(`  · [${v.reviewStatus}] ${v.dimension} · ${v.contentKind}${rel} · 证据 ${v.evidenceRefCount} 条`);
+    lines.push(`    ${v.candidateId}`);
+    lines.push(`    ${v.statement}`);
+  }
+  lines.push("");
+  lines.push("  说明：候选是**提案**，未确认前不进 Knowledge / Pool / Gap / 评价。");
+  return lines.join("\n");
+}
+
+export function formatCandidateHuman(v: CandidateView): string {
+  const lines = [
+    "",
+    `候选 ${v.candidateId}`,
+    `  材料版本：${v.materialVersionId}`,
+    `  维度：${v.dimension} · 性质：${v.contentKind}`,
+    `  内容：${v.statement}`,
+    `  证据：${v.evidenceRefCount} 条`,
+    `  审核状态：${v.reviewStatus}${v.decisionRelation === undefined ? "" : ` · relation=${v.decisionRelation}`}`,
+  ];
+  if (v.supersedesCandidateRef !== undefined) lines.push(`  取代（lineage）：${v.supersedesCandidateRef}`);
+  if (v.reviewedBy !== undefined) lines.push(`  审核人：${v.reviewedBy}`);
+  lines.push("");
+  return lines.join("\n");
+}
+
+/**
+ * The result of a review action. ★ It must SAY that nothing has been projected yet: slice ③ only
+ * records the human decision; the projection into Claim/Knowledge is slice ④ and is unauthorized.
+ */
+export function formatCandidateReviewHuman(v: CandidateView, action: string, notes: string[] = []): string {
+  const lines = [
+    "",
+    `已记录人工动作：${action} · 候选 ${v.candidateId}`,
+    `  审核状态：${v.reviewStatus}${v.decisionRelation === undefined ? "" : ` · relation=${v.decisionRelation}`}`,
+    `  ⚠ 尚未投影：本片只记录人工决定；候选→Claim/Knowledge 的投影在后续片启用。`,
+  ];
+  for (const n of notes) lines.push(`  ${n}`);
+  lines.push("");
+  return lines.join("\n");
+}

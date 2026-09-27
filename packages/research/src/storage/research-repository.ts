@@ -1056,6 +1056,45 @@ export class ResearchRepository {
     ).map(rowToCandidateReview);
   }
 
+  /**
+   * Review-time update of a candidate — the ONLY write path that may change an existing candidate.
+   * Guarded by `expectedStatus` (":"draft"") so a concurrent review can never double-apply, and it
+   * can never touch `candidate_id` / `block_hash` / `extraction_*` (identity stays frozen).
+   */
+  updateClaimCandidateForReview(
+    candidateId: string,
+    patch: {
+      statement: string;
+      contentKind: CandidateContentKind;
+      confidence?: number;
+      reviewStatus: CandidateReviewStatus;
+      decisionRelation?: CandidateRelation;
+      reviewedBy?: string;
+      reviewedAt?: string;
+    },
+    expectedStatus: CandidateReviewStatus,
+  ): boolean {
+    const res = this.db
+      .prepare(
+        `UPDATE claim_candidate
+            SET statement = ?, content_kind = ?, confidence = ?, review_status = ?,
+                decision_relation = ?, reviewed_by = ?, reviewed_at = ?
+          WHERE candidate_id = ? AND review_status = ?`,
+      )
+      .run(
+        patch.statement,
+        patch.contentKind,
+        patch.confidence ?? null,
+        patch.reviewStatus,
+        patch.decisionRelation ?? null,
+        patch.reviewedBy ?? null,
+        patch.reviewedAt ?? null,
+        candidateId,
+        expectedStatus,
+      );
+    return Number(res.changes) === 1;
+  }
+
   insertExtractionRun(r: ExtractionRun): void {
     this.db
       .prepare(

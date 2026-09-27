@@ -78,6 +78,14 @@ import {
   type TargetListView,
 } from "./research-format.js";
 import { renderDossierMarkdown, reportFileName } from "./report-markdown.js";
+// ★ C6 slice ③: the human gate for claim candidates (no projection lives here).
+import { CandidateReviewService, type ClaimCandidate } from "@tiancha/research";
+import {
+  formatCandidateHuman,
+  formatCandidateListHuman,
+  formatCandidateReviewHuman,
+  type CandidateView,
+} from "./research-format.js";
 
 export interface ResearchCliDeps {
   repo: ResearchRepository;
@@ -93,6 +101,8 @@ export interface ResearchCliDeps {
    * must never be silent.
    */
   materialMigration?: { completedWithRefs: number; completedWithoutClaims: number; legacyFailed: number };
+  /** ★ C6 slice ③: candidate review (the human gate; confirmation only — projection is slice ④). */
+  candidates?: CandidateReviewService;
   /** B2: the ONLY writer of ResearchTarget — human-confirmed subjects. */
   targets: TargetService;
   /** B5: projects the chain template into `research_position` (idempotent, system-side). */
@@ -1154,4 +1164,196 @@ function dimensionNames(deps: ResearchCliDeps): Record<string, string> {
   const names: Record<string, string> = {};
   for (const d of active.dimensions) names[d.key] = d.name;
   return names;
+}
+
+// ---------------- C6 slice ③: `research candidate ...` (human gate) ----------------
+
+/** The review service: injected by the host, or constructed on demand (keeps test wiring unchanged). */
+function reviewOf(deps: ResearchCliDeps): CandidateReviewService {
+  return deps.candidates === undefined ? new CandidateReviewService(deps.repo) : deps.candidates;
+}
+
+export interface CandidateListOptions {
+  json: boolean;
+  materialVersionId?: string;
+  status?: string;
+}
+
+export interface CandidateReviewOptions {
+  json: boolean;
+  operator?: string;
+  comment?: string;
+  relation?: string;
+  statement?: string;
+  kind?: string;
+  confidence?: number;
+}
+
+function toCandidateView(c: ClaimCandidate): CandidateView {
+  return {
+    candidateId: c.candidateId,
+    materialVersionId: c.materialVersionId,
+    subjectId: c.subjectId,
+    dimension: c.dimension,
+    contentKind: c.contentKind,
+    statement: c.statement,
+    reviewStatus: c.reviewStatus,
+    ...(c.decisionRelation === undefined ? {} : { decisionRelation: c.decisionRelation }),
+    evidenceRefCount: c.evidenceRefs.length,
+    ...(c.supersedesCandidateRef === undefined ? {} : { supersedesCandidateRef: c.supersedesCandidateRef }),
+    ...(c.reviewedBy === undefined ? {} : { reviewedBy: c.reviewedBy }),
+  };
+}
+
+function fail(deps: ResearchCliDeps, message: string): number {
+  deps.err(message);
+  return 1;
+}
+
+/** `research candidate list <行业名> | --material-version <id> [--status <状态>] [--json]` */
+export async function runCandidateList(
+  subjectRef: string | undefined,
+  opts: CandidateListOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  try {
+    let rows: ClaimCandidate[];
+    let label: string;
+    if (opts.materialVersionId !== undefined) {
+      rows = reviewOf(deps).list({ materialVersionId: opts.materialVersionId });
+      label = `材料版本 ${opts.materialVersionId}`;
+    } else {
+      if (subjectRef === undefined) {
+        return fail(
+          deps,
+          "usage: tiancha research candidate list <行业名> | --material-version <id> [--status draft] [--json]",
+        );
+      }
+      const industry = deps.repo.findIndustryByName(subjectRef);
+      if (industry === undefined) return fail(deps, `未找到行业：${subjectRef}`);
+      rows = reviewOf(deps).list({ subjectKind: "industry", subjectId: industry.industryId });
+      label = subjectRef;
+    }
+    if (opts.status !== undefined) rows = rows.filter((c) => c.reviewStatus === opts.status);
+    if (opts.json) {
+      deps.out(toJson(rows.map(toCandidateView)));
+      return 0;
+    }
+    deps.out(formatCandidateListHuman(rows.map(toCandidateView), label));
+    return 0;
+  } catch (err) {
+    return fail(deps, err instanceof Error ? err.message : String(err));
+  }
+}
+
+export async function runCandidateShow(
+  candidateId: string | undefined,
+  opts: { json: boolean },
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (candidateId === undefined) return fail(deps, "usage: tiancha research candidate show <candidateId> [--json]");
+  try {
+    const { candidate, reviews } = reviewOf(deps).show(candidateId);
+    if (opts.json) {
+      deps.out(toJson({ candidate: toCandidateView(candidate), reviews }));
+      return 0;
+    }
+    deps.out(formatCandidateHuman(toCandidateView(candidate)));
+    if (reviews.length > 0) {
+      deps.out(`  审阅记录（append-only，共 ${reviews.length} 条）：`);
+      for (const r of reviews) {
+        deps.out(`    · ${r.at} ${r.action} by ${r.operator}${r.comment === undefined ? "" : ` — ${r.comment}`}`);
+      }
+      deps.out("");
+    }
+    return 0;
+  } catch (err) {
+    return fail(deps, err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** `confirm` REQUIRES `--relation` (I-C6-8) — a confirmation without one is refused. */
+export async function runCandidateConfirm(
+  candidateId: string | undefined,
+  opts: CandidateReviewOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (candidateId === undefined) {
+    return fail(deps, "usage: tiancha research candidate confirm <candidateId> --operator <名> --relation <SUPPORT|REVISE|CONFLICT|SUPERSEDE>");
+  }
+  if (opts.operator === undefined) return fail(deps, "--operator is required (every human decision must be attributable)");
+  if (opts.relation === undefined) return fail(deps, "--relation is required (I-C6-8: no relation ⇒ no confirmation)");
+  try {
+    const updated = reviewOf(deps).confirm(candidateId, {
+      operator: opts.operator,
+      relation: opts.relation as never,
+      ...(opts.comment === undefined ? {} : { comment: opts.comment }),
+    });
+    if (opts.json) {
+      deps.out(toJson(toCandidateView(updated)));
+      return 0;
+    }
+    deps.out(formatCandidateReviewHuman(toCandidateView(updated), "confirm"));
+    return 0;
+  } catch (err) {
+    return fail(deps, err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** `revise` EDITS content and KEEPS the candidate a draft — it never projects (I-C6-8). */
+export async function runCandidateRevise(
+  candidateId: string | undefined,
+  opts: CandidateReviewOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (candidateId === undefined) {
+    return fail(deps, "usage: tiancha research candidate revise <candidateId> --operator <名> [--statement <文本>] [--kind fact|judgment] [--comment <备注>]");
+  }
+  if (opts.operator === undefined) return fail(deps, "--operator is required (every human decision must be attributable)");
+  try {
+    const updated = reviewOf(deps).revise(candidateId, {
+      operator: opts.operator,
+      ...(opts.statement === undefined ? {} : { statement: opts.statement }),
+      ...(opts.kind === undefined ? {} : { contentKind: opts.kind as never }),
+      ...(opts.confidence === undefined ? {} : { confidence: opts.confidence }),
+      ...(opts.comment === undefined ? {} : { comment: opts.comment }),
+    });
+    if (opts.json) {
+      deps.out(toJson(toCandidateView(updated)));
+      return 0;
+    }
+    deps.out(
+      formatCandidateReviewHuman(toCandidateView(updated), "revise（仅编辑，仍为 draft）", [
+        "下一步：用 confirm --relation … 明确接受，才可能进入投影。",
+      ]),
+    );
+    return 0;
+  } catch (err) {
+    return fail(deps, err instanceof Error ? err.message : String(err));
+  }
+}
+
+export async function runCandidateReject(
+  candidateId: string | undefined,
+  opts: CandidateReviewOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (candidateId === undefined) {
+    return fail(deps, "usage: tiancha research candidate reject <candidateId> --operator <名> [--comment <理由>]");
+  }
+  if (opts.operator === undefined) return fail(deps, "--operator is required (every human decision must be attributable)");
+  try {
+    const updated = reviewOf(deps).reject(candidateId, {
+      operator: opts.operator,
+      ...(opts.comment === undefined ? {} : { comment: opts.comment }),
+    });
+    if (opts.json) {
+      deps.out(toJson(toCandidateView(updated)));
+      return 0;
+    }
+    deps.out(formatCandidateReviewHuman(toCandidateView(updated), "reject"));
+    return 0;
+  } catch (err) {
+    return fail(deps, err instanceof Error ? err.message : String(err));
+  }
 }

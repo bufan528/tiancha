@@ -31,6 +31,7 @@ import { currentPreparationView, currentQuestions, retiredQuestions } from "@tia
 // ★ C2 Step 2-C: `ResearchPlanService` is the ONE plan build path (value import — the tool
 // constructs the same implementation when it is not injected).
 import { ActiveRequirementResolver, positionCoverages, ResearchPlanService } from "@tiancha/research";
+import { CandidateReviewService } from "@tiancha/research";
 
 export interface ResearchToolDeps {
   repo: ResearchRepository;
@@ -98,6 +99,9 @@ export function buildResearchTools(deps: ResearchToolDeps) {
     fits,
     diligence,
   } = deps;
+
+  // ★ C6 slice ③: candidates are PROPOSALS; the Agent may only LOOK at them.
+  const candidateReview = new CandidateReviewService(repo);
 
   const research_industry_show = defineTool({
     name: "research_industry_show",
@@ -426,6 +430,51 @@ const MATERIAL_OUTCOME_NOTE: Record<
   // ---- ★ C-MVP-R1 (§29.6.1): the READ-ONLY material status surface -------------
   // D-R1-5 (5a) requires the Agent to be able to SHOW a material's real state, including
   // "unfinished: K/N blocks projected". It writes nothing; `retry` stays CLI-only.
+  // ---- ★ C6 slice ③: the READ-ONLY candidate surface ---------------------------
+  // A candidate is a PROPOSAL (§C6.4). The Agent may LOOK at candidates; confirming, revising and
+  // rejecting are HUMAN CLI actions (tiancha research candidate ...). Projection into Claim /
+  // Knowledge is slice ④ and does not exist yet. This tool writes nothing.
+  const research_candidate_list = defineTool({
+    name: "research_candidate_list",
+    label: "查看候选（claim candidate）及其审核状态",
+    description:
+      "列出某个行业的 claim 候选（从材料中提取、等待人工确认的提案），包括审核状态（draft / confirmed / revised / rejected）、维度、性质（fact / judgment）与证据条数。候选未确认前不影响 Knowledge / Pool / Gap / 评价。当用户问“有哪些候选待确认 / 候选状态如何”时使用。只读；确认、修订、拒绝必须由研究者在 CLI 执行 tiancha research candidate …。",
+    promptSnippet: "查看待确认的候选",
+    parameters: Type.Object({
+      name: Type.String({ description: "行业标准名（canonical name），如：人形机器人" }),
+      status: Type.Optional(
+        Type.String({ description: "只看某个审核状态：draft | confirmed | revised | rejected" }),
+      ),
+    }),
+    async execute(_id, params: { name: string; status?: string }) {
+      const ind = repo.findIndustryByName(params.name);
+      if (!ind) return json(`未找到行业「${params.name}」。请先用 research_industry_ingest 建立该行业。`);
+      const all = candidateReview.list({ subjectKind: "industry", subjectId: ind.industryId });
+      const rows = params.status === undefined ? all : all.filter((c) => c.reviewStatus === params.status);
+      return json(
+        JSON.stringify(
+          {
+            industry: ind.canonicalName,
+            total: all.length,
+            shown: rows.length,
+            candidates: rows.map((c) => ({
+              candidateId: c.candidateId,
+              dimension: c.dimension,
+              contentKind: c.contentKind,
+              statement: c.statement,
+              reviewStatus: c.reviewStatus,
+              decisionRelation: c.decisionRelation,
+              evidenceRefs: c.evidenceRefs.length,
+            })),
+            note: "候选是提案；确认 / 修订 / 拒绝请人工执行 tiancha research candidate confirm|revise|reject。投影到 Knowledge 的步骤尚未启用。",
+          },
+          null,
+          2,
+        ),
+      );
+    },
+  });
+
   const research_material_list = defineTool({
     name: "research_material_list",
     label: "查看行业已入库材料及其导入状态",
@@ -671,6 +720,7 @@ const MATERIAL_OUTCOME_NOTE: Record<
     research_report,
     research_material_add,
     research_material_list,
+    research_candidate_list,
     research_chain_show,
     research_need_list,
     research_target_list,
