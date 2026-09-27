@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev9 — 第 ①–④ 片已授权实现并交付（§C6.18–§C6.22）；片 ⑤ 仍未授权。**
+> 状态：**rev10 — 第 ①–⑤ 片全部已授权实现并交付（§C6.18–§C6.23）：C6 实现完成。** 未授权项：模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -12,6 +12,7 @@
 | 版本 | 变更 |
 |---|---|
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
+| **rev10** | **第 ⑤ 片（报告接入）实现并交付 → C6 实现全部完成**（`0e5a92a`）：按 D-C6-D 用候选行**反查** `contentKind` 分流 `keyFacts`/`mainJudgments`（无候选的历史 `[CLAIM]` 保持原行为）· `pendingCandidates` 收**判别联合** （不新增 section key）· 渲染摘录标注 `nfkc-lf-v1` · 2 例验收 · 全量 **449/449** + smoke PASS。**仍留后续：原文切片（位置映射）未做**。详见 §C6.23 |
 | **rev9** | **第 ④ 片（投影到既有认知路径）实现并交付**（`13db5d1`）：`CandidateProjectionService` **只调用** 既有 `ingestClaims()`（不改其语义）· confirm 记录即投影 + `candidate project` 幂等续跑 · `reservedClaimId` 在 P1 持久化 ⇒ 崩溃后**找回同一 Claim** · 重跑不产生第二个 Claim/belief · `confirmedClaimRef` 用统一 claimRef 形状 · 6 例验收 · 全量 **447/447** + smoke PASS。**片 ⑤ 未授权**。详见 §C6.22 |
 | **rev8** | **第 ③ 片（人工审阅入口）实现并交付**（`57259e7`）：CLI `candidate list/show/confirm/revise/reject` · `--operator` 必填 · `confirm` 需 `--relation`（I-C6-8）· **`revise` 只编辑并保持 draft** · append-only 审计 · Agent 只读工具（20 → 21）· **确认≠投影**（实测下游全 0）· 8 例验收 · 全量 **441/441** + smoke PASS。**片 ④–⑤ 未授权**。详见 §C6.21 |
 | **rev7** | **第 ② 片（候选生成与身份，W3）实现并交付**（`fb93e4c`）：新增 `claim_candidate` / `candidate_review` / `extraction_run`（29 → **32**）· `extractionConfigKey` 纳入身份 · insert-only 保护人工编辑 · `isProjectable` 落实 I-C6-8 · **LLM-free 参考提取器 + 可注入接口**（模型提取器仍未授权）· 9 例验收 · 全量 **433/433** + smoke PASS。**片 ③–⑤ 未授权**。详见 §C6.20 |
@@ -694,4 +695,51 @@ candidate project <draft-candidate> --operator analyst → exit 1（I-C6-8 拒�
         reserved_claim_id=claim-379055ff-… · confirmed_claim_ref=artifact:claim/claim-379055ff-…
 ```
 
-**End of contract（rev9: §C6.22 第 ④ 片实现记录）.**
+---
+
+## §C6.23 第 ⑤ 片实现记录（2026-09-27，**已授权并交付 → C6 实现全部完成**）
+
+| 项 | 内容 |
+|---|---|
+| Commit | **`0e5a92a`**（代码 + 测试；文档单独提交） |
+| 范围 | 报告接入：`contentKind` 分流 · 候选进入 `pendingCandidates` · 引用口径标注 |
+| D-C6-D（反查） | 报告**只读主库**的候选行（`confirmedClaimRef → contentKind`）⇒ **不需要** artifacts 里的 Claim blob（`ReportService` 从不读 blob ✓） |
+| 分流规则 | 已知为 `judgment` 的 claim **不再**列在 `keyFacts`；已知为 `fact` 的 claim **不再**列在 `mainJudgments`；**无候选的历史 `[CLAIM]` claim 保持原行为**（不强归类、不静默丢弃） |
+| D-C6-E（判别联合） | `pendingCandidates: Array<KnowledgeLine \| ClaimCandidateLine>`；`KnowledgeLine` 的**身份字段仍必填**；新增 `ClaimCandidateLine`（`candidateRef` / `contentKind` / `statement` / `reviewStatus` / `evidenceRefCount` / `materialVersionId` / `normalizationVersion`）；**不新增 section key** ⇒ 不撞 T-C4-6 |
+| §C6.3（引用口径） | 渲染的摘录标注 `nfkc-lf-v1`；materialised Markdown **渲染待确认候选**（含证据条数与规范化版本） |
+| 回归适配 | C4-A 的 **T-C4-5** 顺序断言适配联合类型（**同一排序判据** `candidateRef \|\| beliefId`，未削弱任何保证） |
+| 验收 | `packages/research/src/phase-c6-report.test.ts` **2 例**：T-C6-4（混合状态：fact / judgment / draft 各归其位，**不断言区块数量不同**）· T-C6-7（充分度覆盖 + critical 门控仍为 `pending`） |
+| 收口 | root `tsc` **0** · research typecheck **0** · **449 tests / 449 pass / 0 fail**（121 suites）· `research smoke` **PASS** |
+| ★ 仍未实现 | **原文切片**（§C6.3 要求的"规范化位置 → 原文位置"映射）：当前只做**规范化摘录 + 版本标注**；**原文字面还原能力未做**，明确留作后续（不做成"已完成"） |
+
+### §C6.23.1 真实证据（隔离库 + 真实 CLI）
+
+```text
+keyFacts: ["market"]           ← fact 的 claim
+mainJudgments: ["demand"]      ← judgment 的 claim
+pendingCandidates rows: 1
+pending C6 row: {"dim":"supply","kind":"fact","status":"draft","norm":"nfkc-lf-v1"}
+
+CLI: research report 测试行业
+  内容：当前认知 2 · 关键事实 1 · 主要判断 1 · 主要冲突 0 · 缺口 10 · 下一步 10
+  ← 三区不再是同一个数字：fact 与 judgment 已按 contentKind 分流
+
+Markdown:
+  待确认候选（提案：未确认前不进入已确认认知、Pool 充分度、Gap 或投资评价）：
+  - **supply** · fact · draft → supply capacity about 30k units（证据 1 条；规范化 nfkc-lf-v1）
+  > 引用来自材料的**规范化文本**（`nfkc-lf-v1`）…
+```
+
+### §C6.23.2 C6 交付总览（5/5 片）
+
+| 片 | 内容 | Commit |
+|---|---|---|
+| ① | 材料版本 + Fragment + Evidence（W1–W2） | `cce59b3`（含 slice-1 review 闭环） |
+| ② | 候选层（W3）：确定性身份 / 提取运行 / lineage | `fb93e4c` |
+| ③ | 人工审阅闸门（CLI + Agent 只读） | `57259e7` |
+| ④ | 投影走**既有** `ingestClaims()`（W4） | `13db5d1` |
+| ⑤ | 报告接入（`contentKind` / 候选 / 引用口径） | `0e5a92a` |
+
+**仍未授权**：模型提取器（`CandidateExtractor` 的模型实现 —— 见 §C6.16.1 与 `HANDOFF` §10）· U-1/U-2/U-3 可用性小步 · Wind · 自动发现 · Phase D。
+
+**End of contract（rev10: §C6.23 第 ⑤ 片实现记录 · C6 实现全部完成）.**
