@@ -1,6 +1,6 @@
 # Phase C6 · 资料闭环 Implementation Contract
 
-> 状态：**rev12 — 第 ①–⑤ 片全部交付，收口复核修订（§C6.18–§C6.24）与独立复核后的三项修复（§C6.25）均已闭环**。仍未实现/未授权：原文切片（位置映射）· 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+> 状态：**rev13 — 第 ①–⑤ 片全部交付；收口复核（§C6.18–§C6.24）与独立复核三项修复（§C6.25）已闭环；§C6.26 = `REVISE` 目标契约（D-C6-G 已裁决，**实现未授权**，DESIGN ONLY）**。仍未实现/未授权：`REVISE` 目标管线的实现 · 原文切片（位置映射）· 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
 > **C6 设计起始基线** `a237129`（C-MVP-R1 已发布，总契约 §29 rev16）。**这不是"当前远端 HEAD"** —— 契约随 `docs:` 同步推进，**当前 HEAD 一律以 `git log --oneline` 为准**（见总契约 §29.22 基线维护规则）。
 > 依据：用户 2026-09-27 裁决 —— 单行业试点收口（§C6.1）+ 五项核心（D6-1…D6-5）+ **验收者契约审查的 5 处补清与三项裁定建议**（§C6.0 rev2、§C6.15）。
 > 文件定位：**C6 专项契约**（同 `c2-*` / `c5-*`）；总契约 `implementation-contract.md` **§30 只做索引**。
@@ -11,6 +11,7 @@
 
 | 版本 | 变更 |
 |---|---|
+| **rev13** | **§C6.26 `REVISE` 目标契约（D-C6-G，用户裁决；实现未授权，DESIGN ONLY）**：`confirm --relation REVISE` **必须**带 `--revises-claim <claimRef>`，**不得自动选择"最新一条"**；目标校验与 SUPERSEDE **同源**（复用 `checkEvolutionTarget`）；目标随决定持久化（新列 `claim_candidate.revised_claim_ref`）且**重试不得更换**；验收 T-C6-21…T-C6-26。**本轮纯契约，零代码改动** |
 | **rev12** | **独立复核后的三项修复**（`4b74862` / `67f72a8` / `455b31d`）：① **演化目标（SUPERSEDE / REVISE）决定期 + 投影前双重校验**，知识侧 `SKIPPED` 时**不再**收口为 `finalized`（投影后验证真实 belief）· ② T-C6-10 改为**把定位解析回材料原文** + 新增 **T-C6-13b**（跨材料版本证据）· ③ **决定与审计行同一事务**（`applyAndAudit`）。新增 T-C6-14…T-C6-20。全量 **461/461**（124 suites）+ smoke PASS。详见 §C6.25 |
 | rev1 | 首版：试点依据 · 目标链路 · D6-1…D6-6 · I-C6-1…I-C6-7 · T-C6-1…T-C6-9 · OUT · 待裁决 D-C6-A/B/C |
 | **rev11** | **C6 收口复核修订**（`8e617c6`）：① 报告/审核面**展示证据与定位**（含端到端验收）· ② P3/P4 恢复窗口下**分类回退 `reservedClaimId`** 且半成品候选仍可见 · ③ **`sourceRef` 类型修正**（不再传 evidence id）· ④ **SUPERSEDE 目标进入决定**（新增列 + 预留前校验 + 不可改）· ⑤ 重复文本**合并 Evidence** · ⑥ `evidenceRef` **存在性/版本校验** · 文档同步。全量 **453/453** + smoke PASS。详见 §C6.24 |
@@ -832,4 +833,74 @@ Markdown:
 * **裸 `REVISE` 关系当前不可用**（见 §C6.25.1 末）—— 需 `--revises-claim` 之类的契约裁决；
 * U-1/U-2/U-3 · Wind · 自动发现 · Phase D：**未授权**。
 
-**End of contract（rev12: §C6.25 独立复核后的三项修复）.**
+## §C6.26 D-C6-G：`REVISE` 必须显式指定目标（2026-09-28 用户裁决；**实现未授权，DESIGN ONLY**）
+
+> **⚠ 本节是契约，不是实现记录。** `REVISE` 目标管线的**实现尚未授权**（须单独授权后按片落地）。当前 `candidate confirm --relation REVISE` 仍会（**诚实地**）在投影期失败，见 §C6.25.1 末与 §C6.25.6。
+
+**用户裁决原文**：「**`REVISE` 必须显式指定 `--revises-claim <claimRef>`，不能自动选择"最新一条"**。这和现有的 `SUPERSEDE` 规则、知识投影对演化目标的校验方式一致，也能让审计记录明确回答"哪条认知被修订"。」
+
+### §C6.26.1 问题（为什么必须显式）
+
+| 现状（已核实） | 后果 |
+|---|---|
+| `CandidateProjectionService.relationHintFor()` 对 `REVISE` 返回 `{ kind: "REVISE" }` —— **不带目标** | `KnowledgeProjectionService.projectFromClaim` 步骤 ②（`:198-205`）对 `REVISE` 取 `hint.revisesClaimRef` ⇒ `undefined` ⇒ `target = undefined` ⇒ `skip(INVALID_EVOLUTION_TARGET)` |
+| 该 skip 是**返回值**而非异常；由 §C6.25 修复后，投影会**如实报 `failed`** | 候选停在 `claim_written` + `projectionError`，**不再假成功** —— 但"一个被人确认的 `REVISE`"**永远无法演化任何认知** |
+
+`KnowledgeProjectionService` 的 REVISE 语义**早已完备**（`:198-205` 目标校验 + `:280` `outcome === "SUPERSEDE" ? "superseded" : "revised"` + `:283` 写 `historicalRelations`），且 `RelationHint` 的类型**早已留好** `{ kind: "REVISE"; revisesClaimRef?: string }`。**缺的只是 C6 这一侧把目标传下去。**
+
+### §C6.26.2 裁定（D-C6-G）
+
+| # | 规则 |
+|---|---|
+| **G-1** | **目标必填**：`confirm --relation REVISE` **必须**带 `--revises-claim <claimRef>`；缺失 ⇒ **抛错**，候选保持 `draft`。**禁止**任何形式的"自动选择"（不取最新一条、不取同维度唯一一条、不取 anchor） |
+| **G-2** | **目标校验与 `SUPERSEDE` 完全同源**：复用 **`checkEvolutionTarget()`** 这一唯一判定（§C6.25.1）—— 目标必须属于**同一 subject · 同一 dimension**，且处于**可演化状态**（`confirmed` 或 `conflicting`，见 `isEvolvableBeliefState` / C-FIX-13）。三重校验沿用既有模式：**决定期**（`apply()` 之前）+ **投影前**（P1 预留之前）+ **投影后验证真实 belief** |
+| **G-3** | **目标属于"决定"**：随决定**持久化**（新列 `claim_candidate.revised_claim_ref`），并写入 `candidate_review` 审计行的 `before` / `after` ⇒ 审计能明确回答"哪条认知被修订" |
+| **G-4** | **重试不得更换目标**：投影（或决定）续跑时若给出**不同**目标 ⇒ **抛错**（与 `SUPERSEDE` 的"a retry may not change the decision"同构） |
+| **G-5** | **被拒的决定零副作用**：保持 `draft`、**无** `reservedClaimId`、**无** `projectionError`、**无**决定持久化（与 `SUPERSEDE` 的 §C6.24 第 4 项一致） |
+| **G-6** | **投影映射**：`relationHint = { kind: "REVISE", revisesClaimRef }` —— 该字段**已存在且语义已冻结**，**不新增**任何投影语义 |
+| **G-7** | **不复用 `superseded_claim_ref`**：REVISE 与 SUPERSEDE 的语义（修订 vs 替代）、KPS 的 `outcome`、目标终态（`revised` vs `superseded`）都不同；合列会让审计丢失"是哪种演化"，**故独立成列** |
+
+**与既有 C6 行为的一致性**：`confirm` 的 `--relation` 必填（I-C6-8）· `--operator` 必填 · `revise`（**编辑**，`action: "edit"`）只改内容并**保持 draft** —— 本契约**不改变**这些既有语义。`--revises-claim` 只对 `--relation REVISE` 有意义，恰如 `--supersedes-claim` 只对 `SUPERSEDE` 有意义。
+
+### §C6.26.3 明确不做的事（防止越界）
+
+* **不**自动选择目标（**不"猜最新一条"**）；
+* **不**改 `KnowledgeProjectionService`（其 `REVISE` 语义与 `revisesClaimRef` 字段**已冻结**，C1 已裁决）；
+* **不**改 `OpportunityDiscoveryService.ingestClaims()` 的**签名**（§C6.10）；
+* **不**新增 CLI 子命令（仅 `confirm` / `project` 各多一个**可选**标志 `--revises-claim`）；
+* **不**把 `--relation REVISE` 的必填要求从 CLI 里去掉（目标缺失必须在**决定期**拒绝，而不是留给投影）；
+* **不**引入 LLM；
+* **不**触碰 `SUPERSEDE` 的既有实现与测试。
+
+### §C6.26.4 迁移（实现轮执行）
+
+* **加列**：`claim_candidate.revised_claim_ref TEXT` —— 用既有 `addColumnIfMissing()`（`research-db.ts:746`）+ PRAGMA 预检查，与 `superseded_claim_ref`（`:439` 建表列 + `ensureCandidateSupersedesColumn()` `:741`）**同法**；
+* **表数不变**（**32**）· **无新表** · 无数据回填（存量 `REVISE` 候选本就无法投影）。
+
+### §C6.26.5 验收（T-C6-21…T-C6-26，实现轮落地）
+
+| 用例 | 必须断言的行为 |
+|---|---|
+| **T-C6-21** 无目标 | `confirm(REVISE)` 不带 `--revises-claim` ⇒ **抛错**；候选仍 `draft`、无 `decisionRelation`、无 `revisedClaimRef`、无 `reservedClaimId`、无 `projectionError` |
+| **T-C6-22** 目标不存在 | 抛错（`TARGET_NOT_FOUND`）；同上零副作用 |
+| **T-C6-23** 目标跨维度 | 抛错（`TARGET_DIMENSION_MISMATCH`）；零副作用 |
+| **T-C6-24** 目标状态不合法 | 抛错（`TARGET_STATE_NOT_EVOLVABLE`，例如目标已被替代）；零副作用 |
+| **T-C6-25** **有效目标（正例）** | 投影 `projected`；**目标 belief 变为 `revised`**（`KPS:280`，非 `superseded`）；**新 belief 以本候选 claimRef 建立且 `state = confirmed`**；候选 `finalized` + `confirmedClaimRef`；**`revisedClaimRef` 与审计行都在**；审计的 `after.decisionRelation = "REVISE"` |
+| **T-C6-26** **投影失败后用原目标续跑** | 决定后目标失效 ⇒ `project()` 返回 `failed` + `projectionStatus = claim_written` + `projectionError` 非空、**非** `finalized`；给出**不同**目标续跑 ⇒ **抛错**；目标恢复合法后用**原目标**续跑 ⇒ 成功且**不产生第二个 Claim/belief**（幂等） |
+
+**测试纪律（沿用 C6 既有标准）**：断言**行为与身份**（行数、状态、beliefId、claimRef、审计行），**不断言文案**；正例必须证明**目标真的离开 current 且新 belief 真的建立**（不得只断言"没抛异常"）；并做一次 **mutation 反证**（例如把 `revisesClaimRef` 改成 `undefined` ⇒ 相关用例必须失败）。
+
+### §C6.26.6 实现轮开工前必须先确认（**不得臆测**）
+
+1. 读 `KnowledgeProjectionService` 的 `REVISE` 分支确认目标终态为 **`revised`**（本次已核实 `:280`），并确认新 belief 为 **`confirmed`**（`:268`）与 `historicalRelations` 写入（`:283`）；
+2. `relationHintFor()` 的签名扩展方式（现在是 `(relation, supersedesClaimRef)` ⇒ 实现轮须决定是加参数还是改传 `{supersedes?, revises?}`；**保持 `ingestClaims` 调用点不变**）；
+3. CLI：`--revises-claim` 的 per-verb 白名单与 usage 行（`research-commands.ts:1358` 附近）同步；
+4. 展示层：`formatCandidateReviewHuman` / Markdown 是否展示 `revisedClaimRef`（**建议对称展示**，与 `supersededClaimRef` 一致）；
+5. `revisedClaimRef` 与 `projectionError` 的**共存**语义（决定已记、投影失败时两者可同时存在 —— 与 SUPERSEDE 同构）。
+
+### §C6.26.7 仍未授权（保持诚实）
+
+* **`REVISE` 目标管线的实现**：**未授权**（本节仅锁定契约）。在授权前，`candidate confirm --relation REVISE` 仍会在投影期**如实失败**；
+* 原文切片 · 模型提取器 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D：**未授权**（承接 §C6.25.6）。
+
+**End of contract（rev13: §C6.26 D-C6-G `REVISE` 目标契约，实现未授权）.**
