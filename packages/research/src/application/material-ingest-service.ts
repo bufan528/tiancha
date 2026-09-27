@@ -308,14 +308,23 @@ export class MaterialIngestService {
     }
 
     let progress = ledger;
-    let overlaps: string[] = [];
+    // ★ §29.18: an overlap marker is STICKY. A resume must REMEMBER what was already observed —
+    // initialising it to `[]` would let the next progress write wipe a marker whose attribution is
+    // still unresolved, silently lifting the subject's conservative downgrade.
+    let overlaps: string[] = [...material.ingestOverlaps];
     try {
       // ★ §29.15 (review round 2): the orphan scan runs HERE, not at the call sites, and for ANY
       // attempt whose ledger is still entirely `reserved` — which includes a BRAND-NEW material,
       // because the pre-R1 pipe wrote Claims for a subject before any `material` row existed at all.
       // (A resume, or a `--force` re-run, already holds ids it must reuse, so it is skipped.)
-      if (progress.length > 0 && progress.every((b) => b.state === "reserved")) {
+      // ★ §29.18: recompute only on a FULL ledger reset (a new material) or on an explicit
+      // `--force` — the human act that may have RESOLVED an attribution. A plain resume keeps the
+      // marker: it cannot know that anything changed.
+      const rescan = progress.every((b) => b.state === "reserved") || input.force === true;
+      if (progress.length > 0 && rescan) {
         // ★ §29.16: DETECTION ONLY — `detectOrphanOverlap` never rewrites the ledger.
+        // ★ §29.17: it also reports the overlaps it could NOT attribute, so this subject keeps its
+        // conservative downgrade even though THIS import succeeds.
         overlaps = await this.detectOrphanOverlap(material, parsed.claims, progress);
       }
 
@@ -492,10 +501,17 @@ export class MaterialIngestService {
       for (const claimId of other.claimRefs) attributed.add(claimId);
     }
 
+    // ★ §29.18: a Claim this material ALREADY OWNS is not an "existing overlap" — it is the product
+    // of this very import (which is exactly what a completed `--force` re-run sees). Excluding it
+    // keeps a re-run from reading its own Claims as an ambiguous overlap.
+    const own = new Set<string>([...material.claimRefs, ...ledger.map((b) => b.claimId)]);
+
     const overlaps: string[] = [];
     for (const block of ledger) {
       const statement = claims[block.blockIndex]?.statement;
-      const matches = statement ? [...(candidates.get(statement) ?? [])] : [];
+      const matches = statement
+        ? [...(candidates.get(statement) ?? [])].filter((id) => !own.has(id))
+        : [];
       // ★ §29.16: ambiguity is escalated — and never as a guess.
       if (matches.length > 1) {
         throw new OrphanClaimAmbiguous(material.materialId, statement!, matches.length);
