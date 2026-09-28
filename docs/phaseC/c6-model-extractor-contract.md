@@ -1,6 +1,7 @@
 # Phase C6 · 模型提取器 Implementation Contract（D-C6-H / D-C6-I / D-C6-J）
 
-> 状态：**rev6 — DESIGN ONLY（实现未授权）**。本文档只锁定语义、边界、失败与恢复规则、迁移与验收；**模型适配器的实现须在本契约定稿后单独授权**。rev2 = 第一轮审查的四处补齐（§M2.1）；rev3 = 第二轮审查的收口（§M2.2）；rev4 = 第三轮审查的收口（§M2.3）；rev5 = 第四轮审查的收口（§M2.4）；rev6 = 第五轮审查的收口（**迁移的原子性 + 可安全续跑**，见 §M2.5）。
+> 状态：**rev7 — 契约定稿后的实施期文档同步**。rev6 已通过**定稿复核（Gate PASS）**；此后实现按"**一次一片**"推进：**Slice A `4274bab`（窗口切分）已验收 · Slice B `da1993b`（注入缝 + 引用校验）已验收**。本 rev7 只做**文档同步**（§M5.3 的切片边界、§M10 的 `(unit)` 标注），**不含任何代码变化**。仍**未授权**：真实模型接入 · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+> rev2–rev6 = 各轮审查意见的收口（§M2.1–§M2.5）。
 > 依据：用户 2026-09-27 的三项结构性裁决（§M2）。用户原话要点：**输入按可追溯片段分批**、**模型只提交引用文本与位置且 ID 由天查生成**、**模型调用异步且整次运行全部验证后再落候选**。
 > 前置契约：`docs/phaseC/c6-implementation-contract.md` §C6.18–§C6.27（资料闭环：材料版本 / Fragment / Evidence / 候选 / 人工闸门 / 投影；其中 `[CANDIDATE]` 确定性提取器 **已交付**）· `docs/HANDOFF.md` §10（**LLM 边界**：禁止 LLM 直接产生 `Claim` / `Fact` / `Knowledge` / `PoolItem` / `Evaluation` 或 0–100 分；模型只能**起草**带来源定位的候选且**必须人工确认**）。
 > 文件定位：**C6 模型提取器专项契约**（同 `c2-*` / `c5-*` / `c6-implementation-contract.md`）；总契约 `implementation-contract.md` §30 只做索引。
@@ -308,7 +309,7 @@ interface ModelCandidateDraft {
 > **rev2 更正**：rev1 的 V4（"必须落在连续段落范围内"）**已删除** —— 单个 `[start, end)` 区间**天然连续**，该检查既无法表达也无法失败（审查意见成立）；它想防的"跨不连续片段"由 V2 + V3 完全覆盖。原 V5 重编号为 V4，并**补上验收**（T-C6-32 内加 V4 反例）。
 > `maxQuoteChars` 会改变"哪些输出能通过校验"，因此**计入配置身份与运行审计**（§M6、§M9）。
 
-通过后由服务端**生成**（模型不得给出任何 id）：
+通过后由服务端**计算**，并在 **Slice F 写入时生成**（模型不得给出任何 id）：
 
 | 产物 | 生成规则 |
 |---|---|
@@ -320,6 +321,16 @@ interface ModelCandidateDraft {
 | **`evidenceId`** | `fragmentEvidenceIdFor(versionId, fragmentId, "supports", quoteHash)` —— **第三参数是 `stance`，不是 `locator`**（`material-source.ts:205-212`）；rev1 此处写错，rev2 更正 |
 | 落地方式 | `buildFragmentEvidence(version, fragment, "supports", at)`（**沿用既有构造函数**，它要求 `fragment.materialVersionId === version.materialVersionId`，并把 `fragment.text` 作为 `quoteText`） |
 | `stance` | `"supports"`（v1 固定；模型不得声明 `refutes` / `context`） |
+
+**★ 实施切片边界（rev7 按实施裁决同步）**：上表列出的是**端到端**最终产物。实现按"一次一片"拆分，**计算**与**生成身份 / 落库**分属不同片 —— 不要把 Slice B 读成"应该已经生成了身份"：
+
+| 归属 | 内容 | 状态 |
+|---|---|---|
+| **Slice A** | `extractionWindowFor`（窗口切分，§M4）· `windowRuleKey` | **已实现并验收**（`4274bab`，T-C6-29） |
+| **Slice B** | 注入缝类型 + `resolveQuote` / `resolveQuotes`：**只计算** `startGlobal` / `endGlobal` / `fragmentLocator` / `quoteHash` / `quoteText`；**不生成任何 Tiancha 身份**（无 `fragmentId` / `evidenceId` / `stance`），**不写任何表** | **已实现并验收**（`da1993b`，T-C6-31(unit) / T-C6-32(unit)） |
+| **Slice F** | 由 `fragmentLocator` **生成** `fragmentId`，用 `buildMaterialFragment` / `buildFragmentEvidence` 生成 Fragment 与 Evidence（`stance = "supports"`），并在**全成或全败的单事务**里写入 | 未开始 |
+
+⇒ 因此上表中 **`fragmentId` / Fragment 文本 / `evidenceId` / `stance` / 落地方式** 四行**属于 Slice F**；Slice B 的产出止于 `ResolvedQuote`（`windowId` / `startGlobal` / `endGlobal` / `fragmentLocator` / `quoteHash` / `quoteText`，**不含任何身份字段**）。
 
 **★ 四者一致（不可协商的不变量）**：因为 Fragment 由**引文自己的区间**生成，而 `buildFragmentEvidence()` 取 `fragment.text` 作为 `quoteText` 并据此算 `quoteHash`（`material-source.ts:280,289`）⇒ 必然满足
 
@@ -648,8 +659,8 @@ interface ExtractionConfigSnapshot {
 |---|---|
 | **T-C6-29 窗口确定性与覆盖（★ rev3 拆分 · rev4 加案例）** | 两次生成**深比较完全相等**；**I1** `text === normalized.slice(start,end)`；**I2** `index` 连续；**I3** 首个窗口 `start === 0`；**I4 区间并集 = `[0, normalized.length)`（全文无缺口；允许切片重叠）**；**I5 仅段落组窗口之间** `end === 下一个 start`（不重叠）；**I6 仅同一超长段落的切片之间**共享 `overlapChars`；**I7** 末窗口 `end === normalized.length`。<br>★ **rev4 新增案例**：**"超长段落 + 紧随其后的普通段落"** ⇒ 断言 ① 无缺口（并集仍为全文）② 超长段落**末片**的 `end` **等于下一段的 `start`**（即吞掉了尾部分隔符）③ 该末片 `text` **以分隔符结尾** ④ 除该末片外，各窗口**正文长度** ≤ `maxChars` |
 | **T-C6-30 窗口 / 引文 / 生成参数进身份** | 分别改变 `maxChars` / `overlapChars` / `WINDOW_RULE_VERSION` / **`maxQuoteChars`** / **方法论维度集合** / ★ **`generation` 里的任一生成参数（温度 / seed 等）** ⇒ `extractionConfigKey` **变化** ⇒ 生成**不同** `candidateId`（旧候选原样保留） |
-| **T-C6-31 引文即 Fragment（四者一致）** | 一条引文（含**跨段落但连续**的引文）⇒ 断言 `fragment.text === evidence.quoteText === quote.text` 且 `sha256Hex(quote.text) === evidence.quoteHash === fragment.textHash`；`fragment.locator` 是**精确覆盖该区间的 `char_range`**；并经 `resolveLocator(normalized, fragment.locator)` **解析回材料原文**得到同一段文本 |
-| **T-C6-32 引用不成立 ⇒ 整次失败（V1–V4 各一例）** | V1 窗口不属于本版本 · V2 区间越界/倒置 · **V3 文本与位置不符** · **V4 长度超过 `maxQuoteChars`** ⇒ 运行 `failed`；`claim_candidate` **零新增**；`extraction_run.candidate_ids_json = []`；`error` 指明失败类别与第几个窗口 / 第几条 quote |
+| **T-C6-31 引文即 Fragment（四者一致）** | 一条引文（含**跨段落但连续**的引文）⇒ 断言 `fragment.text === evidence.quoteText === quote.text` 且 `sha256Hex(quote.text) === evidence.quoteHash === fragment.textHash`；`fragment.locator` 是**精确覆盖该区间的 `char_range`**；并经 `resolveLocator(normalized, fragment.locator)` **解析回材料原文**得到同一段文本。<br>★ **`(unit)` 子集已落地于 Slice B**（`da1993b`）：locator / 全局区间 / `quoteHash` / 解析回原文已断言；**含 `fragmentId` 与 Fragment 行的"四者一致"属 Slice F** |
+| **T-C6-32 引用不成立 ⇒ 整次失败（V1–V4 各一例）** | V1 窗口不属于本版本 · V2 区间越界/倒置 · **V3 文本与位置不符** · **V4 长度超过 `maxQuoteChars`** ⇒ 运行 `failed`；`claim_candidate` **零新增**；`extraction_run.candidate_ids_json = []`；`error` 指明失败类别与第几个窗口 / 第几条 quote。<br>★ **`(unit)` 子集已落地于 Slice B**（`da1993b`）：**校验与拒绝**已断言（含 fail-fast 与"同长度不同内容"的 V3 反例）；**"整次失败、零残留"的持久化语义属 Slice F** |
 | **T-C6-33 人工确认前下游指纹不变（完整指纹）** | 成功运行后，§M8 十张表的**完整内容指纹**与运行前**逐项相等**（**不是**只比行数）；候选全为 `draft` / `projectionStatus = "none"` / 无 `decisionRelation` |
 | **T-C6-34 超时 / 取消不误报完成** | 适配器**永不 resolve** ⇒ 运行 `failed` + `error` 以 `timeout:` 开头；**零候选**；`finishedAt` 有值；**且**断言适配器**收到了 abort**（其 promise 在 `signal` 触发后以 `AbortError` 结束），证明不是"只把状态改成失败" |
 | **T-C6-35 已审核候选不被改动** | 先 `confirm` / `reject` 某候选 ⇒ **候选写入阶段**遇到同 id ⇒ 该候选 `reviewStatus` / `statement` / `evidenceRefs` **一字不变**，并计入 `skippedReviewed`；`draft` 候选仍可合并 Evidence（`merged` 计入） |
@@ -691,11 +702,12 @@ interface ExtractionConfigSnapshot {
 
 | 版本 | 变更 |
 |---|---|
-| **rev6** | **第五轮审查意见的收口**（§M2.5）：**迁移的原子性与可安全续跑**（§M7.1b）—— rev5 只列步骤、**未写事务边界** ⇒ 冲突失败时先前的加列/回填/降级**可能已提交**；中途退出后重跑按"只给 `attempt_seq IS NULL` 的行从 `1..N` 分配"还可能**撞上已回填编号**。rev6 加**两层保障**：① **首选 —— 整段迁移一个事务**（`BEGIN IMMEDIATE … COMMIT`，失败 `ROLLBACK`）⇒ 冲突时结构与数据指纹均不变；② **兜底 —— 每步幂等**（回填只处理 `IS NULL` 且编号从该分组 `MAX+1` 起 ⇒ 绝不重复编号；降级只匹配当前仍 `running` 且缺租约的行）。并核实记录：**`migrate()` 本身不开事务**（`research-db.ts:950` 属 `transaction<T>()`）⇒ 该迁移**需自带事务边界**（§M9 #4c）；T-C6-38 新增 **⑥ 原子性** 与 **⑦ 可重跑** 断言 |
+| **rev7** | **实施期文档同步**（纯 docs，无代码变化）：§M5.3 明确**实施切片边界** —— `startGlobal` / `endGlobal` / `fragmentLocator` / `quoteHash` / `quoteText` 由 **Slice B 计算**，而 `fragmentId` / Fragment 文本 / `evidenceId` / `stance` / 落地方式由 **Slice F 生成并落库**（附 Slice A/B/F 归属表与已验收 commit）；表头由"生成"改为"**计算**，并在 Slice F 写入时**生成**"；§M10 的 `T-C6-31` / `T-C6-32` 标注 **`(unit)` 子集已落地于 Slice B**，含 Fragment 的端到端语义仍属 Slice F。**目的**：避免后续实施者误以为 Slice B 应已生成身份 |
+| **rev6** | **第五轮审查意见的收口**（§M2.5）：**迁移的原子性与可安全续跑**（§M7.1b）—— 整段迁移**一个事务**（失败 `ROLLBACK`，结构与数据指纹不变）+ **每步幂等**兜底（回填只处理 `IS NULL` 且编号从该分组 `MAX+1` 起；降级只匹配当前仍 `running` 且缺租约的行）；并核实记录 `migrate()` 本身不开事务 ⇒ 该迁移**需自带事务边界** |
 | **rev5** | **第四轮审查意见的收口**（§M2.4）：① **历史 `extraction_run` 行的迁移规则**（§M7.1b）—— 加列后历史 `running` 行的 `owner`/`lease_until` 为 `NULL` ⇒ `>= now` 与 `< now` **都不成立** ⇒ **卡死认领**；旧库多条同配置 `running` 会让**建索引失败**；规则为「加列 → 回填 `attempt_seq`/`generation` → 无租约的历史 `running` 标 `failed`/`legacy_interrupted`（**不删不静默**）→ 仍冲突则 **FAIL FAST 列出冲突行** → **最后**建索引」；§M9 #4c/#4b；新增 **T-C6-38**；② **跨接管幂等键构成更正**（不含 `attemptSeq`，§M7.1a ⑤） |
 | **rev4** | **第三轮审查意见的收口**（§M2.3）：① **超长段落末片吞分隔符**（否则其后 `\n{2,}` 无人覆盖、并集有缺口），且 **`maxChars` 只约束正文**；② **原子认领落到可执行机制**（INSERT 新尝试行 · 部分唯一索引 `WHERE status='running'` · 单事务四步认领 · 三种情况的数据库结果表 · 提交带 `generation` 校验）；③ **修正"模型调用恰好一次"**（与租约接管矛盾）：有效租约内只一个持有者调用 · 接管后允许重复请求 · 只有当前代次能提交；④ **并发测试用两个独立进程/连接**，接管用例断言旧代次**零残留**；⑤ **快照新增 `generation` 对象**并参与配置身份，`promptVersion` 只管提示词；⑥ **成本提示更正为显式基准**（`600` vs 零重叠 `+42.9%`；`600` vs `500` `+7.1%`） |
 | **rev3** | **第二轮审查意见的收口**（§M2.2）：① **窗口覆盖规则拆分**（段落组窗口首尾相接 / 超长段落切片重叠 / 全文按**区间并集**检查无缺口；不变量 I4–I6 按窗口种类分别断言）；② **同配置并发互斥**（§M7.1a 原子认领 + 租约 + 代际 token）；③ **运行身份**改用 `attemptSeq`（`startedAt` 只作审计字段）；④ **审计升级为不可变配置快照** `config_snapshot_json`；⑤ **`dimensionHints` 顺序**定为方法论声明序（不排序），`dimensionSetHash` 对**同一有序列表**计算；⑥ **删除"同版本必须可复现"**的过强承诺；⑦ 文档收尾（§M10 标题、全仓日期 `2026-09-27`） |
 | **rev2** | **第一轮审查意见的四处补齐**（§M2.1）：① **引文即 Fragment**（精确 `char_range`）+ 更正 `fragmentEvidenceIdFor` 的 `stance` 参数 + "四者一致"不变量；② **分隔符归前一窗口** ⇒ 窗口覆盖全文；明确**坐标单位 = UTF-16 code unit**；补配置约束；明确**首版不承诺跨段落组边界的整条引文**；③ **配置身份与运行审计**补入分块器 / **方法论版本** / **维度集合 hash** / **`maxQuoteChars`**，审计保留原值；④ **重跑语义收紧**为"已有成功运行 ⇒ 复用，不再调用模型"。另：`stance` 的语义与**审核界面可见性**（§M5.5）· 超时的**边界与取消**（`AbortSignal`，§M6.2a）· 删除无法失败的"不连续"检查并补 V4（长度上限）验收 · T-C6-33 改为**完整下游状态指纹** · 新增 T-C6-37 |
 | **rev1** | 首版（DESIGN ONLY）：D-C6-H/I/J 三项裁定落为可执行规则 —— 窗口协议（`para-greedy-v1` + 重叠 + 规则进身份）· 模型输出 schema 与 V1–V5 引用校验 · 异步化与"全成或全败"单事务 · 不覆盖已审核候选 · 验收 T-C6-29…T-C6-36 · 改动清单（含 `chunker_version` 加列） |
 
-**End of contract（rev6: 模型提取器契约，DESIGN ONLY —— 实现未授权）.**
+**End of contract（rev7: 实施期文档同步 —— Slice A/B 已验收，Slice F 待做）.**
