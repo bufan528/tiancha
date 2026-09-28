@@ -127,7 +127,7 @@ async function env(rawText: string = RAW): Promise<Env> {
   });
   const version = new MaterialVersionService(repo).registerVersion({ materialId: "mat-1", rawText, createdAt: AT })
     .version;
-  const run = new CandidateExtractionService(repo, new ExplicitBlockExtractor(repo)).run(version, AT);
+  const run = await new CandidateExtractionService(repo, new ExplicitBlockExtractor(repo)).run(version, AT);
 
   const e: Env = {
     dir,

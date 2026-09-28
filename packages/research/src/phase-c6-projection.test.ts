@@ -73,7 +73,7 @@ after(() => {
   for (const e of opened) e.close();
 });
 
-function env(): Env {
+async function env(): Promise<Env> {
   const dir = mkdtempSync(join(tmpdir(), "tiancha-c6d-"));
   const db = new ResearchDb({ path: join(dir, "research.sqlite") });
   const artifacts = new SqliteArtifactStore({ path: join(dir, "artifacts.sqlite") });
@@ -97,7 +97,7 @@ function env(): Env {
   });
   const version = new MaterialVersionService(repo).registerVersion({ materialId: "mat-1", rawText: RAW, createdAt: AT })
     .version;
-  const run = new CandidateExtractionService(repo, new ExplicitBlockExtractor(repo)).run(version, AT);
+  const run = await new CandidateExtractionService(repo, new ExplicitBlockExtractor(repo)).run(version, AT);
   const discovery = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
   const knowledge = new KnowledgeRepository(db.db);
   const e: Env = {
@@ -152,7 +152,7 @@ function fingerprint(db: ResearchDb): string {
 
 describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition path", () => {
   test("T-C6-2: an UNCONFIRMED candidate can never be projected (I-C6-8) and creates nothing", async () => {
-    const e = env();
+    const e = await env();
     const before = fingerprint(e.db);
     await assert.rejects(
       () => e.projection.project(e.candidateIds[0], { operator: "analyst" }),
@@ -163,7 +163,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-3: projection uses the EXISTING path and is traceable BOTH ways", async () => {
-    const e = env();
+    const e = await env();
     const id = e.candidateIds[0];
     e.review.confirm(id, { operator: "analyst", relation: "SUPPORT" });
 
@@ -190,7 +190,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-8: re-running a projection at ANY point yields ONE claim / ONE belief", async () => {
-    const e = env();
+    const e = await env();
     const id = e.candidateIds[0];
     e.review.confirm(id, { operator: "analyst", relation: "SUPPORT" });
     const first = await e.projection.project(id, { operator: "analyst" });
@@ -225,7 +225,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-8b: a projection that throws is RECORDED and stays resumable", async () => {
-    const e = env();
+    const e = await env();
     const id = e.candidateIds[0];
     e.review.confirm(id, { operator: "analyst", relation: "SUPPORT" });
 
@@ -260,7 +260,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-9: SUPERSEDE cannot guess a target — and a target that does not exist is not a decision", async () => {
-    const e = env();
+    const e = await env();
     const id = e.candidateIds[0];
 
     // ★ the DECISION itself is refused without a target, before anything is reserved or written
@@ -305,7 +305,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   }
 
   test("T-C6-14: a SUPERSEDE against a REAL target really evolves it, and the target may not be re-pointed", async () => {
-    const e = env();
+    const e = await env();
     const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
     const knowledgeId = e.knowledge.findKnowledgeBySubject("industry", "ind-c6")?.knowledgeId ?? "";
     const target = e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, oldRef);
@@ -337,7 +337,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-15: a target living on ANOTHER dimension is refused at decision time", async () => {
-    const e = env();
+    const e = await env();
     const wrongDimensionRef = await seedClaim(e, "claim-demand-1", "demand", "需求侧：客户开始采购");
 
     const id = e.candidateIds[0]; // its dimension is `market`
@@ -354,7 +354,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-16: a target that is no longer evolvable is refused at decision time", async () => {
-    const e = env();
+    const e = await env();
     const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
     // consume the target: another claim supersedes it ⇒ its state stops being evolvable
     await e.discovery.ingestClaims({
@@ -385,7 +385,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-17: if the target stops being evolvable AFTER the decision, the projection fails — never 'finalized'", async () => {
-    const e = env();
+    const e = await env();
     const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
 
     const id = e.candidateIds[0];
@@ -418,7 +418,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-18: a relation the knowledge side REFUSES is reported as failed, not as a success", async () => {
-    const e = env();
+    const e = await env();
     // A CONFLICT needs an existing current cognition to be in conflict with. With none, the knowledge
     // projection REFUSES it by RETURNING `SKIPPED / INVALID_EVOLUTION_TARGET` — a return value, not an
     // exception. The projection must surface that instead of closing the candidate `finalized`.
@@ -442,7 +442,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   // -------------------------------------------------------------------------
 
   test("T-C6-21: a REVISE without a target is refused at DECISION time — the target is never guessed", async () => {
-    const e = env();
+    const e = await env();
     await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
     const id = e.candidateIds[0];
 
@@ -462,7 +462,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-22: a REVISE target that does not exist is refused", async () => {
-    const e = env();
+    const e = await env();
     const id = e.candidateIds[0];
     assert.throws(
       () =>
@@ -480,7 +480,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-23: a REVISE target living on ANOTHER dimension is refused", async () => {
-    const e = env();
+    const e = await env();
     const foreign = await seedClaim(e, "claim-demand-1", "demand", "需求侧：客户开始采购");
     const id = e.candidateIds[0]; // dimension: market
     assert.throws(
@@ -492,7 +492,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-24: a REVISE target that is no longer evolvable is refused", async () => {
-    const e = env();
+    const e = await env();
     const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
     await e.discovery.ingestClaims({
       subjectKind: "industry",
@@ -520,7 +520,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-25: a REVISE against a REAL target really REVISES it (never supersedes it)", async () => {
-    const e = env();
+    const e = await env();
     const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
     const knowledgeId = e.knowledge.findKnowledgeBySubject("industry", "ind-c6")?.knowledgeId ?? "";
     assert.equal(e.knowledge.findBeliefByKnowledgeAndClaim(knowledgeId, oldRef)?.state, "confirmed");
@@ -553,7 +553,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("T-C6-26: after a failed projection the ORIGINAL target is reused — and may never be replaced", async () => {
-    const e = env();
+    const e = await env();
     const oldRef = await seedClaim(e, "claim-old-1", "market", "旧结论：市场规模约 100 亿元");
     const id = e.candidateIds[0];
     e.review.confirm(id, { operator: "analyst", relation: "REVISE", revisesClaimRef: oldRef });
@@ -592,7 +592,7 @@ describe("T-C6-3 / T-C6-2 / T-C6-8 — projection into the existing cognition pa
   });
 
   test("a rejected candidate is never projectable, and two candidates project independently", async () => {
-    const e = env();
+    const e = await env();
     const [a, b] = e.candidateIds;
     e.review.reject(b, { operator: "analyst" });
     await assert.rejects(() => e.projection.project(b, { operator: "analyst" }), /can be projected/);

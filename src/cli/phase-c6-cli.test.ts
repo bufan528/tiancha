@@ -58,7 +58,7 @@ interface Env {
   industryId: string;
 }
 
-function env(): Env {
+async function env(): Promise<Env> {
   const db = new ResearchDb({ path: ":memory:" });
   const repo = new ResearchRepository(db.db);
   const versionSvc = new MaterialVersionService(repo);
@@ -81,7 +81,7 @@ function env(): Env {
   });
   const version = versionSvc.registerVersion({ materialId: "mat-1", rawText: RAW, createdAt: AT }).version;
   const extraction = new CandidateExtractionService(repo, new ExplicitBlockExtractor(repo));
-  const run = extraction.run(version, AT);
+  const run = await extraction.run(version, AT);
   return {
     db,
     repo,
@@ -111,8 +111,8 @@ function downstreamFingerprint(db: ResearchDb): string {
 }
 
 describe("T-C6-7 — the human gate records decisions and nothing else", () => {
-  test("T-C6-7a: confirm needs a non-empty operator AND an explicit relation", () => {
-    const e = env();
+  test("T-C6-7a: confirm needs a non-empty operator AND an explicit relation", async () => {
+    const e = await env();
     const id = e.candidateIds[0];
     assert.throws(() => e.review.confirm(id, { operator: "  ", relation: "SUPPORT" }), CandidateReviewError);
     assert.throws(
@@ -124,8 +124,8 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     assert.equal(e.repo.getClaimCandidate(id)?.reviewStatus, "draft");
   });
 
-  test("T-C6-7b: confirm stores the relation and makes it projectable, but writes NO Claim", () => {
-    const e = env();
+  test("T-C6-7b: confirm stores the relation and makes it projectable, but writes NO Claim", async () => {
+    const e = await env();
     const id = e.candidateIds[0];
     const before = downstreamFingerprint(e.db);
 
@@ -152,8 +152,8 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     });
   });
 
-  test("T-C6-7c: revise EDITS content and KEEPS the candidate a draft (editing ≠ accepting)", () => {
-    const e = env();
+  test("T-C6-7c: revise EDITS content and KEEPS the candidate a draft (editing ≠ accepting)", async () => {
+    const e = await env();
     const id = e.candidateIds[0];
     const original = e.repo.getClaimCandidate(id);
     assert.ok(original !== undefined);
@@ -178,8 +178,8 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     assert.throws(() => e.review.revise(id, { operator: "analyst" }), /at least one of/);
   });
 
-  test("T-C6-7d: reject is terminal and never projectable", () => {
-    const e = env();
+  test("T-C6-7d: reject is terminal and never projectable", async () => {
+    const e = await env();
     const id = e.candidateIds[0];
     const rejected = e.review.reject(id, { operator: "analyst", comment: "来源不可靠" });
     assert.equal(rejected.reviewStatus, "rejected");
@@ -190,8 +190,8 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     assert.throws(() => e.review.reject(id, { operator: "analyst" }), /only applies to a draft/);
   });
 
-  test("T-C6-7e: the review trail is append-only and each action appends exactly one row", () => {
-    const e = env();
+  test("T-C6-7e: the review trail is append-only and each action appends exactly one row", async () => {
+    const e = await env();
     const [a, b] = e.candidateIds;
     e.review.revise(a, { operator: "analyst", statement: "edit one" });
     e.review.confirm(a, { operator: "analyst", relation: "SUPPORT" });
@@ -213,8 +213,8 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     assert.equal(shown.reviews.length, 2);
   });
 
-  test("T-C6-7f: I-C6-1 / I-C6-4 — every review action leaves the downstream state untouched", () => {
-    const e = env();
+  test("T-C6-7f: I-C6-1 / I-C6-4 — every review action leaves the downstream state untouched", async () => {
+    const e = await env();
     const before = downstreamFingerprint(e.db);
     const [a, b] = e.candidateIds;
     // order matters: `revise` only applies to a DRAFT, so edit BEFORE confirming
@@ -229,8 +229,8 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     );
   });
 
-  test("list() filters by subject and by review status", () => {
-    const e = env();
+  test("list() filters by subject and by review status", async () => {
+    const e = await env();
     const [a] = e.candidateIds;
     e.review.confirm(a, { operator: "analyst", relation: "SUPPORT" });
     assert.equal(e.review.list({ subjectKind: "industry", subjectId: "ind-1" }).length, 2);
@@ -240,7 +240,7 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
     assert.throws(() => e.review.list({}), /provide either/);
   });
 
-  test("T-C6-7g: the CLI refuses a missing --operator / --relation", () => {
+  test("T-C6-7g: the CLI refuses a missing --operator / --relation", async () => {
     const home = mkdtempSync(join(tmpdir(), "tiancha-c6c-"));
     try {
       const run = (args: string[]) =>
@@ -274,9 +274,9 @@ describe("T-C6-7 — the human gate records decisions and nothing else", () => {
 // ---------------------------------------------------------------------------
 
 describe("a human decision and its audit row are atomic", () => {
-  test("T-C6-19: if the audit insert fails, the decision is rolled back — for confirm, revise AND reject", () => {
+  test("T-C6-19: if the audit insert fails, the decision is rolled back — for confirm, revise AND reject", async () => {
     for (const action of ["confirm", "revise", "reject"] as const) {
-      const e = env();
+      const e = await env();
       const id = e.candidateIds[0];
       const statementBefore = e.repo.getClaimCandidate(id)?.statement;
 
@@ -318,8 +318,8 @@ describe("a human decision and its audit row are atomic", () => {
     }
   });
 
-  test("T-C6-20: the failure is a ROLLBACK, not a partial write — the connection stays usable", () => {
-    const e = env();
+  test("T-C6-20: the failure is a ROLLBACK, not a partial write — the connection stays usable", async () => {
+    const e = await env();
     const [a] = e.candidateIds;
     const repo = e.repo as unknown as { insertCandidateReview: (r: unknown) => void };
     const original = repo.insertCandidateReview.bind(e.repo);
@@ -343,7 +343,7 @@ describe("a human decision and its audit row are atomic", () => {
 // ---------------------------------------------------------------------------
 
 describe("`--revises-claim` reaches the decision", () => {
-  test("T-C6-27: the CLI refuses a REVISE without a target, and documents the flag", () => {
+  test("T-C6-27: the CLI refuses a REVISE without a target, and documents the flag", async () => {
     const home = mkdtempSync(join(tmpdir(), "tiancha-c6r-"));
     try {
       const run = (args: string[]) =>

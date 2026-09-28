@@ -28,6 +28,7 @@ import {
   type MaterialFragment,
   type MaterialVersion,
 } from "../domain/material-source.js";
+import { randomUUID } from "node:crypto";
 import type { ResearchRepository } from "../storage/research-repository.js";
 
 /** What an extractor proposes — no ids, no status: identity is derived by the service. */
@@ -50,11 +51,16 @@ export interface ExtractInput {
 /**
  * ★ The seam for a future MODEL-backed extractor. Implementations must be pure with respect to
  * storage: they only READ the version/fragments and RETURN drafts.
+ *
+ * ★ Slice E: `extract` is ASYNC. The boundary is locked here so a model-backed adapter can plug
+ * into `await extractor.extract(...)` without a second, synchronised API ever existing. The
+ * deterministic reference implementation below keeps its parsing algorithm UNCHANGED — only its
+ * signature became async.
  */
 export interface CandidateExtractor {
   readonly modelVersion: string;
   readonly promptVersion: string;
-  extract(input: ExtractInput): CandidateDraft[];
+  extract(input: ExtractInput): Promise<CandidateDraft[]>;
 }
 
 export interface RunResult {
@@ -69,8 +75,17 @@ export interface RunResult {
   /** How many of those actually gained evidence in this run. */
   merged: number;
   candidateIds: string[];
-  status: "completed" | "failed";
+  /** ★ Slice E adds `in_progress`: this call found a live run elsewhere and extracted nothing. */
+  status: "completed" | "failed" | "in_progress";
   error?: string;
+  /**
+   * ★ Slice E: set when this call found ANOTHER live run for the same (material version, config)
+   * and therefore did NOT obtain the lease — THIS call performed no extraction.
+   *
+   * `reused` / `skippedReviewed` deliberately do NOT live here: they are about reusing a finished
+   * run and about not touching reviewed candidates, which is Slice F.
+   */
+  in_progress?: { owner: string; leaseUntil: string; attemptSeq: number };
 }
 
 export interface CandidateExtractionOptions {
@@ -83,6 +98,34 @@ export interface CandidateExtractionOptions {
 
 const DEFAULT_PARSER_VERSION = "candidate-parser/v1";
 const DEFAULT_SCHEMA_VERSION = "candidate-schema/v1";
+
+/** Slice E defaults: how long THIS call may wait, and how long its execution right lasts. */
+const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_LEASE_MS = 120_000;
+
+/** A refused input (invalid timeout/lease) — never silently clamped. */
+export class CandidateExtractionError extends Error {}
+
+/** Distinguishes "this call waited too long" from "the extractor failed" (they differ in DB effect). */
+export class CandidateExtractionTimeoutError extends Error {}
+
+/**
+ * Bound one promise by `timeoutMs`. ★ This bounds how long THIS CALL waits; it is NOT a lease
+ * expiry — the caller must not treat it as one (Slice E ruling: timeout ≠ lease failure).
+ */
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: () => string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new CandidateExtractionTimeoutError(message())), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 export class CandidateExtractionService {
   constructor(
@@ -120,56 +163,131 @@ export class CandidateExtractionService {
    * predecessor via `supersedesCandidateRef` (lineage).
    * Candidates that already exist are NEVER overwritten — an existing row may carry a human edit
    * (I-C6-5).
+   *
+   * ★ Slice E: this is now the run's CONCURRENCY entry point. Before doing any work it CLAIMS the
+   * (material version, configuration) pair:
+   *   - a LIVE lease elsewhere ⇒ `in_progress`; THIS call extracts nothing;
+   *   - an EXPIRED attempt ⇒ closed here (`failed` / `lease_expired`) so the partial unique index
+   *     is free again, then a NEW attempt is claimed (`attempt_seq = MAX+1`, `generation` = it);
+   *   - otherwise ⇒ this call owns the run.
+   *
+   * ★ FENCING IS IN THE SQL. Every state transition this method makes carries
+   * `status='running' AND generation=? AND owner=?` as a WHERE predicate, so a generation that lost
+   * the run cannot commit anything (`changes() !== 1` ⇒ nothing is written, no candidate is
+   * inserted). A read-then-write in memory would be a TOCTOU window.
+   *
+   * ★ A TIMEOUT IS NOT A LEASE EXPIRY: on timeout the row is deliberately left `running` so the
+   * lease lapses on its own; the caller just learns the call did not finish.
+   *
+   * ★ All lease/fencing SQL lives HERE rather than in the repository, because Slice E is authorized
+   * to touch this file only. Slice F may lift it into the repository together with the
+   * all-or-nothing transaction.
    */
-  run(version: MaterialVersion, at?: string): RunResult {
-    const startedAt = at ?? this.now();
+  async run(
+    version: MaterialVersion,
+    at?: string,
+    opts: { timeoutMs?: number; leaseMs?: number; owner?: string } = {},
+  ): Promise<RunResult> {
     const configKey = this.extractionConfigKey;
-    const extractionId = extractionRunIdFor(version.materialVersionId, configKey, startedAt);
-    const fragments = this.repo.listFragments(version.materialVersionId);
 
-    const run: ExtractionRun = {
-      extractionId,
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS;
+    // ★ refuse rather than silently clamp
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+      throw new CandidateExtractionError(`timeoutMs must be a positive integer (got ${String(timeoutMs)})`);
+    }
+    if (!Number.isInteger(leaseMs) || leaseMs <= 0) {
+      throw new CandidateExtractionError(`leaseMs must be a positive integer (got ${String(leaseMs)})`);
+    }
+    const owner = opts.owner ?? `xowner-${randomUUID()}`;
+    // ★ the SINGLE time source: `now()` provides "the present" for every lease/expiry decision.
+    // `at` is only the recorded start time; it must never be used to decide whether a lease lives.
+    const now = this.now();
+    const startedAt = at ?? now;
+
+    const claim = this.claimRun({
       materialVersionId: version.materialVersionId,
-      modelVersion: this.extractor.modelVersion,
-      promptVersion: this.extractor.promptVersion,
-      parserVersion: this.parserVersion,
-      schemaVersion: this.schemaVersion,
-      extractionConfigKey: configKey,
+      configKey,
+      owner,
+      leaseMs,
       startedAt,
-      status: "running",
-      candidateIds: [],
-    };
-    this.repo.insertExtractionRun(run);
+      now,
+    });
+    if (claim.kind === "in_progress") {
+      return {
+        extractionId: "",
+        created: 0,
+        reused: 0,
+        merged: 0,
+        candidateIds: [],
+        status: "in_progress",
+        in_progress: { owner: claim.owner, leaseUntil: claim.leaseUntil, attemptSeq: claim.attemptSeq },
+      };
+    }
+    const { extractionId, generation } = claim;
+    const fragments = this.repo.listFragments(version.materialVersionId);
 
     let drafts: CandidateDraft[];
     try {
-      drafts = this.extractor.extract({ version, fragments });
+      drafts = await withTimeout(
+        this.extractor.extract({ version, fragments }),
+        timeoutMs,
+        () => `extraction timed out after ${timeoutMs}ms`,
+      );
       // ★ A non-empty list is not enough: every ref must be REAL and belong to THIS material
       // version. A model-backed extractor must never be able to assert a source that does not exist.
       this.validateDrafts(drafts, version);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.repo.updateExtractionRun(extractionId, {
-        status: "failed",
-        finishedAt: this.now(),
-        error: message,
-      });
+      if (err instanceof CandidateExtractionTimeoutError) {
+        // ★ timeout ≠ lease failure: leave the row `running`, let the lease lapse by itself.
+        return { extractionId, created: 0, reused: 0, merged: 0, candidateIds: [], status: "failed", error: message };
+      }
+      this.finishRun({ extractionId, generation, owner, candidateIds: [], error: message, at: this.now() });
       return { extractionId, created: 0, reused: 0, merged: 0, candidateIds: [], status: "failed", error: message };
     }
 
-    const candidateIds: string[] = [];
-    let created = 0;
-    let reused = 0;
-    /** Candidates whose evidence list GREW because the same statement appeared again. */
-    let merged = 0;
-    for (const draft of drafts) {
+    // Identity is deterministic, so the ids are known BEFORE anything is written.
+    const planned = drafts.map((draft) => {
       const blockHash = candidateBlockHash({
         dimension: draft.dimension,
         statement: draft.statement,
         contentKind: draft.contentKind,
       });
-      const candidateId = claimCandidateIdFor(version.materialVersionId, blockHash, draft.dimension, configKey);
-      candidateIds.push(candidateId);
+      return {
+        candidateId: claimCandidateIdFor(version.materialVersionId, blockHash, draft.dimension, configKey),
+        draft,
+        blockHash,
+      };
+    });
+    const candidateIds = planned.map((p) => p.candidateId);
+
+    // ★ THE COMMIT GATE. Decided by a conditional UPDATE, not by an in-memory comparison: if this
+    // generation lost the lease (another attempt took over), `changes()` is 0 and NOTHING below runs.
+    const committed = this.finishRun({
+      extractionId,
+      generation,
+      owner,
+      candidateIds,
+      at: this.now(),
+    });
+    if (!committed) {
+      return {
+        extractionId,
+        created: 0,
+        reused: 0,
+        merged: 0,
+        candidateIds: [],
+        status: "failed",
+        error: "lost_lease: this run's generation is no longer current; nothing was written",
+      };
+    }
+
+    let created = 0;
+    let reused = 0;
+    /** Candidates whose evidence list GREW because the same statement appeared again. */
+    let merged = 0;
+    for (const { candidateId, draft, blockHash } of planned) {
       const existing = this.repo.getClaimCandidate(candidateId);
       if (existing !== undefined) {
         // ★ the SAME statement extracted from ANOTHER place in the material: the candidate is
@@ -203,12 +321,132 @@ export class CandidateExtractionService {
       created += 1;
     }
 
-    this.repo.updateExtractionRun(extractionId, {
-      status: "completed",
-      finishedAt: this.now(),
-      candidateIds,
-    });
     return { extractionId, created, reused, merged, candidateIds, status: "completed" };
+  }
+
+  /**
+   * §M7.1a — claim the (material version, configuration) run in ONE transaction.
+   * Order is fixed: a live lease blocks; an expired attempt yields; then a NEW attempt row is
+   * INSERTed (never an UPDATE of a row that does not exist yet).
+   */
+  private claimRun(input: {
+    materialVersionId: string;
+    configKey: string;
+    owner: string;
+    leaseMs: number;
+    /** Recorded start time (goes into `extraction_id` / `started_at`). */
+    startedAt: string;
+    /** ★ "The present" — the ONLY input to every lease decision here. */
+    now: string;
+  }):
+    | { kind: "claimed"; extractionId: string; attemptSeq: number; generation: number }
+    | { kind: "in_progress"; owner: string; leaseUntil: string; attemptSeq: number } {
+    const db = this.repo.db;
+    // derived from the injected NOW (never `new Date()` / `Date.now()`)
+    const leaseUntil = new Date(Date.parse(input.now) + input.leaseMs).toISOString();
+
+    return this.repo.transaction(() => {
+      // ① a LIVE lease elsewhere ⇒ this call must not extract
+      const active = db
+        .prepare(
+          `SELECT owner, lease_until, attempt_seq
+             FROM extraction_run
+            WHERE material_version_id = ? AND extraction_config_key = ? AND status = 'running'
+              AND owner IS NOT NULL AND lease_until IS NOT NULL AND lease_until >= ?
+            ORDER BY attempt_seq DESC
+            LIMIT 1`,
+        )
+        .get(input.materialVersionId, input.configKey, input.now) as
+        | { owner: string; lease_until: string; attempt_seq: number | null }
+        | undefined;
+      if (active !== undefined) {
+        return {
+          kind: "in_progress" as const,
+          owner: active.owner,
+          leaseUntil: active.lease_until,
+          attemptSeq: active.attempt_seq ?? 0,
+        };
+      }
+
+      // ② an EXPIRED / unleased attempt yields — closed here so the partial unique index is free
+      db.prepare(
+        `UPDATE extraction_run
+            SET status = 'failed', error = 'lease_expired', finished_at = ?
+          WHERE material_version_id = ? AND extraction_config_key = ? AND status = 'running'
+            AND (owner IS NULL OR lease_until IS NULL OR lease_until < ?)`,
+      ).run(input.now, input.materialVersionId, input.configKey, input.now);
+
+      // ③ claim a NEW attempt (attempt_seq continues from this pair's MAX, generation = attempt_seq)
+      const maxRow = db
+        .prepare(
+          `SELECT COALESCE(MAX(attempt_seq), 0) AS m
+             FROM extraction_run
+            WHERE material_version_id = ? AND extraction_config_key = ?`,
+        )
+        .get(input.materialVersionId, input.configKey) as { m: number };
+      const attemptSeq = Number(maxRow.m) + 1;
+      const generation = attemptSeq;
+      // the attempt number makes the id unique even within the same millisecond (contract §M6.2a)
+      const extractionId = extractionRunIdFor(
+        input.materialVersionId,
+        input.configKey,
+        `${input.startedAt}#${attemptSeq}`,
+      );
+      db.prepare(
+        `INSERT INTO extraction_run
+           (extraction_id, material_version_id, model_version, prompt_version, parser_version,
+            schema_version, extraction_config_key, started_at, status, candidate_ids_json,
+            owner, lease_until, attempt_seq, generation)
+         VALUES (?,?,?,?,?,?,?,?,'running','[]',?,?,?,?)`,
+      ).run(
+        extractionId,
+        input.materialVersionId,
+        this.extractor.modelVersion,
+        this.extractor.promptVersion,
+        this.parserVersion,
+        this.schemaVersion,
+        input.configKey,
+        input.startedAt,
+        input.owner,
+        leaseUntil,
+        attemptSeq,
+        generation,
+      );
+      return { kind: "claimed" as const, extractionId, attemptSeq, generation };
+    });
+  }
+
+  /**
+   * ★ FENCED write of a terminal state. The `generation` + `owner` + `running` predicate is part of
+   * the SQL, so a superseded generation CANNOT overwrite the new owner's row.
+   *
+   * Returns whether this generation still held the run (`changes() === 1`).
+   */
+  private finishRun(input: {
+    extractionId: string;
+    generation: number;
+    owner: string;
+    candidateIds: string[];
+    at: string;
+    error?: string;
+  }): boolean {
+    const status = input.error === undefined ? "completed" : "failed";
+    const res = this.repo.db
+      .prepare(
+        `UPDATE extraction_run
+            SET status = ?, finished_at = ?, candidate_ids_json = ?, error = ?
+          WHERE extraction_id = ? AND status = 'running' AND generation = ? AND owner = ?`,
+      )
+      .run(
+        status,
+        input.at,
+        JSON.stringify(input.candidateIds),
+        input.error ?? null,
+        input.extractionId,
+        input.generation,
+        input.owner,
+      );
+    return Number(res.changes) === 1;
   }
 
   /** The predecessor of the same (blockHash, dimension) under ANY other extraction config. */
@@ -316,7 +554,7 @@ export class ExplicitBlockExtractor implements CandidateExtractor {
     this.parserVersion = options.parserVersion ?? DEFAULT_PARSER_VERSION;
   }
 
-  extract(input: ExtractInput): CandidateDraft[] {
+  async extract(input: ExtractInput): Promise<CandidateDraft[]> {
     // read the BLOCKS from the version's normalized text; `fragments` resolve their evidence
     const text = normalizeText(input.version.rawText);
     const drafts: CandidateDraft[] = [];

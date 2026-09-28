@@ -113,16 +113,16 @@ function downstreamFingerprint(db: ResearchDb): string {
 }
 
 describe("T-C6-6 — candidate identity, runs and lineage", () => {
-  test("T-C6-6a: the same extraction config re-run REUSES ids and creates no duplicates", () => {
+  test("T-C6-6a: the same extraction config re-run REUSES ids and creates no duplicates", async () => {
     const e = env();
     const version = versionOf(e);
 
-    const r1 = e.x.run(version, AT);
+    const r1 = await e.x.run(version, AT);
     assert.equal(r1.status, "completed");
     assert.equal(r1.created, 2);
     assert.equal(r1.reused, 0);
 
-    const r2 = e.x.run(version, AT2);
+    const r2 = await e.x.run(version, AT2);
     assert.equal(r2.created, 0, "a re-run with the SAME config must not create candidates");
     assert.equal(r2.reused, 2);
     assert.deepEqual(r2.candidateIds, r1.candidateIds);
@@ -132,17 +132,17 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
     assert.equal(e.repo.getExtractionRun(r2.extractionId)?.status, "completed");
   });
 
-  test("T-C6-6b: a NEW config creates NEW candidates and links them by lineage", () => {
+  test("T-C6-6b: a NEW config creates NEW candidates and links them by lineage", async () => {
     const e = env();
     const version = versionOf(e);
-    const r1 = e.x.run(version, AT);
+    const r1 = await e.x.run(version, AT);
 
     const v2 = new CandidateExtractionService(e.repo, new ExplicitBlockExtractor(e.repo), {
       parserVersion: "candidate-parser/v2",
     });
     assert.notEqual(v2.extractionConfigKey, e.x.extractionConfigKey);
 
-    const r2 = v2.run(version, AT2);
+    const r2 = await v2.run(version, AT2);
     assert.equal(r2.created, 2, "a new config must produce its own candidates");
     assert.equal(e.repo.listClaimCandidates(version.materialVersionId).length, 4);
 
@@ -157,10 +157,10 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
     assert.equal(e.repo.getClaimCandidate(r1.candidateIds[0])?.supersedesCandidateRef, undefined);
   });
 
-  test("T-C6-6c: an existing candidate is NEVER overwritten (a human edit survives a re-run)", () => {
+  test("T-C6-6c: an existing candidate is NEVER overwritten (a human edit survives a re-run)", async () => {
     const e = env();
     const version = versionOf(e);
-    const r1 = e.x.run(version, AT);
+    const r1 = await e.x.run(version, AT);
     const id = r1.candidateIds[0];
     const original = e.repo.getClaimCandidate(id);
     assert.ok(original !== undefined);
@@ -183,15 +183,15 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
     assert.equal(after.decisionRelation, undefined);
 
     // and a full re-run still leaves it alone
-    const r2 = e.x.run(version, AT3);
+    const r2 = await e.x.run(version, AT3);
     assert.equal(r2.reused, 2);
     assert.equal(e.repo.getClaimCandidate(id)?.statement, original.statement);
   });
 
-  test("T-C6-6d: fresh candidates are draft / projectionStatus none / carry NO relation", () => {
+  test("T-C6-6d: fresh candidates are draft / projectionStatus none / carry NO relation", async () => {
     const e = env();
     const version = versionOf(e);
-    const r = e.x.run(version, AT);
+    const r = await e.x.run(version, AT);
     for (const id of r.candidateIds) {
       const c = e.repo.getClaimCandidate(id);
       assert.ok(c !== undefined);
@@ -212,11 +212,11 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
     assert.equal(byDim.get("demand")?.confidence, undefined);
   });
 
-  test("T-C6-6e: I-C6-4 — creating candidates changes NOTHING downstream", () => {
+  test("T-C6-6e: I-C6-4 — creating candidates changes NOTHING downstream", async () => {
     const e = env();
     const version = versionOf(e);
     const before = downstreamFingerprint(e.db);
-    const r = e.x.run(version, AT);
+    const r = await e.x.run(version, AT);
     assert.equal(r.created, 2);
     assert.equal(downstreamFingerprint(e.db), before, "candidates must not reach Pool / Gap / Evaluation");
     // and they are not visible as beliefs either
@@ -226,17 +226,17 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
     );
   });
 
-  test("T-C6-6f: a throwing extractor is recorded as a FAILED run with its error and no candidates", () => {
+  test("T-C6-6f: a throwing extractor is recorded as a FAILED run with its error and no candidates", async () => {
     const e = env();
     const version = versionOf(e);
     const boom = new CandidateExtractionService(e.repo, {
       modelVersion: "none",
       promptVersion: "none",
-      extract: () => {
+      extract: async () => {
         throw new Error("extractor exploded");
       },
     });
-    const r = boom.run(version, AT);
+    const r = await boom.run(version, AT);
     assert.equal(r.status, "failed");
     assert.equal(r.created, 0);
     assert.equal(r.error, "extractor exploded");
@@ -247,7 +247,7 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
     assert.equal(e.repo.listClaimCandidates(version.materialVersionId).length, 0);
   });
 
-  test("T-C6-6g: a draft without evidence, or with an empty statement, is rejected", () => {
+  test("T-C6-6g: a draft without evidence, or with an empty statement, is rejected", async () => {
     const e = env();
     const version = versionOf(e);
     const cases: CandidateDraft[][] = [
@@ -259,18 +259,18 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
       const svc = new CandidateExtractionService(e.repo, {
         modelVersion: "none",
         promptVersion: "none",
-        extract: () => drafts,
+        extract: async () => drafts,
       });
-      const r = svc.run(version, AT);
+      const r = await svc.run(version, AT);
       assert.equal(r.status, "failed", JSON.stringify(drafts));
       assert.equal(e.repo.listClaimCandidates(version.materialVersionId).length, 0);
     }
   });
 
-  test("T-C6-6h: I-C6-8 — isProjectable needs a non-draft status AND an explicit relation", () => {
+  test("T-C6-6h: I-C6-8 — isProjectable needs a non-draft status AND an explicit relation", async () => {
     const e = env();
     const version = versionOf(e);
-    const r = e.x.run(version, AT);
+    const r = await e.x.run(version, AT);
     const c = e.repo.getClaimCandidate(r.candidateIds[0]);
     assert.ok(c !== undefined);
 
@@ -290,10 +290,10 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
     assert.equal(isProjectable({ ...c, reviewStatus: "rejected", decisionRelation: "SUPPORT" }), false);
   });
 
-  test("§C6.7 — identity covers block, dimension AND config; the review trail is append-only", () => {
+  test("§C6.7 — identity covers block, dimension AND config; the review trail is append-only", async () => {
     const e = env();
     const version = versionOf(e);
-    const r = e.x.run(version, AT);
+    const r = await e.x.run(version, AT);
 
     // the extraction config key is part of identity
     const sameBlock = r.candidateIds[0];
@@ -301,7 +301,7 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
       schemaVersion: "candidate-schema/v2",
     });
     assert.notEqual(otherConfig.extractionConfigKey, e.x.extractionConfigKey);
-    const r2 = otherConfig.run(version, AT2);
+    const r2 = await otherConfig.run(version, AT2);
     assert.ok(!r2.candidateIds.includes(sameBlock));
 
     // reviews append; the same (candidate, action, at) does not duplicate
@@ -347,10 +347,10 @@ const REPEATED = [
 ].join("\n\n");
 
 describe("candidate identity for repeated text, and evidence validation", () => {
-  test("T-C6-12: the SAME statement in two places yields ONE candidate that keeps BOTH sources", () => {
+  test("T-C6-12: the SAME statement in two places yields ONE candidate that keeps BOTH sources", async () => {
     const e = env();
     const version = versionOf(e, REPEATED);
-    const r = e.x.run(version, AT);
+    const r = await e.x.run(version, AT);
 
     // one candidate (identity is (version, blockHash, dimension, config)) ...
     assert.equal(r.created, 1, "the same statement is one candidate, not two");
@@ -363,19 +363,19 @@ describe("candidate identity for repeated text, and evidence validation", () => 
     assert.equal(r.merged, 1, "the merge is reported, not silent");
 
     // a further re-run changes nothing
-    const again = e.x.run(version, AT2);
+    const again = await e.x.run(version, AT2);
     assert.equal(again.created, 0);
     assert.equal(again.merged, 0);
     assert.equal(e.repo.getClaimCandidate(r.candidateIds[0])?.evidenceRefs.length, 2);
   });
 
-  test("T-C6-13: a draft citing non-existent evidence is refused (a model may not invent sources)", () => {
+  test("T-C6-13: a draft citing non-existent evidence is refused (a model may not invent sources)", async () => {
     const e = env();
     const version = versionOf(e);
     const svc = new CandidateExtractionService(e.repo, {
       modelVersion: "none",
       promptVersion: "none",
-      extract: () => [
+      extract: async () => [
         {
           dimension: "market",
           statement: "x",
@@ -384,17 +384,17 @@ describe("candidate identity for repeated text, and evidence validation", () => 
         },
       ],
     });
-    const r = svc.run(version, AT);
+    const r = await svc.run(version, AT);
     assert.equal(r.status, "failed");
     assert.match(r.error ?? "", /does not exist/);
     assert.equal(e.repo.listClaimCandidates(version.materialVersionId).length, 0);
   });
 
-  test("T-C6-13b: evidence that EXISTS but belongs to ANOTHER material version is refused", () => {
+  test("T-C6-13b: evidence that EXISTS but belongs to ANOTHER material version is refused", async () => {
     const e = env();
     // version 1 really produces evidence of its own
     const v1 = versionOf(e);
-    const r1 = e.x.run(v1, AT);
+    const r1 = await e.x.run(v1, AT);
     assert.equal(r1.created, 2);
     const foreignEvidence = e.repo.getClaimCandidate(r1.candidateIds[0])?.evidenceRefs[0] ?? "";
     assert.ok(foreignEvidence.length > 0, "v1 produced real evidence");
@@ -419,7 +419,7 @@ describe("candidate identity for repeated text, and evidence validation", () => 
     const svc = new CandidateExtractionService(e.repo, {
       modelVersion: "none",
       promptVersion: "none",
-      extract: () => [
+      extract: async () => [
         {
           dimension: "market",
           statement: "跨版本引用",
@@ -428,7 +428,7 @@ describe("candidate identity for repeated text, and evidence validation", () => 
         },
       ],
     });
-    const r2 = svc.run(v2, AT2);
+    const r2 = await svc.run(v2, AT2);
     assert.equal(r2.status, "failed");
     assert.match(r2.error ?? "", /belongs to material version/);
     assert.match(r2.error ?? "", new RegExp(v1.materialVersionId));
