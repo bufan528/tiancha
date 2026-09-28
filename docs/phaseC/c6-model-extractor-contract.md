@@ -1,7 +1,7 @@
 # Phase C6 · 模型提取器 Implementation Contract（D-C6-H / D-C6-I / D-C6-J）
 
-> 状态：**rev9 — Slice F Contract Clarification 的修订**。rev8 新增 §M13 锁定 F / F2 边界；**rev9 修正一处 BLOCKING 输入闭合缺口并澄清两项测试措辞**（详见 §M12 与 §M13.4 / §M13.7）。**不含任何代码变化**。实现进度：**Slice A `4274bab`**（窗口切分）· **Slice B `da1993b`**（注入缝 + 引用校验）· **Slice C `cf5fd49`**（配置身份）· **Slice D `52168ba`**（`extraction_run` 迁移）· **Slice E `4f733a1` + `9d47415` rev2**（异步 run / 认领 / 租约 / fencing）**均已验收；Slice E 已 FROZEN**。**Slice F（持久化与原子收口）/ F2（模型链路接线）按 §M13 拆分**；F 未授权实现。仍**未授权**：真实模型接入 · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
-> rev2–rev8 = 各轮审查意见的收口（§M2.1–§M2.5）、实施期文档同步与 F 契约澄清。
+> 状态：**rev10 — §M13.9 / §M13.10 落定（纯文档）**。rev9 完成了 F 输入闭合修正；**rev10 把 F 的持久化入口（唯一入口 `persistValidatedCandidates()`）与 §M7.1 completed reuse 的落点（含 Slice E 身份测试迁移规则）写成正式条文**（§M13.9 / §M13.10）。**不含任何代码变化**。实现进度：**Slice A `4274bab`**（窗口切分）· **Slice B `da1993b`**（注入缝 + 引用校验）· **Slice C `cf5fd49`**（配置身份）· **Slice D `52168ba`**（`extraction_run` 迁移）· **Slice E `4f733a1` + `9d47415` rev2**（异步 run / 认领 / 租约 / fencing）**均已验收；Slice E 已 FROZEN**。**Slice F（持久化与原子收口）/ F2（模型链路接线）按 §M13 拆分**；F 未授权实现。仍**未授权**：真实模型接入 · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+> rev2–rev9 = 各轮审查意见的收口（§M2.1–§M2.5）、实施期文档同步与 F 契约澄清。
 > 依据：用户 2026-09-27 的三项结构性裁决（§M2）。用户原话要点：**输入按可追溯片段分批**、**模型只提交引用文本与位置且 ID 由天查生成**、**模型调用异步且整次运行全部验证后再落候选**。
 > 前置契约：`docs/phaseC/c6-implementation-contract.md` §C6.18–§C6.27（资料闭环：材料版本 / Fragment / Evidence / 候选 / 人工闸门 / 投影；其中 `[CANDIDATE]` 确定性提取器 **已交付**）· `docs/HANDOFF.md` §10（**LLM 边界**：禁止 LLM 直接产生 `Claim` / `Fact` / `Knowledge` / `PoolItem` / `Evaluation` 或 0–100 分；模型只能**起草**带来源定位的候选且**必须人工确认**）。
 > 文件定位：**C6 模型提取器专项契约**（同 `c2-*` / `c5-*` / `c6-implementation-contract.md`）；总契约 `implementation-contract.md` §30 只做索引。
@@ -707,6 +707,7 @@ interface ExtractionConfigSnapshot {
 ```text
 Slice F  = 持久化与原子收口（Persistence boundary）
            输入 = ValidatedCandidate[]（draft payload + ResolvedQuote[]，见 §M13.4），不含模型调用
+           唯一持久化入口 = CandidateExtractionService.persistValidatedCandidates()（§M13.9）
 
 Slice F2 = 模型链路接线（Model wiring）
            输入 = MaterialVersion → ExtractionWindow → ModelExtractionAdapter → resolveQuotes()
@@ -866,7 +867,7 @@ packages/research/src/storage/research-repository.ts   ← 仅 §M13.3 的 draft
 | F-13 | 失败后 `extraction_run` 正确终态（`failed` + `error`；该写入在**事务之外**） |
 | **F-14** | 失败**不留任何业务半成品**（`claim_candidate` / `fragment_evidence` / `fragment` 零新增） |
 | F-15 | 下游 10 张表**完整内容指纹**与运行前逐项相等（§M8 / T-C6-33） |
-| **F-16** | 已有 `completed` 运行 ⇒ `reusedRun = true`。★ rev9 澄清 **zero side effect 必须包括 `extraction_run` 本身**：**不新建 attempt 行、不改动既有 `completed` 行**（不写 `finished_at`/`candidate_ids_json`）；调用前后 `extraction_run` 仍**恰好 1 条 `completed`**，`candidate` / `fragment` / `fragment_evidence` 计数不变，下游 10 表指纹不变。**反例**：先 INSERT 一条新 run 再"发现 completed"⇒ 必须失败（那不是复用）。用计数 stub 即可，**不需要真实模型** |
+| **F-16** | 已有 `completed` 运行 ⇒ `reusedRun = true`。★ rev9 澄清 **zero side effect 必须包括 `extraction_run` 本身**：**不新建 attempt 行、不改动既有 `completed` 行**（不写 `finished_at`/`candidate_ids_json`）；调用前后 `extraction_run` 仍**恰好 1 条 `completed`**，`candidate` / `fragment` / `fragment_evidence` 计数不变，下游 10 表指纹不变。**反例**：先 INSERT 一条新 run 再"发现 completed"⇒ 必须失败（那不是复用）。★ rev10：实现条文见 **§M13.10**（判断必须在创建任何新 attempt 之前）；"不执行抽取"用 `CandidateExtractor.extract()` 的 counting stub 断言为 **0 次**，**不得接入** `ModelExtractionAdapter` |
 
 ### §M13.8 F 的边界自检（越界即打回）
 
@@ -881,12 +882,122 @@ packages/research/src/storage/research-repository.ts   ← 仅 §M13.3 的 draft
 ✗ 不重开 Slice E
 ```
 
+### §M13.9 F 的持久化入口
+
+Slice F 的持久化能力必须通过 `CandidateExtractionService` 上**一个新的 async 方法**暴露。其语义形如：
+
+```ts
+async persistValidatedCandidates(input: {
+  version: MaterialVersion;
+  extractionId: string;
+  owner: string;
+  generation: number;
+  extractionConfigKey: string;
+  snapshot: ExtractionConfigSnapshot;
+  candidates: ValidatedCandidate[];
+}): Promise<PersistResult>
+```
+
+其中具体 TypeScript 类型可复用仓库既有类型；**不得修改 Slice B 的 `ResolvedQuote` 六字段契约**。
+
+该方法负责完成 §M13.4 所定义的 F 持久化步骤，包括：
+
+1. generation / owner fencing；
+2. Fragment 持久化；
+3. Evidence 持久化；
+4. ClaimCandidate 身份计算与持久化；
+5. reviewed protection 与 `reused` / `skippedReviewed` 计数；
+6. snapshot / audit 字段；
+7. 带 generation / owner / status 谓词的 `completed` 收口。
+
+上述步骤必须位于**同一个主库事务**中。任一 persistence unit 抛错，整个主事务必须 rollback；`failed` 状态更新必须发生在该事务之外，并继续受 generation / owner fencing 约束。
+
+`run()` 必须继续承担 Slice E 已有的 async / claim / lease / fencing / extractor 调用职责，并通过该唯一持久化入口完成候选写入。
+
+**候选持久化逻辑只能存在一份实现。** `run()` 与 Slice F persistence tests 必须调用同一 `persistValidatedCandidates()`；禁止在 F 测试或其他新路径中复制第二套候选写入逻辑。
+
+除为接入该唯一入口所必需的最小重构外，不得改变 Slice E 的 async / claim / lease / fencing 语义。
+
+**允许的结构**：
+
+```text
+run()
+  ↓
+claim / lease
+  ↓
+extract()
+  ↓
+validateDrafts()
+  ↓
+persistValidatedCandidates(...)
+  ↓
+finish / lease release
+```
+
+**不允许**：
+
+```text
+run()                ── 一套写入逻辑
+F test/service       ── 另一套写入逻辑
+```
+
+```text
+F → 重新调用 ModelExtractionAdapter   ✗
+F → 重新解析 draft                     ✗
+F → 从 quote 反推 statement/dimension/contentKind ✗
+```
+
+`ValidatedCandidate` 仍然是 **B/F2 边界产生的输入对象**，F 只是消费它。
+
+### §M13.10 §M7.1 Completed Reuse 的落点与 Slice E 测试迁移
+
+§M7.1 / §M7.1a 规定的：
+
+> **已有 `(materialVersionId, extractionConfigKey)` 的 `completed` extraction run ⇒ 直接复用其 `candidateIds`，`COMMIT`，且不创建新的 extraction attempt / 不修改既有 completed row**
+
+在 Slice E 中尚未实现。
+
+因此该行为明确属于 **Slice F 的交付内容**，对应 §M13.1 的 `reusedRun` 与 §M13.7 的 F-16；**不得**视为重新设计或修改 Slice E 的 claim / lease / fencing 语义。
+
+`completed` 判断必须发生在**创建任何新 attempt 之前**。实现可以位于 `run()` 入口或 `claimRun()` 内，但必须处于能够保证其与 attempt 创建之间**不存在竞态**的主库事务 / 原子 claim 边界内。
+
+对已经存在 `status='completed'` 的 `(materialVersionId, extractionConfigKey)`：
+
+* 返回 `reusedRun = true`；
+* 复用既有 `candidateIds`；
+* **不调用** `CandidateExtractor.extract()`；
+* **不创建**新的 `extraction_run`；
+* **不修改**既有 `completed` `extraction_run`；
+* **不产生**新的 Fragment / Evidence / ClaimCandidate；
+* **不产生**任何 downstream mutation。
+
+`reusedRun = true` 时，§M13.1 规定的 candidate-level `reused`、`skippedReviewed` 等持久化计数必须**保持为零**。
+
+#### Slice E 身份测试迁移
+
+因上述既有契约行为此前未由 Slice E 实现，Slice E 测试文件 `phase-c6-run-claim.test.ts` 中**依赖同一 `(materialVersionId, extractionConfigKey)` 在已 `completed` 后继续创建 attempt 2 / 3 的测试场景，可以调整其前置场景**，以适配 completed reuse。
+
+但测试**必须继续覆盖**原 Slice E 已锁定的身份 / fencing 语义：
+
+* `attemptSeq` 进入 extraction run identity；
+* 相同 `attemptSeq` 产生相同 run identity；
+* `started_at` 不参与 run identity；
+* lease takeover 产生新的 generation / attempt；
+* 旧 generation 的写入被 fencing 阻断。
+
+调整**只能改变测试如何构造"尚未 `completed` 的 claim/takeover 场景"**，**不得删除、弱化或改变上述测试目标**。
+
+除该测试文件外，**不得修改** Slice A/B/C/D/E 的其他测试或生产文件；`candidate-extraction-service.ts` 的必要改动由 Slice F 白名单（§M13.6）覆盖。
+
+F-16 的"复用时不执行抽取"验证使用现有 `CandidateExtractor.extract()` 接口的 **counting stub**；**不得接入** `ModelExtractionAdapter`。`ModelExtractionAdapter` 的接入仍属于 Slice F2（§M13.5）。
+
 ---
 
 ## §M12 修订历史
 
 | 版本 | 变更 |
 |---|---|
+| **rev10** | **§M13.9 / §M13.10 落定**（纯文档，无代码变化）：把两处"F 实现前必须先锁定的语义"写成正式条文 —— **§M13.9 F 的持久化入口**：F 的持久化能力必须由 `CandidateExtractionService` 上一个**新的 async 方法** `persistValidatedCandidates(input: { version, extractionId, owner, generation, extractionConfigKey, snapshot, candidates })` 暴露；它完成 §M13.4 的 1–7 步，**全部在同一主库事务**内，任一 persistence unit 抛错即整体回滚、`failed` 更新在事务之外；`run()` 保留 E 的 async / claim / lease / fencing / extractor 职责并**经由该唯一入口**写候选；**候选写入只能有一份实现**（禁止在 F 测试或新路径复制第二套）。**§M13.10 §M7.1 completed reuse 的落点与 Slice E 测试迁移**：明确该行为自 rev3 起即在契约内但 **Slice E 未实现** ⇒ **属 Slice F 的交付内容**（对应 `reusedRun` / F-16），**不是**重开或修改 Slice E；`completed` 判断必须发生在**创建任何新 attempt 之前**（`run()` 入口或 `claimRun()` 内，但需处于无竞态的原子边界）；命中时 `reusedRun = true`、复用既有 `candidateIds`、**不调用** `extract()`、不新建/不修改 `extraction_run`、不产生任何 Fragment / Evidence / ClaimCandidate 与 downstream mutation，候选级计数保持为 0。因该行为变化，允许**调整** `phase-c6-run-claim.test.ts` 中"已 completed 后继续创建 attempt 2/3"这类场景的**前置构造**，但必须**完整保留** `attemptSeq` 进身份 / 同 `attemptSeq` 同 id / `started_at` 不参与身份 / takeover 产生新 generation·attempt / 旧 generation 被 fencing 阻断这五项测试目标；除该测试文件外不得改动 Slice A/B/C/D/E 的其它测试与生产文件。F-16 的"复用不抽取"用现有 `CandidateExtractor.extract()` 的 **counting stub**，**不得接入** `ModelExtractionAdapter` |
 | **rev9** | **Slice F Contract Clarification 的修订**（纯文档，无代码变化）：**BLOCKING-1** —— §M13.4 的 F 输入由「唯一输入 = `ResolvedQuote[]`」改为「**已验证候选 payload + `ResolvedQuote[]`**」，并定义 `ValidatedCandidate { draft: { dimension, statement, contentKind, confidence? }, quotes: ResolvedQuote[] }`；理由：`ResolvedQuote`（Slice B 冻结）**只有六字段**，不含 `statement` / `dimension` / `contentKind`，而候选身份依赖它们 ⇒ 原表述**输入契约不闭合**，实现时只能三选一且都错。同时锁死 **不得修改 `ResolvedQuote` 的六字段契约**、**不得把 draft 字段塞进 `ResolvedQuote`**、**F 不重新生成/解析候选内容**。**NON-BLOCKING-1** —— F-3 措辞由「任一 batch 失败」改为「**任一 persistence unit 在落库过程中抛错 ⇒ 整个主库事务回滚**」（F 不是模型 batch executor）。**NON-BLOCKING-2** —— F-16 明确 `completed` 复用的 zero side effect **包括 `extraction_run` 本身**（不新建 attempt、不改既有 `completed` 行），并给出反例 |
 | **rev8** | **Slice F Contract Clarification**（纯文档，无代码变化）：新增 **§M13**，把 F（持久化与原子收口）/ F2（模型链路接线）拆分锁死，并解决 preflight 审计的 5 个必须先定口径的问题 —— **C-F-1** `reusedRun: boolean`（整次运行被复用）与 `reused: number`（候选级复用计数）**分列**，`skippedReviewed: number` 独立；**C-F-2** reviewed protection 判据收紧为 `reviewStatus !== "draft" OR reviewed_by IS NOT NULL`（覆盖"`revise` 有意保持 `draft` 但写 `reviewedBy`"的情形）；**C-F-3** Repository **SQL** 守卫是 reviewed protection 的最终防线（允许改 `research-repository.ts`，仅限该守卫）；**C-F-4** F 的输入是 `ResolvedQuote[]`，不含模型调用；**C-F-5** F2 负责 A/B/C 接线 / `mxcfg-` 身份分派 / `AbortController` + 逐批 `signal` / `ADAPTER_NOT_CONFIGURED`。附 F 文件白名单（§M13.6）与测试矩阵 F-1…F-16（§M13.7）。**不重开 Slice E**（`AbortController` 归 F2） |
 | **rev7** | **实施期文档同步**（纯 docs，无代码变化）：§M5.3 明确**实施切片边界** —— `startGlobal` / `endGlobal` / `fragmentLocator` / `quoteHash` / `quoteText` 由 **Slice B 计算**，而 `fragmentId` / Fragment 文本 / `evidenceId` / `stance` / 落地方式由 **Slice F 生成并落库**（附 Slice A/B/F 归属表与已验收 commit）；表头由"生成"改为"**计算**，并在 Slice F 写入时**生成**"；§M10 的 `T-C6-31` / `T-C6-32` 标注 **`(unit)` 子集已落地于 Slice B**，含 Fragment 的端到端语义仍属 Slice F。**目的**：避免后续实施者误以为 Slice B 应已生成身份 |
@@ -897,4 +1008,4 @@ packages/research/src/storage/research-repository.ts   ← 仅 §M13.3 的 draft
 | **rev2** | **第一轮审查意见的四处补齐**（§M2.1）：① **引文即 Fragment**（精确 `char_range`）+ 更正 `fragmentEvidenceIdFor` 的 `stance` 参数 + "四者一致"不变量；② **分隔符归前一窗口** ⇒ 窗口覆盖全文；明确**坐标单位 = UTF-16 code unit**；补配置约束；明确**首版不承诺跨段落组边界的整条引文**；③ **配置身份与运行审计**补入分块器 / **方法论版本** / **维度集合 hash** / **`maxQuoteChars`**，审计保留原值；④ **重跑语义收紧**为"已有成功运行 ⇒ 复用，不再调用模型"。另：`stance` 的语义与**审核界面可见性**（§M5.5）· 超时的**边界与取消**（`AbortSignal`，§M6.2a）· 删除无法失败的"不连续"检查并补 V4（长度上限）验收 · T-C6-33 改为**完整下游状态指纹** · 新增 T-C6-37 |
 | **rev1** | 首版（DESIGN ONLY）：D-C6-H/I/J 三项裁定落为可执行规则 —— 窗口协议（`para-greedy-v1` + 重叠 + 规则进身份）· 模型输出 schema 与 V1–V5 引用校验 · 异步化与"全成或全败"单事务 · 不覆盖已审核候选 · 验收 T-C6-29…T-C6-36 · 改动清单（含 `chunker_version` 加列） |
 
-**End of contract（rev9: Slice F Contract Clarification 的修订（输入闭合修正）—— Slice A–E 已验收（E 已 FROZEN）；Slice F / F2 边界见 §M13，F 未授权实现）.**
+**End of contract（rev10: §M13.9 / §M13.10 落定 —— Slice A–E 已验收（E 已 FROZEN）；Slice F / F2 边界与入口见 §M13，F 未授权实现）.**
