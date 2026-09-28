@@ -214,7 +214,10 @@ describe("Slice E — claim / lease / fencing (§M7.1a)", () => {
     const runA = a.service.run(f.version, AT, { owner: "owner-A", leaseMs: 60_000 });
     const runB = await b.service.run(f.version, AT, { owner: "owner-B", leaseMs: 60_000 });
 
-    assert.equal(runB.status, "in_progress", "B must NOT obtain the run while A holds a live lease");
+    // ★ §M6.2: `status` keeps its two-member contract enum — the "another run is live" fact is
+    // carried ONLY by `in_progress`, never by a third status member.
+    assert.ok(runB.in_progress !== undefined, "B must NOT obtain the run while A holds a live lease");
+    assert.equal(runB.status, "failed", "the run-result status stays within the contract enum");
     assert.equal(runB.in_progress?.owner, "owner-A");
     assert.equal(runB.in_progress?.attemptSeq, 1);
     assert.equal(runB.created + runB.reused, 0, "B extracted nothing");
@@ -241,7 +244,8 @@ describe("Slice E — claim / lease / fencing (§M7.1a)", () => {
     const runA = a.service.run(f.version, AT, { owner: "owner-A", leaseMs: 60_000 });
     for (let i = 1; i <= 3; i += 1) {
       const r = await b.service.run(f.version, AT, { owner: `owner-B${i}`, leaseMs: 60_000 });
-      assert.equal(r.status, "in_progress", `attempt ${i} must be refused`);
+      assert.ok(r.in_progress !== undefined, `attempt ${i} must be refused`);
+      assert.equal(r.status, "failed", "status stays inside the contract enum");
       assert.equal(r.in_progress?.owner, "owner-A", "the live owner does not change");
     }
     assert.equal(runsFor(b, f.version).length, 1, "no second attempt row was created");
@@ -325,6 +329,53 @@ describe("Slice E — claim / lease / fencing (§M7.1a)", () => {
     assert.equal(rows[0]!.owner, "owner-A");
     assert.equal(rows[0]!.attempt_seq, 1);
     assert.equal(rows[0]!.generation, 1);
+  });
+
+  test("★ §M6.2a: the run id is (materialVersionId, configKey, attemptSeq) — `started_at` does NOT enter it", async () => {
+    // Same material content => the same materialVersionId. Two INDEPENDENT databases, each taking
+    // attempt 1, but with DIFFERENT start times: a `started_at`-based identity would differ here.
+    const f1 = fixture();
+    const f2 = fixture();
+    const a1 = connection(f1.dbPath, new ImmediateExtractor(f1.drafts), new Clock());
+    const a2 = connection(f2.dbPath, new ImmediateExtractor(f2.drafts), new Clock());
+
+    const r1 = await a1.service.run(f1.version, AT, { owner: "owner-A", leaseMs: 60_000 });
+    const r2 = await a2.service.run(f2.version, "2027-05-05T05:05:05.000Z", {
+      owner: "owner-A",
+      leaseMs: 60_000,
+    });
+
+    assert.equal(f1.version.materialVersionId, f2.version.materialVersionId, "same content => same version id");
+    assert.equal(r1.status, "completed");
+    assert.equal(r2.status, "completed");
+    assert.equal(
+      r1.extractionId,
+      r2.extractionId,
+      "★ the same (version, config, attemptSeq) must yield the SAME run id even with different started_at",
+    );
+
+    // And a takeover (attemptSeq 2) on the same (version, config) yields a DIFFERENT run id.
+    const clock = new Clock();
+    const gated = new GatedExtractor(f1.drafts);
+    const held = connection(f1.dbPath, gated, clock);
+    const taker = connection(f1.dbPath, new ImmediateExtractor(f1.drafts), clock);
+    const runHeld = held.service.run(f1.version, AT, { owner: "owner-C", leaseMs: 1_000 });
+    clock.advance(60_000);
+    const takeover = await taker.service.run(f1.version, AT, { owner: "owner-D", leaseMs: 600_000 });
+    gated.open();
+    await runHeld;
+
+    assert.equal(takeover.status, "completed");
+    assert.notEqual(takeover.extractionId, r1.extractionId, "attemptSeq is part of the run identity");
+    // f1 now holds: attempt 1 (completed) · attempt 2 (lease_expired by the takeover) · attempt 3
+    const rows = runsFor(taker, f1.version);
+    assert.deepEqual(
+      rows.map((r) => r.attempt_seq),
+      [1, 2, 3],
+      "each claim takes MAX(attempt_seq)+1",
+    );
+    assert.equal(rows[1]!.status, "failed");
+    assert.equal(rows[1]!.error, "lease_expired");
   });
 
   test("invalid timeoutMs / leaseMs are REFUSED, never clamped", async () => {

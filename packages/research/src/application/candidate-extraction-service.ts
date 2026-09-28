@@ -75,8 +75,8 @@ export interface RunResult {
   /** How many of those actually gained evidence in this run. */
   merged: number;
   candidateIds: string[];
-  /** ★ Slice E adds `in_progress`: this call found a live run elsewhere and extracted nothing. */
-  status: "completed" | "failed" | "in_progress";
+  /** Unchanged (§M6.2): Slice E does NOT add a status member — `in_progress` is its own field. */
+  status: "completed" | "failed";
   error?: string;
   /**
    * ★ Slice E: set when this call found ANOTHER live run for the same (material version, config)
@@ -214,13 +214,16 @@ export class CandidateExtractionService {
       now,
     });
     if (claim.kind === "in_progress") {
+      // ★ No extraction was performed. `status` keeps its contract enum (§M6.2 = running |
+      // completed | failed): that another live run holds this (version, config) pair is expressed
+      // ONLY by `in_progress`, never by adding a third status member.
       return {
         extractionId: "",
         created: 0,
         reused: 0,
         merged: 0,
         candidateIds: [],
-        status: "in_progress",
+        status: "failed",
         in_progress: { owner: claim.owner, leaseUntil: claim.leaseUntil, attemptSeq: claim.attemptSeq },
       };
     }
@@ -386,12 +389,11 @@ export class CandidateExtractionService {
         .get(input.materialVersionId, input.configKey) as { m: number };
       const attemptSeq = Number(maxRow.m) + 1;
       const generation = attemptSeq;
-      // the attempt number makes the id unique even within the same millisecond (contract §M6.2a)
-      const extractionId = extractionRunIdFor(
-        input.materialVersionId,
-        input.configKey,
-        `${input.startedAt}#${attemptSeq}`,
-      );
+      // ★ §M6.2a: run id = extractionRunIdFor(materialVersionId, extractionConfigKey, attemptSeq).
+      // `started_at` is an AUDIT field only and must NOT enter the identity — two requests in the
+      // same millisecond would otherwise collide. NOTE: the identity function itself is NOT modified
+      // by this slice; its third parameter is fed the attempt token, which is what the contract fixes.
+      const extractionId = extractionRunIdFor(input.materialVersionId, input.configKey, String(attemptSeq));
       db.prepare(
         `INSERT INTO extraction_run
            (extraction_id, material_version_id, model_version, prompt_version, parser_version,
