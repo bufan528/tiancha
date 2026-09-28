@@ -481,7 +481,24 @@ export class ResearchDb {
         finished_at TEXT,
         status TEXT NOT NULL,
         candidate_ids_json TEXT NOT NULL DEFAULT '[]',
-        error TEXT
+        error TEXT,
+        -- ★ C6 model-extractor (§M9 #4): audit + claim columns. Databases created before this
+        -- slice receive them from migrateExtractionRunState() (PRAGMA-prechecked ALTER).
+        -- ALL NULLABLE on purpose: nothing writes them yet — the claim/run paths are Slice E/F.
+        chunker_version TEXT,
+        methodology_version_id TEXT,
+        dimension_set_hash TEXT,
+        max_quote_chars INTEGER,
+        -- the attempt number of this run inside its (material_version_id, extraction_config_key)
+        attempt_seq INTEGER,
+        -- the run's IMMUTABLE configuration snapshot (what the model was asked to do — config, not identity)
+        config_snapshot_json TEXT,
+        -- §M7.1a claim lease
+        owner TEXT,
+        lease_until TEXT,
+        -- ★ the RUN's fencing generation token — NOT the model's generation parameters
+        -- (those live inside config_snapshot_json.generation)
+        generation INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_extraction_run_version
         ON extraction_run(material_version_id, extraction_config_key);
@@ -605,6 +622,10 @@ export class ResearchDb {
     this.ensureProposalActiveUniqueness();
     this.ensureCandidateSupersedesColumn();
     this.ensureCandidateRevisedColumn();
+    // ★ C6 model-extractor (§M9 #4c): columns + attempt_seq backfill + legacy-running downgrade +
+    // conflict check (FAIL FAST) + the partial unique index. The method OWNS its transaction
+    // boundary — `migrate()` deliberately opens no transaction, so a nested BEGIN is impossible.
+    this.migrateExtractionRunState();
   }
 
   /**
@@ -743,7 +764,14 @@ export class ResearchDb {
    * decision" true instead of "resume may re-choose one".
    */
   private ensureCandidateSupersedesColumn(): void {
-    this.addColumnIfMissing("claim_candidate", "superseded_claim_ref", "TEXT");
+    // ★ NOTE: the third argument is the COMPLETE ALTER statement. Passing a bare type ("TEXT")
+    // would make this a no-op on a fresh database and a CRASH on an old one (exec("TEXT") throws,
+    // the re-check still finds no column, and the error is rethrown).
+    this.addColumnIfMissing(
+      "claim_candidate",
+      "superseded_claim_ref",
+      "ALTER TABLE claim_candidate ADD COLUMN superseded_claim_ref TEXT",
+    );
   }
 
   /**
@@ -752,7 +780,155 @@ export class ResearchDb {
    * instead of being free to pick another one.
    */
   private ensureCandidateRevisedColumn(): void {
-    this.addColumnIfMissing("claim_candidate", "revised_claim_ref", "TEXT");
+    // ★ NOTE: COMPLETE ALTER statement — see ensureCandidateSupersedesColumn above.
+    this.addColumnIfMissing(
+      "claim_candidate",
+      "revised_claim_ref",
+      "ALTER TABLE claim_candidate ADD COLUMN revised_claim_ref TEXT",
+    );
+  }
+
+  /**
+   * ★ C6 model-extractor (§M7.1b / §M9 #4b/#4c): bring `extraction_run` up to the structure the
+   * claim/write slices will need — and NOTHING else. No claim logic, no lease logic, no writes:
+   * after this method the new columns exist and are `NULL` for every row.
+   *
+   * Order (fixed, and NOT reorderable):
+   *   0  BEGIN IMMEDIATE                       ← THIS METHOD OWNS THE TRANSACTION BOUNDARY
+   *   1  add the nine columns (PRAGMA-prechecked ALTER; legal inside a transaction)
+   *   2  backfill `attempt_seq` for EVERY row where it is NULL, per (version, config) group,
+   *      ordered by (started_at, extraction_id), numbered from that group's current MAX + 1;
+   *      `generation` is initialised to the same number (the generation starts at the attempt)
+   *   3  historically `running` rows WITHOUT lease evidence ⇒ failed / 'legacy_interrupted'
+   *      (their holder is unknowable, so they are conservatively downgraded — never deleted)
+   *   4  conflict check ⇒ FAIL FAST, listing the offending rows; the transaction rolls back
+   *   5  create the partial unique index LAST (it cannot be created before step 3 has cleared the
+   *      way, and it must not be created before step 4 has proved it is safe)
+   *   COMMIT / ROLLBACK
+   *
+   * Two independent guarantees (the contract asks for both):
+   *   a) PRIMARY — the whole thing is ONE transaction: any failure leaves BOTH the schema and the
+   *      data exactly as they were;
+   *   b) BACKSTOP — every step is idempotent anyway: step 2 only touches rows that are still NULL
+   *      and numbers them from the group's CURRENT max (so a re-run continues where it stopped and
+   *      can never duplicate a number); step 3 only matches rows that are still running and still
+   *      lack a lease.
+   */
+  private migrateExtractionRunState(): void {
+    if (this.db.isTransaction) {
+      throw new Error(
+        "migrateExtractionRunState must own its transaction boundary: migrate() must not open a transaction",
+      );
+    }
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      // 1) columns (the third argument is the COMPLETE ALTER statement, per addColumnIfMissing)
+      this.addColumnIfMissing("extraction_run", "chunker_version", "ALTER TABLE extraction_run ADD COLUMN chunker_version TEXT");
+      this.addColumnIfMissing("extraction_run", "methodology_version_id", "ALTER TABLE extraction_run ADD COLUMN methodology_version_id TEXT");
+      this.addColumnIfMissing("extraction_run", "dimension_set_hash", "ALTER TABLE extraction_run ADD COLUMN dimension_set_hash TEXT");
+      this.addColumnIfMissing("extraction_run", "max_quote_chars", "ALTER TABLE extraction_run ADD COLUMN max_quote_chars INTEGER");
+      this.addColumnIfMissing("extraction_run", "attempt_seq", "ALTER TABLE extraction_run ADD COLUMN attempt_seq INTEGER");
+      this.addColumnIfMissing("extraction_run", "config_snapshot_json", "ALTER TABLE extraction_run ADD COLUMN config_snapshot_json TEXT");
+      this.addColumnIfMissing("extraction_run", "owner", "ALTER TABLE extraction_run ADD COLUMN owner TEXT");
+      this.addColumnIfMissing("extraction_run", "lease_until", "ALTER TABLE extraction_run ADD COLUMN lease_until TEXT");
+      this.addColumnIfMissing("extraction_run", "generation", "ALTER TABLE extraction_run ADD COLUMN generation INTEGER");
+
+      // 2) attempt_seq backfill — EVERY row that lacks one, per group, continuing from that
+      //    group's current maximum (never renumbering a row that already has a number).
+      const groups = this.db
+        .prepare(
+          `SELECT material_version_id, extraction_config_key
+             FROM extraction_run
+            WHERE attempt_seq IS NULL
+            GROUP BY material_version_id, extraction_config_key`,
+        )
+        .all() as Array<{ material_version_id: string; extraction_config_key: string }>;
+
+      const currentMax = this.db.prepare(
+        `SELECT COALESCE(MAX(attempt_seq), 0) AS m
+           FROM extraction_run
+          WHERE material_version_id = ? AND extraction_config_key = ?`,
+      );
+      const unnumbered = this.db.prepare(
+        `SELECT extraction_id
+           FROM extraction_run
+          WHERE material_version_id = ? AND extraction_config_key = ? AND attempt_seq IS NULL
+          ORDER BY started_at ASC, extraction_id ASC`,
+      );
+      const number = this.db.prepare(
+        `UPDATE extraction_run
+            SET attempt_seq = ?, generation = ?
+          WHERE extraction_id = ? AND attempt_seq IS NULL`,
+      );
+
+      for (const group of groups) {
+        let next = Number((currentMax.get(group.material_version_id, group.extraction_config_key) as { m: number }).m) + 1;
+        const rows = unnumbered.all(group.material_version_id, group.extraction_config_key) as Array<{
+          extraction_id: string;
+        }>;
+        for (const row of rows) {
+          number.run(next, next, row.extraction_id);
+          next += 1;
+        }
+      }
+      // rows that already carry an attempt number but no generation token
+      this.db
+        .prepare(`UPDATE extraction_run SET generation = attempt_seq WHERE generation IS NULL AND attempt_seq IS NOT NULL`)
+        .run();
+
+      // 3) historically running rows with no lease evidence cannot be taken over safely
+      this.db
+        .prepare(
+          `UPDATE extraction_run
+              SET status = 'failed', error = 'legacy_interrupted'
+            WHERE status = 'running' AND (owner IS NULL OR lease_until IS NULL)`,
+        )
+        .run();
+
+      // 4) FAIL FAST if any (version, config) still has more than one running row: never "fix" it
+      const conflicts = this.db
+        .prepare(
+          `SELECT material_version_id, extraction_config_key, COUNT(*) AS c
+             FROM extraction_run
+            WHERE status = 'running'
+            GROUP BY material_version_id, extraction_config_key
+           HAVING c > 1`,
+        )
+        .all() as Array<{ material_version_id: string; extraction_config_key: string; c: number }>;
+      if (conflicts.length > 0) {
+        const describe = this.db.prepare(
+          `SELECT extraction_id, attempt_seq
+             FROM extraction_run
+            WHERE status = 'running' AND material_version_id = ? AND extraction_config_key = ?
+            ORDER BY attempt_seq ASC, extraction_id ASC`,
+        );
+        const detail = conflicts
+          .map((c) => {
+            const rows = describe.all(c.material_version_id, c.extraction_config_key) as Array<{
+              extraction_id: string;
+              attempt_seq: number | null;
+            }>;
+            return `${c.material_version_id}/${c.extraction_config_key} ⇒ ` +
+              rows.map((r) => `${r.extraction_id}(attempt_seq=${r.attempt_seq ?? "null"})`).join(", ");
+          })
+          .join(" | ");
+        throw new Error(
+          `extraction_run migration aborted: ${conflicts.length} configuration(s) still have multiple running rows — ${detail}`,
+        );
+      }
+
+      // 5) the partial unique index, LAST
+      this.db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_extraction_run_single_active
+           ON extraction_run(material_version_id, extraction_config_key)
+         WHERE status = 'running'`,
+      );
+
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   /** PRAGMA-prechecked ALTER; try/catch is only a concurrency safety net. */
