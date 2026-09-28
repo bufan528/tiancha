@@ -121,15 +121,22 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
     assert.equal(r1.status, "completed");
     assert.equal(r1.created, 2);
     assert.equal(r1.reused, 0);
+    assert.equal(r1.reusedRun, false);
 
+    // ★ Slice F (§M13.10): a SECOND call on the SAME config no longer extracts at all — the
+    // existing `completed` run is reused verbatim, so `reusedRun` is the signal (the candidate-level
+    // counters stay zero, §M13.1). The TARGET of this test is unchanged: same config ⇒ no new
+    // candidates and the very same ids.
     const r2 = await e.x.run(version, AT2);
+    assert.equal(r2.reusedRun, true, "an existing completed run is reused, not re-extracted");
     assert.equal(r2.created, 0, "a re-run with the SAME config must not create candidates");
-    assert.equal(r2.reused, 2);
+    assert.equal(r2.reused, 0);
     assert.deepEqual(r2.candidateIds, r1.candidateIds);
     assert.equal(e.repo.listClaimCandidates(version.materialVersionId).length, 2);
-    // the second run is its own audit row, and it is recorded as completed
-    assert.equal(e.repo.listExtractionRuns(version.materialVersionId).length, 2);
+    // reuse is ZERO side effect: the re-run adds no attempt row and changes no completed row
+    assert.equal(e.repo.listExtractionRuns(version.materialVersionId).length, 1);
     assert.equal(e.repo.getExtractionRun(r2.extractionId)?.status, "completed");
+    assert.equal(e.repo.getExtractionRun(r2.extractionId)?.extractionId, r1.extractionId);
   });
 
   test("T-C6-6b: a NEW config creates NEW candidates and links them by lineage", async () => {
@@ -184,7 +191,9 @@ describe("T-C6-6 — candidate identity, runs and lineage", () => {
 
     // and a full re-run still leaves it alone
     const r2 = await e.x.run(version, AT3);
-    assert.equal(r2.reused, 2);
+    // ★ Slice F (§M13.10): a same-config re-run reuses the completed run verbatim. The TARGET —
+    // "a stored candidate is never rewritten" — is unchanged and asserted right below.
+    assert.equal(r2.reusedRun, true);
     assert.equal(e.repo.getClaimCandidate(id)?.statement, original.statement);
   });
 

@@ -1010,13 +1010,29 @@ export class ResearchRepository {
    * one material share a candidate id, and the second occurrence must not lose its source — so the
    * evidence list grows while every other field (including a human edit) stays untouched.
    */
+  /**
+   * ★ C6 §M9 #6 / §M13.2 / §M13.3 — reviewed protection is a DATA INVARIANT, not a caller
+   * convention. Evidence may only be UNIONed onto a candidate a human has NOT touched:
+   * `review_status = 'draft' AND reviewed_by IS NULL`.
+   *
+   * The predicate is part of the SQL (`WHERE`), never a read-then-write in JS: a candidate that
+   * becomes reviewed between a caller's read and this write still cannot be appended to.
+   * `false` means "nothing was written" — the caller must count that as SKIPPED, not merged.
+   *
+   * NOTE: `rejected` / `confirmed` / `revised`, and any candidate whose `reviewed_by` is set (this
+   * is how a human `revise` shows up — it deliberately keeps the status `draft`), all fall under
+   * the same predicate.
+   */
   appendCandidateEvidence(candidateId: string, evidenceRefs: string[]): boolean {
     const existing = this.getClaimCandidate(candidateId);
     if (existing === undefined) return false;
     const merged = [...new Set([...existing.evidenceRefs, ...evidenceRefs])];
     if (merged.length === existing.evidenceRefs.length) return false;
     const res = this.db
-      .prepare("UPDATE claim_candidate SET evidence_refs_json = ? WHERE candidate_id = ?")
+      .prepare(
+        `UPDATE claim_candidate SET evidence_refs_json = ?
+          WHERE candidate_id = ? AND review_status = 'draft' AND reviewed_by IS NULL`,
+      )
       .run(JSON.stringify(merged), candidateId);
     return Number(res.changes) === 1;
   }

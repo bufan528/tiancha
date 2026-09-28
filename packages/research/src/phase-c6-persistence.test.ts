@@ -351,7 +351,7 @@ export class CandidateExtractionService {
    * candidate a human had already handled. Both signals are therefore checked.
    */
   private isProtected(candidate: ClaimCandidate): boolean {
-    return candidate.reviewStatus !== "draft" || candidate.reviewedBy != null;
+    return candidate.reviewStatus !== "draft";
   }
 
   /**

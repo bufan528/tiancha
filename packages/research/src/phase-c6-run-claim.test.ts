@@ -183,6 +183,7 @@ function fixture(): Fixture {
 }
 
 interface RunRow {
+  extraction_id: string;
   status: string;
   owner: string | null;
   generation: number | null;
@@ -193,7 +194,7 @@ interface RunRow {
 const runsFor = (c: Connection, version: MaterialVersion): RunRow[] =>
   c.db.db
     .prepare(
-      "SELECT status, owner, generation, attempt_seq, error FROM extraction_run WHERE material_version_id = ? ORDER BY attempt_seq",
+      "SELECT extraction_id, status, owner, generation, attempt_seq, error FROM extraction_run WHERE material_version_id = ? ORDER BY attempt_seq",
     )
     .all(version.materialVersionId) as never;
 
@@ -332,8 +333,8 @@ describe("Slice E — claim / lease / fencing (§M7.1a)", () => {
   });
 
   test("★ §M6.2a: the run id is (materialVersionId, configKey, attemptSeq) — `started_at` does NOT enter it", async () => {
-    // Same material content => the same materialVersionId. Two INDEPENDENT databases, each taking
-    // attempt 1, but with DIFFERENT start times: a `started_at`-based identity would differ here.
+    // (a) the SAME (version, config, attemptSeq) with DIFFERENT start times ⇒ the SAME run id.
+    // Two INDEPENDENT databases with the same material content, each taking attempt 1.
     const f1 = fixture();
     const f2 = fixture();
     const a1 = connection(f1.dbPath, new ImmediateExtractor(f1.drafts), new Clock());
@@ -354,28 +355,40 @@ describe("Slice E — claim / lease / fencing (§M7.1a)", () => {
       "★ the same (version, config, attemptSeq) must yield the SAME run id even with different started_at",
     );
 
-    // And a takeover (attemptSeq 2) on the same (version, config) yields a DIFFERENT run id.
+    // (b) attemptSeq IS part of the identity: a lease takeover takes attempt 2 on the same
+    // (version, config) and must therefore produce a DIFFERENT run id.
+    // ★ Slice F (§M13.10) note: this scenario deliberately keeps attempt 1 UNFINISHED — once a run
+    // is `completed`, a same-config call is REUSED rather than re-attempted, so a takeover can only
+    // be observed while the first attempt is still `running`.
+    const f3 = fixture();
     const clock = new Clock();
-    const gated = new GatedExtractor(f1.drafts);
-    const held = connection(f1.dbPath, gated, clock);
-    const taker = connection(f1.dbPath, new ImmediateExtractor(f1.drafts), clock);
-    const runHeld = held.service.run(f1.version, AT, { owner: "owner-C", leaseMs: 1_000 });
-    clock.advance(60_000);
-    const takeover = await taker.service.run(f1.version, AT, { owner: "owner-D", leaseMs: 600_000 });
+    const gated = new GatedExtractor(f3.drafts);
+    const held = connection(f3.dbPath, gated, clock);
+    const taker = connection(f3.dbPath, new ImmediateExtractor(f3.drafts), clock);
+
+    const runHeld = held.service.run(f3.version, AT, { owner: "owner-C", leaseMs: 1_000 });
+    const attempt1 = runsFor(taker, f3.version)[0]!;
+    assert.equal(attempt1.attempt_seq, 1);
+    assert.equal(attempt1.status, "running", "attempt 1 is still in flight — no completed run exists yet");
+
+    clock.advance(60_000); // the lease lapses while attempt 1 is still extracting
+    const takeover = await taker.service.run(f3.version, AT, { owner: "owner-D", leaseMs: 600_000 });
     gated.open();
-    await runHeld;
+    const late = await runHeld;
 
     assert.equal(takeover.status, "completed");
-    assert.notEqual(takeover.extractionId, r1.extractionId, "attemptSeq is part of the run identity");
-    // f1 now holds: attempt 1 (completed) · attempt 2 (lease_expired by the takeover) · attempt 3
-    const rows = runsFor(taker, f1.version);
+    assert.notEqual(takeover.extractionId, attempt1.extraction_id, "attemptSeq is part of the run identity");
+    // the superseded generation is blocked by fencing, not merely ignored
+    assert.equal(late.status, "failed");
+    assert.match(late.error ?? "", /lost_lease/);
+    const rows = runsFor(taker, f3.version);
     assert.deepEqual(
       rows.map((r) => r.attempt_seq),
-      [1, 2, 3],
-      "each claim takes MAX(attempt_seq)+1",
+      [1, 2],
+      "each claim takes MAX(attempt_seq)+1 and a takeover produces a NEW generation/attempt",
     );
-    assert.equal(rows[1]!.status, "failed");
-    assert.equal(rows[1]!.error, "lease_expired");
+    assert.equal(rows[0]!.status, "failed");
+    assert.equal(rows[0]!.error, "lease_expired");
   });
 
   test("invalid timeoutMs / leaseMs are REFUSED, never clamped", async () => {
