@@ -167,6 +167,14 @@ export class CandidateExtractionError extends Error {}
 export class CandidateExtractionTimeoutError extends Error {}
 
 /**
+ * ★ §M13.9 clarification 1 / step ⑦ — this generation NO LONGER holds the run. It is thrown from
+ * INSIDE the persistence transaction (by ① or by ⑦), so the transaction rolls back with zero
+ * business residue; closing the run out as `failed` is the CALLER's job, OUTSIDE that transaction
+ * and still under generation/owner fencing (clarification 2).
+ */
+export class LostLeaseError extends CandidateExtractionError {}
+
+/**
  * Bound one promise by `timeoutMs`. ★ This bounds how long THIS CALL waits; it is NOT a lease
  * expiry — the caller must not treat it as one (Slice E ruling: timeout ≠ lease failure).
  */
@@ -221,19 +229,21 @@ export class CandidateExtractionService {
    * It consumes what Slice B already validated (`ValidatedCandidate[]`): it never re-derives,
    * re-parses or re-prompts candidate content, and it NEVER calls a model adapter (§M13.4).
    *
-   * Everything below happens in ONE main-database transaction:
-   *   1. the fencing gate — a conditional UPDATE carrying generation + owner + status='running'
-   *      (never a read-then-write in JS);
-   *   2. Fragment persistence (one exact `char_range` fragment per quote, §M5.3);
-   *   3. Evidence persistence (`stance = "supports"`, quote taken FROM the fragment);
-   *   4. candidate identity + persistence (insert-only; reviewed candidates were NOT touched);
-   *   5. `reused` / `merged` / `skippedReviewed` counting;
-   *   6. the immutable config snapshot + the run's audit columns;
-   *   7. the fenced `completed` close-out.
+   * Everything below happens in ONE main-database transaction, in the contract's order (§M13.9):
+   *   ① the FENCING GATE — a READ-ONLY existence check (status='running' AND generation AND owner).
+   *      It must NOT change any state, and it does NOT replace ⑦;
+   *   ② Fragment persistence (one exact `char_range` fragment per quote, §M5.3);
+   *   ③ Evidence persistence (`stance = "supports"`, quote taken FROM the fragment);
+   *   ④ candidate identity + persistence (insert-only; a PROTECTED candidate is skipped BEFORE any
+   *      fragment/evidence is written for it — §M13.2 / §M13.9 clarification 4);
+   *   ⑤ `reused` / `merged` / `skippedReviewed` counting;
+   *   ⑥ the immutable config snapshot + the run's audit columns;
+   *   ⑦ the fenced `completed` close-out — the FINAL authority (§M13.9 clarification 1).
    *
-   * Any throw rolls the WHOLE transaction back ⇒ zero business residue. The `failed` marker is
-   * deliberately NOT written here: §M6.3 requires it OUTSIDE the transaction, still under
-   * generation/owner fencing.
+   * Any throw rolls the WHOLE transaction back ⇒ zero business residue. If ① or ⑦ finds that the run
+   * is no longer this generation's, `LostLeaseError` is thrown and NOTHING is written. The `failed`
+   * marker is deliberately NOT written here: §M6.3 / clarification 2 require it OUTSIDE the
+   * transaction, still under generation/owner fencing.
    */
   async persistValidatedCandidates(input: {
     version: MaterialVersion;
@@ -245,14 +255,6 @@ export class CandidateExtractionService {
     candidates: readonly ValidatedCandidate[];
   }): Promise<PersistResult> {
     const at = this.now();
-    const nothing: PersistResult = {
-      created: 0,
-      reused: 0,
-      merged: 0,
-      skippedReviewed: 0,
-      candidateIds: [],
-      committed: false,
-    };
 
     // Identity is deterministic, so the ids are known BEFORE anything is written.
     const planned = input.candidates.map((candidate) => {
@@ -275,36 +277,41 @@ export class CandidateExtractionService {
     const candidateIds = planned.map((p) => p.candidateId);
 
     return this.repo.transaction(() => {
-      // 1) ★ THE COMMIT GATE, first. `changes() !== 1` ⇒ this generation lost the run ⇒ nothing is
-      // written: not one fragment, not one evidence row, not one candidate.
-      if (
-        !this.closeOutRun({
-          extractionId: input.extractionId,
-          generation: input.generation,
-          owner: input.owner,
-          candidateIds,
-          snapshot: input.snapshot,
-          at,
-        })
-      ) {
-        return nothing;
+      // ① ★ §M13.9 clarification 1 — the FENCING GATE. READ-ONLY: it asserts that this generation
+      // still holds the run and changes NOTHING. It never replaces ⑦ below; precisely because it
+      // leaves the row alone, a takeover between ① and ⑦ is still caught by ⑦.
+      const held = this.repo.db
+        .prepare(
+          `SELECT 1 AS held
+             FROM extraction_run
+            WHERE extraction_id = ? AND status = 'running' AND generation = ? AND owner = ?`,
+        )
+        .get(input.extractionId, input.generation, input.owner) as { held: number } | undefined;
+      if (held === undefined) {
+        throw new LostLeaseError(
+          "lost_lease: this run's generation is no longer current; nothing was written",
+        );
       }
 
-      // 2)+3)+4)+5) fragments, evidence and candidates — one persistence unit at a time
+      // ②③④⑤ — fragments, evidence and candidates, one persistence unit at a time
       let created = 0;
       let reusedCount = 0;
       let merged = 0;
       let skippedReviewed = 0;
       for (const { blockHash, candidateId, candidate } of planned) {
-        const evidenceRefs = this.persistQuotes(input.version, candidate.quotes, at);
+        // ★ §M13.2 / §M13.9 clarification 4 — DECIDE FIRST, then (only if unprotected) WRITE.
+        // A candidate a human has touched must not gain a single Fragment / Evidence row from this
+        // run: judging AFTER `persistQuotes()` would protect the candidate row while still leaving
+        // new fragment/evidence rows behind. The repository's SQL guard (§M13.3) is the second line
+        // of defence for the very same rule.
         const existing = this.repo.getClaimCandidate(candidateId);
+        if (existing !== undefined && this.isProtected(existing)) {
+          skippedReviewed += 1;
+          continue;
+        }
+        // ②+③ fragments + evidence — ONLY for a candidate that is not protected
+        const evidenceRefs = this.persistQuotes(input.version, candidate.quotes, at);
         if (existing !== undefined) {
-          // ★ §M13.2 — a candidate a human has touched is PROTECTED: no new evidence, no field
-          // change. The repository's SQL guard is the second line of defence for the same rule.
-          if (this.isProtected(existing)) {
-            skippedReviewed += 1;
-            continue;
-          }
           // the SAME statement extracted from ANOTHER place: merge this occurrence's evidence in
           if (this.repo.appendCandidateEvidence(candidateId, evidenceRefs)) merged += 1;
           reusedCount += 1;
@@ -339,6 +346,25 @@ export class CandidateExtractionService {
         // insert-only: an existing candidate is left EXACTLY as it is (it may carry a human edit)
         this.repo.insertClaimCandidate(row);
         created += 1;
+      }
+
+      // ⑥+⑦ ★ THE FINAL AUTHORITY (§M13.9 clarification 1). The business rows above are written
+      // FIRST; the fenced close-out is LAST and carries status='running' + generation + owner in its
+      // WHERE. `changes() !== 1` ⇒ this generation lost the run in the meantime ⇒ throw ⇒ the WHOLE
+      // transaction (business rows included) rolls back.
+      if (
+        !this.closeOutRun({
+          extractionId: input.extractionId,
+          generation: input.generation,
+          owner: input.owner,
+          candidateIds,
+          snapshot: input.snapshot,
+          at,
+        })
+      ) {
+        throw new LostLeaseError(
+          "lost_lease: this run's generation is no longer current; nothing was written",
+        );
       }
 
       return { created, reused: reusedCount, merged, skippedReviewed, candidateIds, committed: true };
@@ -609,33 +635,47 @@ export class CandidateExtractionService {
     // `persistValidatedCandidates()`, which `run()` and the Slice F persistence tests both call.
     // The extractor's drafts are handed over as `ValidatedCandidate`s: the content fields travel
     // UNCHANGED (F never re-derives them) and the quotes come from the fragments the drafts cite.
-    const persisted = await this.persistValidatedCandidates({
-      version,
-      extractionId,
-      owner,
-      generation,
-      extractionConfigKey: configKey,
-      snapshot: this.snapshotFor({
-        timeoutMs,
-        batchCount: drafts.length,
-        attemptSeq: generation,
+    let persisted: PersistResult;
+    try {
+      persisted = await this.persistValidatedCandidates({
+        version,
+        extractionId,
+        owner,
         generation,
-        rule: DEFAULT_WINDOW_RULE,
-        dimensionHints: drafts.map((d) => d.dimension),
-      }),
-      candidates: drafts.map((draft) => ({
-        draft: {
-          dimension: draft.dimension,
-          statement: draft.statement,
-          contentKind: draft.contentKind,
-          ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
-        },
-        quotes: this.quotesFromEvidenceRefs(draft.evidenceRefs),
-      })),
-    });
-
-    if (!persisted.committed) {
-      // The fenced close-out lost the run: this generation wrote NOTHING, not even one candidate.
+        extractionConfigKey: configKey,
+        snapshot: this.snapshotFor({
+          timeoutMs,
+          batchCount: drafts.length,
+          attemptSeq: generation,
+          generation,
+          rule: DEFAULT_WINDOW_RULE,
+          dimensionHints: drafts.map((d) => d.dimension),
+        }),
+        candidates: drafts.map((draft) => ({
+          draft: {
+            dimension: draft.dimension,
+            statement: draft.statement,
+            contentKind: draft.contentKind,
+            ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
+          },
+          quotes: this.quotesFromEvidenceRefs(draft.evidenceRefs),
+        })),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // ★ §M6.3 / §M13.9 clarification 2 — the persistence transaction has ALREADY rolled back:
+      // zero business residue, and the run row is back to `running`. Closing it out as `failed` is
+      // the CALLER's job, and it must STILL be fenced — a rollback is NOT an automatic `failed`.
+      //
+      // The business exception is the PRIMARY error; this close-out is best-effort:
+      //   * a superseded generation (`changes() === 0`) is safely ignored — that IS fencing working;
+      //   * a throwing close-out must never leak the original error as an unhandled rejection, and
+      //     must not grow a second state machine.
+      try {
+        this.finishRun({ extractionId, generation, owner, candidateIds: [], error: message, at: this.now() });
+      } catch {
+        // fenced best-effort only: the error reported below stays the business error
+      }
       return {
         extractionId,
         created: 0,
@@ -645,7 +685,7 @@ export class CandidateExtractionService {
         candidateIds: [],
         status: "failed",
         reusedRun: false,
-        error: "lost_lease: this run's generation is no longer current; nothing was written",
+        error: message,
       };
     }
 
