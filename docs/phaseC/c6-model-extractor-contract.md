@@ -1,7 +1,7 @@
 # Phase C6 · 模型提取器 Implementation Contract（D-C6-H / D-C6-I / D-C6-J）
 
-> 状态：**rev12 — F 状态校准（纯文档，无任何契约语义变化）**。**rev11 的四条收紧语义（§M13.2 / §M13.5a / §M13.8 / §M13.9）与 §M13.7 测试矩阵逐字保留、未改一字**；rev12 只把「Slice F 现在处于什么状态」校准到与远端一致，**不新增、不删除、不改写任何规则**。**Slice F 的完整审计链（保留，不抹除历史）**：`22b3951` 首次实现 ⇒ 被独立复核 **REJECTED FOR REPAIR**（3 个阻塞项：persistence 异常未入 `failed` 收口 · close-out 顺序 · legacy bridge 边界；其 `phase-c6-persistence.test.ts` 后经查为**实现副本、0 用例**）⇒ **`1554054`**（本契约 rev8–rev11）收紧修复口径（docs-only，先于代码修复）⇒ **`a5b80a4`** 完成三处修复 + **交付真正的 F-1…F-17 测试矩阵**，通过独立复核 ⇒ **Slice F ACCEPTED / FROZEN**（`origin/main = a5b80a4`，ahead/behind = 0/0）。实现进度：**Slice A–E 已验收（E 已 FROZEN）· Slice F 已冻结（`a5b80a4`）**。仍**未授权**：**F2（模型链路接线）** · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
-> rev2–rev11 = 各轮审查意见的收口（§M2.1–§M2.5）、实施期文档同步与 F 契约澄清（其中 **rev11 = F 修复轮的语义收紧**）。
+> 状态：**rev13 — Slice F2 实施契约（§M14 新增；纯文档，未实现）**。**rev11 的四条收紧语义、§M13.7 测试矩阵、以及 rev12 的 F 状态校准全部保留、未改一字**；rev13 只**新增 §M14**，把 §M13.5 的 F2 清单六项落成可执行条文（生产装配点 / 模型路径入口 / A-B-C 接线 / `mxcfg-` 身份分派 / 超时与取消 / `ADAPTER_NOT_CONFIGURED` / F2 文件白名单 / 测试矩阵 W-1…W-11）。**F2 目前是"契约已定、实现未授权"。** 实现进度：**Slice A–E 已验收（E 已 FROZEN）· Slice F 已冻结（审计链 `22b3951` → 独立复核 REJECTED FOR REPAIR → `1554054` 收紧修复口径 → **`a5b80a4`** 完成修复 + 真正的 F-1…F-17 ⇒ **ACCEPTED / FROZEN**，`origin/main = a5b80a4`）· F2 = 契约 rev13（实现未授权）**。仍**未授权**：真实模型适配器 · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+> rev2–rev12 = 各轮审查意见的收口（§M2.1–§M2.5）、实施期文档同步、F 契约澄清与 F 状态校准（其中 **rev11 = F 修复轮的语义收紧**、**rev12 = F 状态校准**）。
 > 依据：用户 2026-09-27 的三项结构性裁决（§M2）。用户原话要点：**输入按可追溯片段分批**、**模型只提交引用文本与位置且 ID 由天查生成**、**模型调用异步且整次运行全部验证后再落候选**。
 > 前置契约：`docs/phaseC/c6-implementation-contract.md` §C6.18–§C6.27（资料闭环：材料版本 / Fragment / Evidence / 候选 / 人工闸门 / 投影；其中 `[CANDIDATE]` 确定性提取器 **已交付**）· `docs/HANDOFF.md` §10（**LLM 边界**：禁止 LLM 直接产生 `Claim` / `Fact` / `Knowledge` / `PoolItem` / `Evaluation` 或 0–100 分；模型只能**起草**带来源定位的候选且**必须人工确认**）。
 > 文件定位：**C6 模型提取器专项契约**（同 `c2-*` / `c5-*` / `c6-implementation-contract.md`）；总契约 `implementation-contract.md` §30 只做索引。
@@ -1110,10 +1110,208 @@ F-16 的"复用时不执行抽取"验证使用现有 `CandidateExtractor.extract
 
 ---
 
+## §M14 Slice F2 Implementation Contract（★ rev13 新增；纯文档，**未实现**）
+
+本节把 **§M13.5 的 F2 清单**（六项）落成**可执行条文**：生产装配点 / 模型路径入口 / A-B-C 接线 / `mxcfg-` 身份分派 / 超时与取消 / `ADAPTER_NOT_CONFIGURED` / 文件白名单 / 测试矩阵。**它不改变 §M0–§M13 的任何规则**：F 的唯一持久化入口（§M13.9）、① / ⑦ 两段式 fencing、事务外 fenced `failed`、受保护候选零写入（§M13.2）、legacy 兼容桥（§M13.5a）**全部照旧**。
+
+### §M14.0 结论：F2 的范围，以及两条必须先说清的边界
+
+```text
+Slice F2 = 模型链路接线（Model wiring）
+
+   MaterialVersion
+        ↓  extractionWindowFor(version, rule)                        ← Slice A（纯函数）
+   ExtractionWindow[]  ──逐批──►  adapter.extractBatch(input, signal) ← Slice B（唯一模型入口）
+        ↓  resolveQuotes(batch.quotes, { windows, maxQuoteChars })   ← Slice B（V1–V4，零容忍）
+   ValidatedCandidate[]（draft payload 原样 + ResolvedQuote[]）
+        ↓  persistValidatedCandidates(...)                           ← Slice F（唯一持久化入口）
+   fragment / evidence / claim_candidate + fenced `completed`
+```
+
+★ **边界一：F2 不接真实模型**（用户 2026-09-29 裁定）。本片交付 **缝 + 生产装配 + 失败路径 + 端到端骨架**，**不交付任何真实模型适配器**。真实适配器（服务商 SDK / 凭据 / 部署标识 / 生成参数进身份）属于**另一次单独授权**（§M14.11）。当前环境**无凭据**（`.env` 的 `DOUBAO_API_KEY` 为空、shell env 未设置）**不影响**本片交付。
+
+★ **边界二：F2 的第二个交付物是"生产入口"**。当前生产代码里**没有任何地方构造 `CandidateExtractionService`**（只有 `CandidateReviewService` 的只读表面在 Agent 工具里），`[CANDIDATE]` 提取器**只在测试里跑**。F2 首次给它一个显式命令面 ⇒ "人工整理候选输入"这一现状在 F2 之后变为"**legacy 路径可一键跑；模型路径明确不可用**"。
+
+### §M14.1 命令面与生产装配点
+
+```text
+tiancha research candidate extract <materialVersionId>
+        [--model] [--operator <name>] [--timeout <ms>] [--window-max-chars <n>] [--json]
+```
+
+| 参数 | 语义 |
+|---|---|
+| `<materialVersionId>` | 必填；该版本的规范化文本即输入（§M4.1 坐标） |
+| `--model` | **显式**选择模型路径；**缺失即 legacy 路径**（`ExplicitBlockExtractor`，`xcfg-` 身份） |
+| `--operator` | 记录到运行审计；**模型路径下必填**（谁发起了一次模型调用） |
+| `--timeout` / `--window-max-chars` | 可选；缺省用契约常量（§M6.2a / §M4.3） |
+
+* **模型路径必须通过显式 `--model` 选择；未提供 `--model` 时保持既有 legacy 默认路径**（§M11.2 / §M13.5 #2）。**不存在**"有适配器就用、没有就退回 `[CANDIDATE]`"的隐式行为；**反向同样成立** —— 一旦给了 `--model` 就**绝不**退回 legacy（§M14.6）。
+* 退出码：**0 仅当终态为 `completed` 且候选已落库**；`failed` / `in_progress` / `ADAPTER_NOT_CONFIGURED` 一律**非 0**，并打印机器可读原因（`--json` 时结构化）。
+* 执行器放在 `src/cli/research-commands.ts`（与既有 `runCandidateConfirm|Revise|Reject|List|Show|Project` 同构）；`src/cli/tiancha.ts` 只做薄组装（构造 `ResearchDb` / `ResearchRepository` / `CandidateExtractionService`，并注入 extractor 或 adapter）。
+
+**`--model` 的解析顺序（★ 绝不静默退回）**
+
+```text
+--model
+   ↓ 装配点尝试解析一个可用的 ModelExtractionAdapter
+   ├─ 成功 ⇒ service.run(version, at, { ..., model: adapter })
+   └─ 失败 ⇒ 抛 ADAPTER_NOT_CONFIGURED ⇒ 命令以非 0 退出
+              ★ 不调用 run()、不写任何表、**不**退化为 legacy
+```
+
+本片 `resolveModelAdapter()` 的**唯一实现是"没有可用适配器"**（返回 `undefined`）⇒ 生产上 `--model` **必然**以 `ADAPTER_NOT_CONFIGURED` 收口。**这不是缺陷**，而是本片被授权的边界（§M14.0）：它必须**如实**报错，**不得**用任何占位 / 假适配器掩盖。
+
+### §M14.2 模型路径的入口：`run()` 的一个显式参数（**不改 E**）
+
+`CandidateExtractionService.run(version, at, opts)` 的 `opts` 新增**可选** `model?: ModelExtractionAdapter`：
+
+* **给了 `model`** ⇒ 模型路径（§M14.3）；
+* **没给** ⇒ legacy 路径（现状不变：`ExplicitBlockExtractor` + 兼容桥 §M13.5a）。
+
+两条路径**共用同一套运行骨架**：`claimRun()`（含 §M13.10 的 completed reuse）→ 取候选 → `persistValidatedCandidates()`（**唯一持久化入口**）→ `finishRun()` / 事务外 fenced `failed`（§M13.9 澄清二）。
+
+* ★ **E 的 async / claim / lease / fencing 语义一字不改**；"候选写入只有一份实现"依然成立 —— 模型路径只是**另一个产出候选的人**，写入仍只走 `persistValidatedCandidates()`。
+* ★ 分派是**显式参数**，**不是**环境变量、**不是**"service 里有没有 adapter 字段"的隐式开关 ⇒ "绝不静默退回 legacy"在类型层面即成立。
+* `run()` 的最小改造范围：`configKey` 与 `snapshot` 由所选路径决定（§M14.4），改造**仅限本文件**。**不得**为此改动 `CandidateExtractor` 接口（legacy 缝保持不变）。
+
+### §M14.3 模型路径的执行序（A-B-C 接线）
+
+```text
+0. claim / lease（与 legacy 同一入口；§M13.10 的 completed reuse 优先）
+1. windows = extractionWindowFor(version, rule)                        ← Slice A
+2. controller = new AbortController()；超时 ⇒ controller.abort()        ← §M14.5
+3. for (const window of windows)                                       ← 逐批，顺序 = window.index 升序
+     input = { materialVersionId,
+               window: { windowId, index, text },
+               windowStartInVersion: window.start,
+               dimensionHints,          ← §M14.4（活跃方法论，声明序）
+               methodologyVersionId }   ← §M14.4
+     batch = await adapter.extractBatch(input, controller.signal)
+4. for (const draft of batch.candidates)
+     resolved = resolveQuotes(draft.quotes, { windows, maxQuoteChars }) ← V1–V4，零容忍
+     units.push({ draft: { dimension, statement, contentKind, confidence? },
+                  quotes: resolved })                                   ← §M13.4 的 ValidatedCandidate
+5. ★ 先算后写：**全部批次与全部引用校验完成之后**才进写入阶段（§M6.3）
+6. persistValidatedCandidates({ version, extractionId, owner, generation,
+                                extractionConfigKey: modelKey,          ← §M14.4
+                                snapshot, candidates: units })
+```
+
+* `dimensionHints` / `methodologyVersionId` **只来自活跃方法论**（§M14.4）；**不由模型决定**，也**不由窗口文本推断**。
+* **任一**批次抛错、**任一** quote 被 V1–V4 拒绝 ⇒ 整次运行失败：**零候选 / 零 Fragment / 零 Evidence**（§M6.3 / §M13.4）。
+* 批次返回 `candidates: []`（"这段没有候选"）是**合法**结果，不是失败。
+* 批次里的 quote 若指向**不属于本版本**的窗口 ⇒ V1 `QUOTE_OUT_OF_VERSION` ⇒ 整次失败。
+* **禁止**在模型路径上"边算边写"（先写 Fragment / Evidence 再校验）：那会破坏"全成或全败"。
+
+### §M14.4 `mxcfg-` 身份分派与不可变配置快照
+
+| 路径 | `extractionConfigKey` | 计算处 |
+|---|---|---|
+| legacy（不变） | `extractionConfigKeyFor({ modelVersion, promptVersion, parserVersion, schemaVersion })` ⇒ `xcfg-…` | 现状 |
+| **模型（本片新增）** | `modelExtractionConfigKeyFor({ windowRule, maxQuoteChars, generation, methodologyVersionId, dimensionHints, modelVersion, promptVersion, parserVersion, schemaVersion })` ⇒ **`mxcfg-…`** | F2 |
+
+* **维度与版本的真实来源**：`repo.getActiveMethodology() ?? METHODOLOGY_V1`（与 `report-service` / `research-plan-service` 同法）⇒
+  `methodologyVersionId = m.id`，`dimensionHints = m.dimensions.map((d) => d.key)`（**方法论声明序；禁止排序**，§M3.4）。
+* 于是"维度集合变了 / 分块参数变了 / 生成参数变了"都会**改变 configKey** ⇒ 改变候选 id（T-C6-30 的模型侧）。
+* 两条路径前缀不同 ⇒ **同一材料的两条路径绝不互相覆盖、绝不互相复用**（§M11.2 的可区分性）。**禁止**用 `xcfg-` 冒充模型路径，反之亦然。
+* `snapshot`（§M7.3 不可变快照）在模型路径下写**真实值**：`windowRule` · `quotePolicy.maxQuoteChars` · `methodology = { 真实 methodologyVersionId, 有序 dimensionHints }` · `run.batchCount = windows.length` · `run.attemptSeq/generation` · `generation`（**模型生成参数**：本片无真实模型 ⇒ `{}`，由真实适配器契约在接入时补齐，进身份由 `generationHashOf` 负责）。
+
+### §M14.5 超时、取消，以及"timeout ≠ lease failure"
+
+* **一个** `AbortController` 覆盖整次运行；`timeoutMs` 到期 ⇒ `abort()`；`signal` **逐批**传给 `adapter.extractBatch(input, signal)`。
+* 适配器义务：收到 abort ⇒ **终止在途请求并尽快 reject**；**不得**忽略 signal 把请求跑完（§M6.2a）。
+* 超时 ⇒ 与 legacy 路径**同一语义**：运行记 `failed` + `error` 以 `timeout:` 开头；**行不被收口成 `completed`**，租约自然过期（**E 的裁定不变**）。
+* 本系统**不保证**第三方 SDK 真能切断底层连接；保证的是"**不再 await、不使用其结果、不写任何表**"（§M6.2a）。
+
+### §M14.6 `ADAPTER_NOT_CONFIGURED`（失败路径的唯一定义）
+
+* 模型路径**缺少可用适配器** ⇒ 明确失败 `ADAPTER_NOT_CONFIGURED`；**绝不**静默退回 `[CANDIDATE]`；**不写任何表**（§M11.2 / T-C6-36）。
+* 该失败发生在**装配层**（§M14.1），即**在 `run()` 之前** ⇒ 不存在"半个模型运行"。
+* 本片**不实现**真实适配器，因此本片的生产行为就是"`--model` 明确失败"。契约同时**禁止**：
+  * 把任何 fake / mock / echo 适配器装配进生产（**禁止**出现在 CLI 或 `@tiancha/research` 的导出面）；
+  * 在任何面向人的输出里把 fake 适配器描述为"模型已接入"。
+
+### §M14.7 确定性 fake 适配器（**仅测试**）
+
+* F2 的端到端证明使用**测试文件内**的确定性 fake 适配器（先例：`phase-c6-model-extraction.test.ts` 的 `DeterministicFakeAdapter`）：
+  * 相同输入 ⇒ 逐字相同输出（纯函数）；
+  * 引用的 quote **必须是窗口文本的真子串**（否则 V3 会（正确地）拒绝）；
+  * 能按脚本**抛错 / 挂起 / 记录是否收到 abort / 计数被调用次数**。
+* ★ 它**不得**成为生产导出、**不得**接进 CLI、**不得**写进 `README` / `HANDOFF` 的"能力矩阵"当作模型能力。
+
+### §M14.8 F2 的文件白名单（授权实施时按此锁）
+
+**允许修改 / 新增**
+
+```text
+packages/research/src/application/candidate-extraction-service.ts   ← 仅 §M14.2 的 opts.model 分派 + §M14.3 的模型编排 + §M14.4 的 configKey / snapshot 入参
+packages/research/src/application/model-extraction.ts               ← 仅在必要时补类型 / 导出；**不得**改 ResolvedQuote 六字段契约与 V1–V4 判定
+新增 packages/research/src/phase-c6-model-wiring.test.ts            ← F2 测试矩阵 W-1…W-10 + 测试内 fake 适配器
+新增 src/cli/research-candidate-extract.test.ts                     ← 装配层用例（W-11）
+src/cli/research-commands.ts                                        ← 新增 runCandidateExtract 执行器
+src/cli/tiancha.ts                                                  ← 薄组装（candidate extract 子命令 + ADAPTER_NOT_CONFIGURED 退出路径）
+```
+
+**明确禁止**
+
+```text
+✗ 把任何模型 SDK / 服务商客户端 / HTTP 客户端引入 packages/research（红线：§M3.4 / §M9 #9）
+✗ 真实适配器实现（服务商 SDK、凭据读取、部署标识解析）—— 属另一次单独授权
+✗ 修改 F 的任何语义（§M13.2 / §M13.5a / §M13.8 / §M13.9 / §M13.10）
+✗ 修改 Slice B 的 ResolvedQuote 六字段契约与 resolveQuotes 的 V1–V4 判定语义
+✗ 修改 Slice A 的窗口规则与进身份的常量（WINDOW_RULE_VERSION / maxChars / overlapChars / maxQuoteChars）
+✗ 修改 Slice C 的 identity 函数及其 payload 组成（chunkerVersionOf / dimensionSetHashOf / generationHashOf / modelExtractionConfigKeyFor）
+✗ 修改 Slice E 的 async / claim / lease / fencing 语义；不得给 ExtractionStatus 增加成员
+✗ research-db.ts / 迁移 / 新表 / 新依赖
+✗ 投影 / Knowledge / Pool / Gap / Report / Methodology 的写路径 / 其它 CLI 子命令 / Agent 工具面
+✗ 把 fake 适配器带进生产代码或生产导出
+✗ 顺手同步其它 docs（仅允许本契约与 HANDOFF 的状态行）
+```
+
+### §M14.9 F2 测试矩阵（硬门）
+
+| 用例 | 必须证明 |
+|---|---|
+| **W-1** | 模型路径端到端（fake 适配器）：窗口 → 逐批 → `resolveQuotes` → `ValidatedCandidate[]` → `persistValidatedCandidates()` ⇒ 候选 / Fragment / Evidence 落库，"四者一致"（§M5.3）且 `resolveLocator` 能解析回原文 |
+| **W-2** | **逐批**：`extractBatch` 调用次数 = 窗口数；`snapshot.run.batchCount` = 窗口数；批次顺序按 `window.index` 升序 |
+| **W-3** | **身份分派**：模型路径产出 `mxcfg-…`、legacy 产出 `xcfg-…`；同一材料两条路径**互不复用**；改变窗口规则 / `maxQuoteChars` / 维度集合 / generation ⇒ configKey 变 ⇒ 候选 id 变（T-C6-30 的模型侧） |
+| **W-4** | **零容忍**：任一 quote 触发 V1 / V2 / V3 / V4 ⇒ 整次运行失败、**零候选 / 零 Fragment / 零 Evidence**、`extraction_run.status='failed'`，`error` 指明窗口与 quote 序号 |
+| **W-5** | **超时与 abort**（T-C6-34 的模型侧）：适配器永不 resolve ⇒ 运行 `failed` + `timeout:` 前缀；**断言适配器确实收到了 abort**；该行**未被写成 `completed`** |
+| **W-6** | **`ADAPTER_NOT_CONFIGURED`**（T-C6-36）：模型路径无可适配器 ⇒ 明确失败、**不写任何表**、**不静默退回** legacy（反例：退回 `[CANDIDATE]` 必须失败） |
+| **W-7** | **有效租约内模型调用恰好 1 次**（T-C6-37 的模型侧）：两个独立连接并发 ⇒ 只有 1 条模型调用序列；未抢到者 `in_progress` |
+| **W-8** | **completed reuse（模型路径）**：同配置第二次调用 ⇒ `reusedRun = true`、**`extractBatch` 调用次数不增加**、`extraction_run` 行逐字不变 |
+| **W-9** | **维度来自活跃方法论**：`dimensionHints` 等于活跃方法论的**声明序**（不排序）；`methodologyVersionId` 进快照与身份 |
+| **W-10** | **legacy 仍可用**：不带 `--model` 经**同一** `persistValidatedCandidates()` 落库；两条路径的候选 id 不同（`xcfg-` vs `mxcfg-`） |
+| **W-11** | **装配层边界**（CLI）：`--model` ⇒ 非 0 退出 + `ADAPTER_NOT_CONFIGURED`；`--json` 含机器可读原因；**未写任何表** |
+
+**测试纪律**（沿用 C6 标准）：断言**行为 / 身份 / 指纹**，不断言文案；每条反例必须证明"**零残留**"；至少一次 **mutation 反证**（例如把"整车 abort"改成"只对第一批传 signal" ⇒ W-5 必须失败）。
+
+### §M14.10 F2 的边界自检（越界即打回）
+
+```text
+✗ 不接真实模型（无 SDK / 无凭据读取 / 无部署标识解析）
+✗ 不让 fake 适配器进入生产代码或生产导出
+✗ 不改 F 的语义、不改 Slice A/B/C/D/E 的任何已冻结契约
+✗ 不给 ExtractionStatus 增加成员；不动 claim / lease / fencing
+✗ 不让模型产生 id / stance / fragmentId / evidenceId / 维度（§M5.2 / §M14.3）
+✗ 不在模型路径上"边算边写"（先算后写，§M6.3）
+✗ 不把候选写进 Claim / Knowledge / Pool / Report —— 候选仍需**人工确认**
+```
+
+### §M14.11 本片未授权 / 接下来
+
+* **未授权**：**真实模型适配器**（服务商 SDK + 凭据来源 + 部署标识 + 生成参数进身份 + 重试与成本上限）· 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+* 若要有真实模型，须**另立契约**并**单独授权**：提示词版本策略、服务商选型、凭据来源、失败重试策略、成本上限、部署标识的稳定性边界（§M7.3 的 `modelVersion` 要求）。
+* 受控试点（先用已有试点材料建立人工核对基准，再选真实普通报告验证漏提 / 误提 / 引用错位 / 重复口径）**排在真实模型接入之后**；合成冲突仍只用于隔离库软件测试。
+
+---
+
 ## §M12 修订历史
 
 | 版本 | 变更 |
 |---|---|
+| **rev13** | **Slice F2 实施契约（§M14 新增；纯文档，未实现）**：把 §M13.5 的 F2 清单六项落成可执行条文，**不改动 §M0–§M13 的任何规则**（rev11 的四条收紧、§M13.7 矩阵、rev12 的 F 状态校准逐字保留）。**§M14.0** F2 = 缝 + 生产装配 + 失败路径 + 端到端骨架；★ **F2 不接真实模型**（用户 2026-09-29 裁定；真实适配器属另一次单独授权），且 F2 首次为候选提取建立**生产入口**（此前生产代码零构造点）。**§M14.1** 命令面 `tiancha research candidate extract <materialVersionId> [--model] [--operator] [--timeout] [--window-max-chars] [--json]`；执行器入 `src/cli/research-commands.ts`、薄组装入 `src/cli/tiancha.ts`；**Research Core 不 import 模型 SDK**；**模型路径必须由显式 `--model` 选择（未给 `--model` 则保持 legacy 默认路径，这不是隐式 fallback）**；`--model` 解析不到适配器 ⇒ **`ADAPTER_NOT_CONFIGURED`**、非 0 退出、**不写任何表、绝不退回 legacy**。**§M14.2** `run()` 新增**可选** `opts.model?: ModelExtractionAdapter`：给了走模型路径、不给走 legacy，两条路径**共用** claim / lease / **唯一持久化入口** / finish；分派是**显式参数**（非环境变量、非隐式开关）⇒ **E 的语义一字不改**；改造仅限该文件。**§M14.3** 模型路径执行序：`extractionWindowFor` → 逐批 `extractBatch(input, signal)` → `resolveQuotes`（V1–V4 零容忍）→ 组装 `ValidatedCandidate[]` → **先算后写** → 一次 `persistValidatedCandidates()`；批次内空候选合法；跨版本 quote ⇒ V1 ⇒ 整次失败。**§M14.4** `mxcfg-` 身份分派：`modelExtractionConfigKeyFor({ windowRule, maxQuoteChars, generation, methodologyVersionId, dimensionHints, … })`；维度与版本取自 `repo.getActiveMethodology() ?? METHODOLOGY_V1`（**声明序、禁止排序**）；两条路径前缀不同 ⇒ 互不复用、互不覆盖；快照写真实值。**§M14.5** 单个 `AbortController` 覆盖整次运行、signal 逐批传递、适配器必须响应 abort、**timeout ≠ lease failure**。**§M14.6** `ADAPTER_NOT_CONFIGURED` 发生在**装配层**（`run()` 之前）；禁止把 fake 适配器装配进生产、禁止称其为"模型已接入"。**§M14.7** fake 适配器**仅测试内**。**§M14.8** F2 文件白名单（service 最小改造 · `model-extraction.ts` 仅补类型 · 新增 `phase-c6-model-wiring.test.ts` 与 `src/cli/research-candidate-extract.test.ts` · `research-commands.ts` · `tiancha.ts`）+ 禁止项（SDK/真实适配器/F 语义/Slice A–E 契约/DB/迁移/投影/其它 CLI/Agent 面）。**§M14.9** F2 测试矩阵 **W-1…W-11**（端到端 · 逐批 · 身份分派 · 零容忍 · abort · ADAPTER_NOT_CONFIGURED · 租约内恰好 1 次 · completed reuse · 维度来源 · legacy 仍可用 · 装配层退出码）。**§M14.10/§M14.11** 边界自检与"真实模型仍未授权" |
 | **rev12** | **F 状态校准**（纯文档，**无任何契约语义变化**）：**rev11 的四条收紧语义与 §M13.7 测试矩阵逐字保留、未改一字**；本行只把事实状态校准到与远端一致，并**完整保留**审计链 —— `22b3951` 首次实现（唯一持久化入口 + reviewed protection 的 SQL 守卫 + completed reuse）⇒ 被独立复核 **REJECTED FOR REPAIR**（三个阻塞项：persistence 异常未入 `failed` 收口 · close-out 顺序 · legacy bridge 边界；其 `phase-c6-persistence.test.ts` 后经查为**实现副本、0 个用例**，22b3951 声称的「F-1…F-16 全绿 / 535 全量」不可复现——实测 522 tests / 521 pass / 1 fail）⇒ **`1554054`**（rev8–rev11 的契约收紧，docs-only、先于代码修复）⇒ **`a5b80a4`** 完成三处修复（① **只读** ① gate + ⑦ 最终 fenced `completed` close-out；② persistence 异常 ⇒ **事务外 fenced `failed`**；③ 受保护候选**先判定、零 Fragment/Evidence 写入**）+ **交付真正的 F-1…F-17 测试矩阵**（17 例：含 F-12 的**顺序探针**、F-13/F-14 的口径拆分、F-17 的端到端失败，以及三条 **mutation 反证**）⇒ 通过独立复核 ⇒ **Slice F ACCEPTED / FROZEN**（`origin/main = a5b80a4`，ahead/behind 0/0；全量 538/538、135 suites）。**F2（模型链路接线）仍未授权** |
 | **rev11** | **F 修复轮的契约收紧**（纯文档，无代码变化）：Slice F 已实现（`22b3951`）但被独立复核 **REJECTED FOR REPAIR**（三个阻塞项：persistence 异常未入 `failed` 收口 · close-out 顺序 · legacy bridge 边界）。本轮把修复口径写进契约 —— **① §M13.2**（BLOCKING 附带项）受保护候选的判定必须在**为该候选生成任何 Fragment / Evidence 之前**完成：`protected ⇒ skippedReviewed`，**零 Fragment / Evidence 副作用**；`persistQuotes()` 之后再 `isProtected()` **不合规**。**② §M13.5a（新增；BLOCKING-2 选 (a)）** legacy `[CANDIDATE]` 路径的 `CandidateDraft → ValidatedCandidate` **确定性兼容桥**归 **F 的最小 compatibility wiring**（模型路径的 `ValidatedCandidate[]` 组装仍归 **F2**），四项硬限制：只能有一处桥（`run()` → `persistValidatedCandidates()` 之间）· 只用 `dimension` / `statement` / `contentKind` / `confidence` / `evidenceRefs` · `quotes` 只能由已有 `evidenceRefs` **确定性反查**（evidence → fragment → locator / text / textHash），**禁止从 quote 反推任何语义** · **不得修改 `ResolvedQuote` 六字段契约**且**不得为了桥重调 B**。**③ §M13.9 澄清一（BLOCKING-3）** ① fencing gate 与 ⑦ 最终 fenced `completed` close-out 是**两个步骤**：① 可为 SQL 存在性判定但**不得修改任何状态**，**⑦ 才是最终权威**（`changes() !== 1` ⇒ `LostLeaseError` ⇒ rollback）；「先写 `completed` 再写业务行」不合规。**④ §M13.9 澄清二（BLOCKING-1）** persistence 异常 ⇒ 事务 **rollback**（`extraction_run` 回到 `running`）⇒ **事务外** fenced `failed` 收口（复用既有 `finishRun` 的四条件谓词）；`changes() === 0` **安全忽略**；**业务异常是主错误，`failed` 收口是 best-effort 但必须 fenced**，不得泄漏未处理 reject，也不得新增第二套状态机；**不得**认为"回滚 ⇒ 自动 `failed`"。**⑤ §M13.9 澄清三 / 澄清四** 桥只能有一处；受保护候选**先判定再写入**（细化步骤 ②–⑤）。**⑥ §M6.3 / §M13.4 同步** 步骤编号对齐 ①–⑦，`failed` 收口明确标注**仍受 fencing 约束**。**⑦ §M13.7 测试矩阵** **F-5 加严**（stale owner 不能完成 persistence / 不能写 `completed` / 零业务残留 / 不覆盖新 owner 状态，且 ⑦ 必须存在）· **F-13 明确**（rollback ⇒ `failed` + `error != null` + `candidate_ids_json = []` + `fragment` / `fragment_evidence` / `claim_candidate` 零新增）· **新增 F-17**（`run()` ⇒ 桥 ⇒ persist 抛错 ⇒ `RunResult.status === "failed"` · `reusedRun === false` · DB `failed` · 业务表零残留）。**F2 仍未授权**；本轮 Step A 为 **docs-only**，**先于**代码修复提交（Step B 白名单：`candidate-extraction-service.ts` · `phase-c6-persistence.test.ts` · `phase-c6-run-claim.test.ts`） |
 | **rev10** | **§M13.9 / §M13.10 落定**（纯文档，无代码变化）：把两处"F 实现前必须先锁定的语义"写成正式条文 —— **§M13.9 F 的持久化入口**：F 的持久化能力必须由 `CandidateExtractionService` 上一个**新的 async 方法** `persistValidatedCandidates(input: { version, extractionId, owner, generation, extractionConfigKey, snapshot, candidates })` 暴露；它完成 §M13.4 的 1–7 步，**全部在同一主库事务**内，任一 persistence unit 抛错即整体回滚、`failed` 更新在事务之外；`run()` 保留 E 的 async / claim / lease / fencing / extractor 职责并**经由该唯一入口**写候选；**候选写入只能有一份实现**（禁止在 F 测试或新路径复制第二套）。**§M13.10 §M7.1 completed reuse 的落点与 Slice E 测试迁移**：明确该行为自 rev3 起即在契约内但 **Slice E 未实现** ⇒ **属 Slice F 的交付内容**（对应 `reusedRun` / F-16），**不是**重开或修改 Slice E；`completed` 判断必须发生在**创建任何新 attempt 之前**（`run()` 入口或 `claimRun()` 内，但需处于无竞态的原子边界）；命中时 `reusedRun = true`、复用既有 `candidateIds`、**不调用** `extract()`、不新建/不修改 `extraction_run`、不产生任何 Fragment / Evidence / ClaimCandidate 与 downstream mutation，候选级计数保持为 0。因该行为变化，允许**调整** `phase-c6-run-claim.test.ts` 中"已 completed 后继续创建 attempt 2/3"这类场景的**前置构造**，但必须**完整保留** `attemptSeq` 进身份 / 同 `attemptSeq` 同 id / `started_at` 不参与身份 / takeover 产生新 generation·attempt / 旧 generation 被 fencing 阻断这五项测试目标；除该测试文件外不得改动 Slice A/B/C/D/E 的其它测试与生产文件。F-16 的"复用不抽取"用现有 `CandidateExtractor.extract()` 的 **counting stub**，**不得接入** `ModelExtractionAdapter` |
@@ -1127,4 +1325,4 @@ F-16 的"复用时不执行抽取"验证使用现有 `CandidateExtractor.extract
 | **rev2** | **第一轮审查意见的四处补齐**（§M2.1）：① **引文即 Fragment**（精确 `char_range`）+ 更正 `fragmentEvidenceIdFor` 的 `stance` 参数 + "四者一致"不变量；② **分隔符归前一窗口** ⇒ 窗口覆盖全文；明确**坐标单位 = UTF-16 code unit**；补配置约束；明确**首版不承诺跨段落组边界的整条引文**；③ **配置身份与运行审计**补入分块器 / **方法论版本** / **维度集合 hash** / **`maxQuoteChars`**，审计保留原值；④ **重跑语义收紧**为"已有成功运行 ⇒ 复用，不再调用模型"。另：`stance` 的语义与**审核界面可见性**（§M5.5）· 超时的**边界与取消**（`AbortSignal`，§M6.2a）· 删除无法失败的"不连续"检查并补 V4（长度上限）验收 · T-C6-33 改为**完整下游状态指纹** · 新增 T-C6-37 |
 | **rev1** | 首版（DESIGN ONLY）：D-C6-H/I/J 三项裁定落为可执行规则 —— 窗口协议（`para-greedy-v1` + 重叠 + 规则进身份）· 模型输出 schema 与 V1–V5 引用校验 · 异步化与"全成或全败"单事务 · 不覆盖已审核候选 · 验收 T-C6-29…T-C6-36 · 改动清单（含 `chunker_version` 加列） |
 
-**End of contract（rev12: F 状态校准 —— 契约语义仍以 rev11 的四条收紧为准、逐字未改；事实状态：`22b3951` 被独立复核 REJECTED FOR REPAIR ⇒ `1554054` 收紧修复口径 ⇒ `a5b80a4` 完成三处修复并交付真正的 F-1…F-17 ⇒ **Slice F ACCEPTED / FROZEN**（`origin/main = a5b80a4`，ahead/behind 0/0）；Slice A–E 已验收（E 已 FROZEN）；**F2 未授权**）.**
+**End of contract（rev13: §M14 = Slice F2 实施契约（生产装配点 / 模型路径入口 / A-B-C 接线 / `mxcfg-` 身份分派 / abort / `ADAPTER_NOT_CONFIGURED` / F2 白名单 / 测试矩阵 W-1…W-11）—— 契约语义仍以 rev11–rev12 为准、逐字未改；★ **F2 不接真实模型**；**F2 契约已定、实现未授权**。Slice A–E 已验收（E 已 FROZEN）；Slice F 已冻结（`22b3951` → REJECTED FOR REPAIR → `1554054` → `a5b80a4` ⇒ ACCEPTED / FROZEN）；真实模型适配器 · 原文切片 · Phase D 未授权）.**
