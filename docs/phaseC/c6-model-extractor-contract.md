@@ -1,6 +1,6 @@
 # Phase C6 · 模型提取器 Implementation Contract（D-C6-H / D-C6-I / D-C6-J）
 
-> 状态：**rev13 — Slice F2 实施契约（§M14 新增；纯文档，未实现）**。**rev11 的四条收紧语义、§M13.7 测试矩阵、以及 rev12 的 F 状态校准全部保留、未改一字**；rev13 只**新增 §M14**，把 §M13.5 的 F2 清单六项落成可执行条文（生产装配点 / 模型路径入口 / A-B-C 接线 / `mxcfg-` 身份分派 / 超时与取消 / `ADAPTER_NOT_CONFIGURED` / F2 文件白名单 / 测试矩阵 W-1…W-11）。**F2 目前是"契约已定、实现未授权"。** 实现进度：**Slice A–E 已验收（E 已 FROZEN）· Slice F 已冻结（审计链 `22b3951` → 独立复核 REJECTED FOR REPAIR → `1554054` 收紧修复口径 → **`a5b80a4`** 完成修复 + 真正的 F-1…F-17 ⇒ **ACCEPTED / FROZEN**，`origin/main = a5b80a4`）· F2 = 契约 rev13（实现未授权）**。仍**未授权**：真实模型适配器 · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
+> 状态：**rev13 — Slice F2 实施契约（§M14 新增；纯文档；F2 已实现并发布（`cf74576`，随 `87a5063`））**。**rev11 的四条收紧语义、§M13.7 测试矩阵、以及 rev12 的 F 状态校准全部保留、未改一字**；rev13 只**新增 §M14**，把 §M13.5 的 F2 清单六项落成可执行条文（生产装配点 / 模型路径入口 / A-B-C 接线 / `mxcfg-` 身份分派 / 超时与取消 / `ADAPTER_NOT_CONFIGURED` / F2 文件白名单 / 测试矩阵 W-1…W-11）。**F2 已实现并发布（`cf74576`，随 `87a5063`）；真实模型适配器仍未授权。** 实现进度：**Slice A–E 已验收（E 已 FROZEN）· Slice F 已冻结（审计链 `22b3951` → 独立复核 REJECTED FOR REPAIR → `1554054` 收紧修复口径 → **`a5b80a4`** 完成修复 + 真正的 F-1…F-17 ⇒ **ACCEPTED / FROZEN**，`origin/main = a5b80a4`）· F2 = 已实现并发布（`cf74576`，随 `87a5063`）**。仍**未授权**：真实模型适配器 · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D。
 > rev2–rev12 = 各轮审查意见的收口（§M2.1–§M2.5）、实施期文档同步、F 契约澄清与 F 状态校准（其中 **rev11 = F 修复轮的语义收紧**、**rev12 = F 状态校准**）。
 > 依据：用户 2026-09-27 的三项结构性裁决（§M2）。用户原话要点：**输入按可追溯片段分批**、**模型只提交引用文本与位置且 ID 由天查生成**、**模型调用异步且整次运行全部验证后再落候选**。
 > 前置契约：`docs/phaseC/c6-implementation-contract.md` §C6.18–§C6.27（资料闭环：材料版本 / Fragment / Evidence / 候选 / 人工闸门 / 投影；其中 `[CANDIDATE]` 确定性提取器 **已交付**）· `docs/HANDOFF.md` §10（**LLM 边界**：禁止 LLM 直接产生 `Claim` / `Fact` / `Knowledge` / `PoolItem` / `Evaluation` 或 0–100 分；模型只能**起草**带来源定位的候选且**必须人工确认**）。
@@ -1111,7 +1111,7 @@ F-16 的"复用时不执行抽取"验证使用现有 `CandidateExtractor.extract
 
 ---
 
-## §M14 Slice F2 Implementation Contract（★ rev13 新增；纯文档，**未实现**）
+## §M14 Slice F2 Implementation Contract（★ rev13 新增；**F2 已实现并发布（`cf74576`，随 `87a5063`）；真实模型适配器未授权**）
 
 本节把 **§M13.5 的 F2 清单**（六项）落成**可执行条文**：生产装配点 / 模型路径入口 / A-B-C 接线 / `mxcfg-` 身份分派 / 超时与取消 / `ADAPTER_NOT_CONFIGURED` / 文件白名单 / 测试矩阵。**它不改变 §M0–§M13 的任何规则**：F 的唯一持久化入口（§M13.9）、① / ⑦ 两段式 fencing、事务外 fenced `failed`、受保护候选零写入（§M13.2）、legacy 兼容桥（§M13.5a）**全部照旧**。
 
@@ -1329,4 +1329,4 @@ src/cli/tiancha.ts                                                  ← 薄组�
 | **rev2** | **第一轮审查意见的四处补齐**（§M2.1）：① **引文即 Fragment**（精确 `char_range`）+ 更正 `fragmentEvidenceIdFor` 的 `stance` 参数 + "四者一致"不变量；② **分隔符归前一窗口** ⇒ 窗口覆盖全文；明确**坐标单位 = UTF-16 code unit**；补配置约束；明确**首版不承诺跨段落组边界的整条引文**；③ **配置身份与运行审计**补入分块器 / **方法论版本** / **维度集合 hash** / **`maxQuoteChars`**，审计保留原值；④ **重跑语义收紧**为"已有成功运行 ⇒ 复用，不再调用模型"。另：`stance` 的语义与**审核界面可见性**（§M5.5）· 超时的**边界与取消**（`AbortSignal`，§M6.2a）· 删除无法失败的"不连续"检查并补 V4（长度上限）验收 · T-C6-33 改为**完整下游状态指纹** · 新增 T-C6-37 |
 | **rev1** | 首版（DESIGN ONLY）：D-C6-H/I/J 三项裁定落为可执行规则 —— 窗口协议（`para-greedy-v1` + 重叠 + 规则进身份）· 模型输出 schema 与 V1–V5 引用校验 · 异步化与"全成或全败"单事务 · 不覆盖已审核候选 · 验收 T-C6-29…T-C6-36 · 改动清单（含 `chunker_version` 加列） |
 
-**End of contract（rev13: §M14 = Slice F2 实施契约（生产装配点 / 模型路径入口 / A-B-C 接线 / `mxcfg-` 身份分派 / abort / `ADAPTER_NOT_CONFIGURED` / F2 白名单 / 测试矩阵 W-1…W-11）—— 契约语义仍以 rev11–rev12 为准、逐字未改；★ **F2 不接真实模型**；**F2 契约已定、实现未授权**。Slice A–E 已验收（E 已 FROZEN）；Slice F 已冻结（`22b3951` → REJECTED FOR REPAIR → `1554054` → `a5b80a4` ⇒ ACCEPTED / FROZEN）；真实模型适配器 · 原文切片 · Phase D 未授权）.**
+**End of contract（rev13: §M14 = Slice F2 实施契约（生产装配点 / 模型路径入口 / A-B-C 接线 / `mxcfg-` 身份分派 / abort / `ADAPTER_NOT_CONFIGURED` / F2 白名单 / 测试矩阵 W-1…W-11）—— 契约语义仍以 rev11–rev12 为准、逐字未改；★ **F2 不接真实模型**；**F2 已实现并发布（`cf74576`，随 `87a5063`）；真实模型适配器未授权**。Slice A–E 已验收（E 已 FROZEN）；Slice F 已冻结（`22b3951` → REJECTED FOR REPAIR → `1554054` → `a5b80a4` ⇒ ACCEPTED / FROZEN）；真实模型适配器 · 原文切片 · Phase D 未授权）.**
