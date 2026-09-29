@@ -61,6 +61,7 @@ import { TianchaAgentHost } from "../agent/tiancha-agent-host.js";
 import { RESEARCH_SUBCOMMANDS, runMaterialAdd, runMaterialAttribute, runMaterialList, runMaterialRetry, runResearchCommand, runTargetAdd, runTargetList, type ResearchCliDeps } from "./research-commands.js";
 import {
   runCandidateConfirm,
+  runCandidateExtract,
   runCandidateList,
   runCandidateReject,
   runCandidateRevise,
@@ -70,6 +71,9 @@ import { runCandidateProject } from "./research-commands.js";
 import { KnowledgeRepository } from "@tiancha/research";
 import { CandidateReviewService } from "@tiancha/research";
 import { CandidateProjectionService } from "@tiancha/research";
+// ★ C6 Slice F2 (§M14.1): the extraction service + the deterministic legacy extractor. The MODEL
+// path is opt-in per call (`--model`) and resolves no adapter in this build — by design.
+import { CandidateExtractionService, ExplicitBlockExtractor } from "@tiancha/research";
 
 const TIANCHA_VERSION = "0.1.0";
 const PRODUCT_NAME = "tiancha";
@@ -512,6 +516,11 @@ async function run(): Promise<void> {
         // ★ C6 slice ③: candidate review; confirmation is recorded, PROJECTION is slice ④.
         // ★ P1 fix: the human gate judges an explicit evolution target against this same knowledge.
         candidates: new CandidateReviewService(repo, knowledge),
+        // ★ C6 Slice F2 (§M14.1): the candidate EXTRACTION entry point — the FIRST production
+        // construction of CandidateExtractionService. The deterministic legacy [CANDIDATE] extractor
+        // is wired here; the MODEL path is opt-in via `--model` and resolves no adapter in this
+        // build (ADAPTER_NOT_CONFIGURED), by design (§M14.0 / §M14.6).
+        extraction: new CandidateExtractionService(repo, new ExplicitBlockExtractor(repo)),
         // ★ C6 slice ④: projection goes through the SAME ingestClaims path field research uses.
         projection: new CandidateProjectionService(
           repo,
@@ -569,8 +578,25 @@ async function run(): Promise<void> {
             },
             deps,
           );
+        } else if (sub === "extract") {
+          // ★ C6 Slice F2 (§M14.1): `--model` selects the MODEL path EXPLICITLY; without it the
+          // existing legacy [CANDIDATE] default path runs. `--timeout` / `--window-max-chars` are
+          // optional and only meaningful for the model path.
+          const timeoutRaw = flagValue(args, "--timeout");
+          const maxCharsRaw = flagValue(args, "--window-max-chars");
+          process.exitCode = await runCandidateExtract(
+            id,
+            {
+              json,
+              operator,
+              model: args.includes("--model"),
+              ...(timeoutRaw === undefined ? {} : { timeoutMs: Number(timeoutRaw) }),
+              ...(maxCharsRaw === undefined ? {} : { windowMaxChars: Number(maxCharsRaw) }),
+            },
+            deps,
+          );
         } else {
-          deps.err("usage: tiancha research candidate list|show|confirm|revise|reject ...");
+          deps.err("usage: tiancha research candidate list|show|confirm|revise|reject|project|extract ...");
           process.exitCode = 1;
         }
       } else if (isMaterialCmd) {

@@ -80,6 +80,13 @@ import {
 import { renderDossierMarkdown, reportFileName } from "./report-markdown.js";
 // ★ C6 slice ③: the human gate for claim candidates (no projection lives here).
 import { CandidateReviewService, type ClaimCandidate } from "@tiancha/research";
+// ★ C6 Slice F2: the candidate EXTRACTION entry point (the legacy extractor, or an injected model
+// adapter). `DEFAULT_WINDOW_RULE` / `ModelExtractionAdapter` are surfaced by the service module (§M14.8).
+import {
+  CandidateExtractionService,
+  DEFAULT_WINDOW_RULE,
+  type ModelExtractionAdapter,
+} from "@tiancha/research";
 import { KnowledgeRepository } from "@tiancha/research";
 import { CandidateProjectionService } from "@tiancha/research";
 import { locatorKey } from "@tiancha/research";
@@ -107,6 +114,12 @@ export interface ResearchCliDeps {
   materialMigration?: { completedWithRefs: number; completedWithoutClaims: number; legacyFailed: number };
   /** ★ C6 slice ③: candidate review (the human gate; confirmation only — projection is slice ④). */
   candidates?: CandidateReviewService;
+  /**
+   * ★ C6 Slice F2 (§M14.1): candidate EXTRACTION — the legacy `[CANDIDATE]` producer, optionally
+   * driven with an injected model adapter. Optional so read-only call sites need no rewiring; the
+   * CLI composes it. Absent ⇒ `candidate extract` refuses instead of pretending it ran.
+   */
+  extraction?: CandidateExtractionService;
   /** ★ C6 slice ④: the projection into the EXISTING ingestClaims path (absent ⇒ record only). */
   projection?: CandidateProjectionService;
   /** B2: the ONLY writer of ResearchTarget — human-confirmed subjects. */
@@ -1200,6 +1213,16 @@ export interface CandidateReviewOptions {
   supersedes?: string;
   /** ★ D-C6-G: only for `REVISE` — which existing claim is revised. Never guessed. */
   revises?: string;
+  /**
+   * ★ F2 (§M14.1): choose the MODEL path EXPLICITLY. Absent ⇒ the existing legacy `[CANDIDATE]`
+   * default path — a default, not an implicit fallback. Given ⇒ the model path, and it NEVER falls
+   * back to legacy.
+   */
+  model?: boolean;
+  /** ★ F2: the run's own deadline (§M6.2a). */
+  timeoutMs?: number;
+  /** ★ F2: override `WindowRule.maxChars` for the MODEL path. */
+  windowMaxChars?: number;
 }
 
 function toCandidateView(c: ClaimCandidate, repo?: ResearchRepository): CandidateView {
@@ -1446,6 +1469,107 @@ export async function runCandidateReject(
     }
     deps.out(formatCandidateReviewHuman(toCandidateView(updated), "reject"));
     return 0;
+  } catch (err) {
+    return fail(deps, err instanceof Error ? err.message : String(err));
+  }
+}
+
+// ---- ★ C6 Slice F2: candidate EXTRACTION (§M14.1 / §M14.6) -------------------
+
+/** ★ §M14.6 — the machine-readable reason the model path refuses to run without an adapter. */
+export const ADAPTER_NOT_CONFIGURED = "ADAPTER_NOT_CONFIGURED";
+
+/**
+ * ★ §M14.1 / §M14.6 — the ONLY place the model path resolves an adapter.
+ *
+ * In THIS slice there is nothing to resolve: F2 delivers the seam, the production assembly and the
+ * failure path, while a REAL provider (vendor SDK / credentials / deployment identity / generation
+ * parameters) needs its own contract and its own authorization. So this returns `undefined` BY
+ * CONSTRUCTION, which makes `--model` fail honestly with `ADAPTER_NOT_CONFIGURED`.
+ *
+ * ★ It must NEVER be replaced by a fake / mock / echo adapter (§M14.6 / §M14.7): that would assert
+ * "the model is integrated" while nothing is, and it would make the `--model` switch untrustworthy.
+ */
+export function resolveModelAdapter(): ModelExtractionAdapter | undefined {
+  return undefined;
+}
+
+/**
+ * `candidate extract` — the FIRST production entry point for candidate extraction (§M14.0).
+ *
+ * Exit code 0 ONLY when the run reached `completed` and the candidates were persisted; a `failed` /
+ * `in_progress` run, an unknown material version and a missing adapter are all non-zero (§M14.1).
+ */
+export async function runCandidateExtract(
+  materialVersionId: string | undefined,
+  opts: CandidateReviewOptions,
+  deps: ResearchCliDeps,
+): Promise<number> {
+  if (materialVersionId === undefined) {
+    return fail(
+      deps,
+      "usage: tiancha research candidate extract <materialVersionId> [--model] [--operator <名>] [--timeout <ms>] [--window-max-chars <n>] [--json]",
+    );
+  }
+  if (deps.extraction === undefined) {
+    return fail(deps, "no extraction service is wired in this context — run the CLI (tiancha research candidate extract …)");
+  }
+  const version = deps.repo.getMaterialVersion(materialVersionId);
+  if (version === undefined) return fail(deps, `unknown material version: ${materialVersionId}`);
+
+  // ★ §M14.1 / §M14.6 — the adapter is resolved BEFORE `run()`: `--model` without one is an honest
+  // failure at the ASSEMBLY layer, so a "half model run" cannot exist. Nothing is written, and the
+  // legacy `[CANDIDATE]` path is NOT used as a silent substitute.
+  let model: ModelExtractionAdapter | undefined;
+  if (opts.model === true) {
+    if (opts.operator === undefined) {
+      return fail(deps, "--operator is required with --model (who asked for the model call)");
+    }
+    model = resolveModelAdapter();
+    if (model === undefined) {
+      if (opts.json) deps.out(toJson({ status: "failed", reason: ADAPTER_NOT_CONFIGURED }));
+      return fail(
+        deps,
+        `${ADAPTER_NOT_CONFIGURED}: no model adapter is available in this build — the model path is NOT silently replaced by the [CANDIDATE] path`,
+      );
+    }
+  }
+
+  const rule =
+    opts.windowMaxChars === undefined
+      ? DEFAULT_WINDOW_RULE
+      : { ...DEFAULT_WINDOW_RULE, maxChars: opts.windowMaxChars };
+
+  try {
+    const result = await deps.extraction.run(version, undefined, {
+      ...(model === undefined ? {} : { model }),
+      ...(model === undefined ? {} : { rule }),
+      ...(opts.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }),
+      ...(opts.operator === undefined ? {} : { owner: opts.operator }),
+    });
+    if (opts.json) {
+      deps.out(
+        toJson({
+          extractionId: result.extractionId,
+          status: result.status,
+          created: result.created,
+          reused: result.reused,
+          merged: result.merged,
+          skippedReviewed: result.skippedReviewed,
+          reusedRun: result.reusedRun,
+          candidateIds: result.candidateIds,
+          ...(result.error === undefined ? {} : { error: result.error }),
+          ...(result.in_progress === undefined ? {} : { inProgress: result.in_progress }),
+        }),
+      );
+    } else {
+      deps.out(
+        `[extract] ${result.extractionId} status=${result.status} created=${result.created} reused=${result.reused} ` +
+          `merged=${result.merged} skippedReviewed=${result.skippedReviewed}` +
+          `${result.reusedRun ? " reusedRun=true" : ""}${result.error === undefined ? "" : ` error=${result.error}`}`,
+      );
+    }
+    return result.status === "completed" ? 0 : 1;
   } catch (err) {
     return fail(deps, err instanceof Error ? err.message : String(err));
   }

@@ -29,15 +29,35 @@ import {
   type MaterialFragment,
   type MaterialVersion,
 } from "../domain/material-source.js";
-import { DEFAULT_WINDOW_RULE, type WindowRule } from "./extraction-window.js";
+import {
+  DEFAULT_WINDOW_RULE,
+  extractionWindowFor,
+  type ExtractionWindow,
+  type WindowRule,
+} from "./extraction-window.js";
 import { randomUUID } from "node:crypto";
 import {
   chunkerVersionOf,
   dimensionSetHashOf,
+  modelExtractionConfigKeyFor,
   type ExtractionConfigSnapshot,
 } from "./model-extraction-config.js";
-import type { ResolvedQuote } from "./model-extraction.js";
+import {
+  resolveQuotes,
+  type ModelExtractionAdapter,
+  type ResolvedQuote,
+} from "./model-extraction.js";
+import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
+import type { MethodologyVersion } from "../domain/methodology.js";
 import type { ResearchRepository } from "../storage/research-repository.js";
+
+/**
+ * ★ §M14.8 — the CLI assembly must be able to NAME the model seam and the default window rule.
+ * `packages/research/src/index.ts` re-exports THIS module only (and index.ts is NOT in F2's
+ * whitelist), so they are surfaced here rather than by widening the package surface elsewhere.
+ */
+export type { ModelExtractionAdapter } from "./model-extraction.js";
+export { DEFAULT_WINDOW_RULE } from "./extraction-window.js";
 
 /** What an extractor proposes — no ids, no status: identity is derived by the service. */
 export interface CandidateDraft {
@@ -443,6 +463,79 @@ export class CandidateExtractionService {
   }
 
   /**
+   * ★ §M14.3 — THE MODEL PATH. windows → per-window `extractBatch(input, signal)` → `resolveQuotes`
+   * (V1–V4, zero tolerance) → `ValidatedCandidate[]`.
+   *
+   * ★ NOTHING is written here: this is the "compute first" half of §M6.3, so a failure anywhere
+   * (a throwing adapter, a quote that fails V1–V4, a timeout) leaves ZERO business residue.
+   *
+   * ★ §M14.5 — ONE `AbortController` covers the WHOLE run: the same `signal` reaches EVERY batch, and
+   * the deadline aborts it. The work is ALSO raced against the deadline, so an adapter that ignores
+   * its signal cannot hold the run open (the contract promises "not awaited, not used, nothing
+   * written" — never "the vendor's socket is closed").
+   */
+  private async extractWithModel(input: {
+    version: MaterialVersion;
+    model: ModelExtractionAdapter;
+    rule: WindowRule;
+    windows: readonly ExtractionWindow[];
+    /** ★ §M14.4 — the methodology's DECLARED order; never sorted, never model-chosen. */
+    dimensionHints: readonly string[];
+    methodologyVersionId: string;
+    timeoutMs: number;
+  }): Promise<ValidatedCandidate[]> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new CandidateExtractionTimeoutError(`extraction timed out after ${input.timeoutMs}ms`));
+      }, input.timeoutMs);
+    });
+
+    const work = async (): Promise<ValidatedCandidate[]> => {
+      const units: ValidatedCandidate[] = [];
+      // ★ Batch order is `window.index` ascending — the windows are already in that order (§M4.3).
+      for (const window of input.windows) {
+        const batch = await input.model.extractBatch(
+          {
+            materialVersionId: input.version.materialVersionId,
+            window: { windowId: window.windowId, index: window.index, text: window.text },
+            windowStartInVersion: window.start,
+            dimensionHints: input.dimensionHints,
+            methodologyVersionId: input.methodologyVersionId,
+          },
+          controller.signal,
+        );
+        for (const draft of batch.candidates) {
+          // ★ Zero tolerance: the FIRST quote that fails V1–V4 fails the WHOLE run (nothing written).
+          // An empty `candidates` list is LEGAL ("this window has no candidate") — not a failure.
+          const quotes = resolveQuotes(draft.quotes, {
+            windows: input.windows,
+            maxQuoteChars: input.rule.maxQuoteChars,
+          });
+          units.push({
+            draft: {
+              dimension: draft.dimension,
+              statement: draft.statement,
+              contentKind: draft.contentKind,
+              ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
+            },
+            quotes,
+          });
+        }
+      }
+      return units;
+    };
+
+    try {
+      return await Promise.race([work(), deadline]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
+  /**
    * The IMMUTABLE configuration snapshot for this run (§M7.3). The legacy `[CANDIDATE]` path has no
    * window rule of its own, so it records the default rule and its own parser identity; the model
    * path (Slice F2) supplies the real window rule. Written once, never mutated afterwards.
@@ -454,6 +547,11 @@ export class CandidateExtractionService {
     generation: number;
     rule: WindowRule;
     dimensionHints: readonly string[];
+    /**
+     * ★ §M14.4: the MODEL path records the REAL methodology version. The legacy path omits it and
+     * keeps `"unbound"` (unchanged, so no legacy identity/snapshot byte moves).
+     */
+    methodologyVersionId?: string;
   }): ExtractionConfigSnapshot {
     return {
       windowRule: {
@@ -470,7 +568,10 @@ export class CandidateExtractionService {
         schemaVersion: this.schemaVersion,
       },
       generation: {},
-      methodology: { methodologyVersionId: "unbound", dimensionHints: input.dimensionHints },
+      methodology: {
+        methodologyVersionId: input.methodologyVersionId ?? "unbound",
+        dimensionHints: input.dimensionHints,
+      },
       run: {
         timeoutMs: input.timeoutMs,
         batchCount: input.batchCount,
@@ -549,9 +650,41 @@ export class CandidateExtractionService {
   async run(
     version: MaterialVersion,
     at?: string,
-    opts: { timeoutMs?: number; leaseMs?: number; owner?: string } = {},
+    opts: {
+      timeoutMs?: number;
+      leaseMs?: number;
+      owner?: string;
+      /**
+       * ★ §M14.2 — THE MODEL PATH. Given ⇒ the model path (A-B-C wiring, §M14.3); absent ⇒ the
+       * legacy `[CANDIDATE]` path, byte-for-byte unchanged. This is an EXPLICIT parameter: there is
+       * no environment variable and no implicit "does this service happen to hold an adapter"
+       * switch, so `--model` can never fall back to legacy — and legacy can never silently become a
+       * model call.
+       */
+      model?: ModelExtractionAdapter;
+      /** ★ §M14.3 — the window rule used by the MODEL path (default: `DEFAULT_WINDOW_RULE`). */
+      rule?: WindowRule;
+    } = {},
   ): Promise<RunResult> {
-    const configKey = this.extractionConfigKey;
+    // ★ §M14.4 — the two paths mint DIFFERENT configuration identities (`xcfg-…` vs `mxcfg-…`), so
+    // their runs and candidates can never reuse or overwrite each other (§M11.2).
+    const rule = opts.rule ?? DEFAULT_WINDOW_RULE;
+    const methodology = this.repo.getActiveMethodology() ?? METHODOLOGY_V1;
+    const dimensionHints = methodology.dimensions.map((d) => d.key);
+    const configKey =
+      opts.model === undefined
+        ? this.extractionConfigKey
+        : modelExtractionConfigKeyFor({
+            windowRule: rule,
+            maxQuoteChars: rule.maxQuoteChars,
+            generation: {},
+            methodologyVersionId: methodology.versionId,
+            dimensionHints,
+            modelVersion: opts.model.modelVersion,
+            promptVersion: opts.model.promptVersion,
+            parserVersion: opts.model.parserVersion,
+            schemaVersion: this.schemaVersion,
+          });
 
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const leaseMs = opts.leaseMs ?? DEFAULT_LEASE_MS;
@@ -608,18 +741,56 @@ export class CandidateExtractionService {
       };
     }
     const { extractionId, generation } = claim;
-    const fragments = this.repo.listFragments(version.materialVersionId);
 
-    let drafts: CandidateDraft[];
+    // ★ Two candidate PRODUCERS, ONE run skeleton (§M14.2). The legacy extractor hands back drafts
+    // whose quotes are looked up from the evidence it registered (§M13.5a); the model path runs the
+    // A-B-C wiring and produces `ValidatedCandidate[]` directly (§M14.3). Both then go through the
+    // SAME `persistValidatedCandidates()` below — never a second write path.
+    let units: ValidatedCandidate[];
+    let batchCount: number;
+    let snapshotRule: WindowRule = DEFAULT_WINDOW_RULE;
+    let snapshotDimensions: readonly string[] = [];
+    let snapshotMethodologyVersionId: string | undefined;
     try {
-      drafts = await withTimeout(
-        this.extractor.extract({ version, fragments }),
-        timeoutMs,
-        () => `extraction timed out after ${timeoutMs}ms`,
-      );
-      // ★ A non-empty list is not enough: every ref must be REAL and belong to THIS material
-      // version. A model-backed extractor must never be able to assert a source that does not exist.
-      this.validateDrafts(drafts, version);
+      if (opts.model === undefined) {
+        const fragments = this.repo.listFragments(version.materialVersionId);
+        const drafts = await withTimeout(
+          this.extractor.extract({ version, fragments }),
+          timeoutMs,
+          () => `extraction timed out after ${timeoutMs}ms`,
+        );
+        // ★ A non-empty list is not enough: every ref must be REAL and belong to THIS material
+        // version. A model-backed extractor must never be able to assert a source that does not exist.
+        this.validateDrafts(drafts, version);
+        units = drafts.map((draft) => ({
+          draft: {
+            dimension: draft.dimension,
+            statement: draft.statement,
+            contentKind: draft.contentKind,
+            ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
+          },
+          quotes: this.quotesFromEvidenceRefs(draft.evidenceRefs),
+        }));
+        batchCount = drafts.length;
+        snapshotDimensions = drafts.map((d) => d.dimension);
+      } else {
+        // ★ §M14.3 — COMPUTE FIRST: every window is extracted AND every quote validated BEFORE the
+        // single write transaction below. A failure here leaves zero business residue.
+        const windows = extractionWindowFor(version, rule);
+        units = await this.extractWithModel({
+          version,
+          model: opts.model,
+          rule,
+          windows,
+          dimensionHints,
+          methodologyVersionId: methodology.versionId,
+          timeoutMs,
+        });
+        batchCount = windows.length;
+        snapshotRule = rule;
+        snapshotDimensions = dimensionHints;
+        snapshotMethodologyVersionId = methodology.versionId;
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (err instanceof CandidateExtractionTimeoutError) {
@@ -645,21 +816,16 @@ export class CandidateExtractionService {
         extractionConfigKey: configKey,
         snapshot: this.snapshotFor({
           timeoutMs,
-          batchCount: drafts.length,
+          batchCount,
           attemptSeq: generation,
           generation,
-          rule: DEFAULT_WINDOW_RULE,
-          dimensionHints: drafts.map((d) => d.dimension),
+          rule: snapshotRule,
+          dimensionHints: snapshotDimensions,
+          ...(snapshotMethodologyVersionId === undefined
+            ? {}
+            : { methodologyVersionId: snapshotMethodologyVersionId }),
         }),
-        candidates: drafts.map((draft) => ({
-          draft: {
-            dimension: draft.dimension,
-            statement: draft.statement,
-            contentKind: draft.contentKind,
-            ...(draft.confidence === undefined ? {} : { confidence: draft.confidence }),
-          },
-          quotes: this.quotesFromEvidenceRefs(draft.evidenceRefs),
-        })),
+        candidates: units,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
