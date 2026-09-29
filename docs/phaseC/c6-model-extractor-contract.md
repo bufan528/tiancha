@@ -385,8 +385,8 @@ running ──► completed      （全部批次返回且全部引用校验通�
 ```
 
 * 状态集**沿用** `ExtractionStatus = "running" | "completed" | "failed"`，**不新增**值；
-* **超时**必须记为 `failed`（`error` 以 `timeout:` 开头）——**绝不允许**把超时写成 `completed`（验收项）；
-* `finishedAt` 仅在终态写入；`error` 只写**机器可读前缀 + 简述**（不写模型原始输出全文）。
+* **超时**必须在**调用结果**上记为 `failed`（`RunResult.status = "failed"`；`error` 为超时文案，当前实现即 `extraction timed out after Nms`）——**绝不允许**把超时写成 `completed`（验收项）。★ **timeout 语义澄清**：**`RunResult.status` 与 `extraction_run.status` 是两个层次** —— 超时**不在本次调用中收口** `extraction_run` 行，该行保持 `running` / `finished_at = NULL`（详见 §M6.2a 表与 §M10 T-C6-34）；
+* `finishedAt` 仅在终态写入；`error` 只写**机器可读的简短原因**（不写模型原始输出全文）。★ **timeout 语义澄清**：超时的 `error` 是**超时文案**（当前实现 `extraction timed out after Nms`），且该文案只出现在**调用结果**上 —— run 行此时仍是 `running`、`finished_at` 仍为 `NULL`；
 
 #### §M6.2a 超时边界与取消（rev2 补清）
 
@@ -396,7 +396,8 @@ running ──► completed      （全部批次返回且全部引用校验通�
 | 计时范围 | **整个运行**（`started_at` → 最后一个批次返回），**不是**"每批各算一次" |
 | 取消方式 | 运行持有一个 `AbortController`：超时触发 `abort()`；`signal` **逐批**传给 `adapter.extractBatch(input, signal)` |
 | 适配器义务 | 收到 abort ⇒ **终止在途请求**并尽快 reject；**不得**忽略 signal 把请求跑完 |
-| 本契约能保证与不能保证 | 不能保证第三方 SDK 真的切断底层连接；**能**保证：本系统**不再 await 它**、**不使用其结果**、**不写任何表**、**记 `failed` + `timeout:` 前缀**。残留请求**零副作用**（适配器是纯的，§M3.4） |
+| 本契约能保证与不能保证 | 不能保证第三方 SDK 真的切断底层连接；**能**保证：本系统**不再 await 它**、**不使用其结果**、**不写任何业务表**（也**不在本次调用中收口** `extraction_run` 行）、**把调用结果记为 `failed` + 超时文案**。残留请求**零副作用**（适配器是纯的，§M3.4） |
+| **超时后的两层状态（★ timeout 语义澄清）** | **`RunResult.status` ≠ `extraction_run.status`**：超时只有**调用结果**是 `failed`（+ 超时文案）；**`extraction_run` 行保持 `running` / `finished_at = NULL`**，**不在本次调用中收口**，由既有 **lease / fencing** 在租约自然过期后处理（§M7.1a ②）。契约**不再要求**"超时时 `finishedAt` 有值" |
 | 运行身份（★ rev3 修正） | `extractionConfigKey` **不含时间戳**（否则重跑永远算"新配置"，§M7.1 的复用就不成立）—— 这条不变。但 **`startedAt` 不能单独充当运行 id 的唯一熵源**：同一毫秒启动的两个请求会算出**同一个 id**（审查意见成立）。<br>⇒ 运行 id = `extractionRunIdFor(materialVersionId, extractionConfigKey, attemptSeq)`，其中 **`attemptSeq`** 在**认领**时于同一事务内取 `MAX(attempt_seq) + 1`（§M7.1a）；`started_at` **作为审计字段保留**，**不参与身份**。 |
 
 ### §M6.3 全成或全败
@@ -662,7 +663,7 @@ interface ExtractionConfigSnapshot {
 | **T-C6-31 引文即 Fragment（四者一致）** | 一条引文（含**跨段落但连续**的引文）⇒ 断言 `fragment.text === evidence.quoteText === quote.text` 且 `sha256Hex(quote.text) === evidence.quoteHash === fragment.textHash`；`fragment.locator` 是**精确覆盖该区间的 `char_range`**；并经 `resolveLocator(normalized, fragment.locator)` **解析回材料原文**得到同一段文本。<br>★ **`(unit)` 子集已落地于 Slice B**（`da1993b`）：locator / 全局区间 / `quoteHash` / 解析回原文已断言；**含 `fragmentId` 与 Fragment 行的"四者一致"属 Slice F** |
 | **T-C6-32 引用不成立 ⇒ 整次失败（V1–V4 各一例）** | V1 窗口不属于本版本 · V2 区间越界/倒置 · **V3 文本与位置不符** · **V4 长度超过 `maxQuoteChars`** ⇒ 运行 `failed`；`claim_candidate` **零新增**；`extraction_run.candidate_ids_json = []`；`error` 指明失败类别与第几个窗口 / 第几条 quote。<br>★ **`(unit)` 子集已落地于 Slice B**（`da1993b`）：**校验与拒绝**已断言（含 fail-fast 与"同长度不同内容"的 V3 反例）；**"整次失败、零残留"的持久化语义属 Slice F** |
 | **T-C6-33 人工确认前下游指纹不变（完整指纹）** | 成功运行后，§M8 十张表的**完整内容指纹**与运行前**逐项相等**（**不是**只比行数）；候选全为 `draft` / `projectionStatus = "none"` / 无 `decisionRelation` |
-| **T-C6-34 超时 / 取消不误报完成** | 适配器**永不 resolve** ⇒ 运行 `failed` + `error` 以 `timeout:` 开头；**零候选**；`finishedAt` 有值；**且**断言适配器**收到了 abort**（其 promise 在 `signal` 触发后以 `AbortError` 结束），证明不是"只把状态改成失败" |
+| **T-C6-34 超时 / 取消不误报完成**（★ **timeout 语义澄清**：两层状态） | 适配器**永不 resolve** ⇒ **调用结果** `RunResult.status = "failed"` + `error` 为超时文案（当前实现：`extraction timed out after Nms`）；**零候选**（零业务写入）；**且**断言适配器**收到了 abort**（其 promise 在 `signal` 触发后以 `AbortError` 结束），证明不是"只把状态改成失败"。<br>★ **`RunResult.status` 与 `extraction_run.status` 不是同一件事**：超时**不在本次调用中收口** run 行 ⇒ 该行**保持 `running` / `finished_at = NULL`**，租约自然过期后由既有 **lease / fencing** 机制处理（§M6.2a / §M7.1a ②）。**本契约不再要求"超时时 `finishedAt` 有值"**，也不要求把该行写成 `failed`（那等同于重开 Slice E 的裁定）。<br>（Slice F2 的 **W-5** 正是按此两层口径断言。） |
 | **T-C6-35 已审核候选不被改动** | 先 `confirm` / `reject` 某候选 ⇒ **候选写入阶段**遇到同 id ⇒ 该候选 `reviewStatus` / `statement` / `evidenceRefs` **一字不变**，并计入 `skippedReviewed`；`draft` 候选仍可合并 Evidence（`merged` 计入） |
 | **T-C6-36 无适配器 ⇒ 明确失败** | 未配置 `ModelExtractionAdapter` ⇒ **报错** `ADAPTER_NOT_CONFIGURED`；**不静默退回** `[CANDIDATE]`；**不写任何表** |
 | **T-C6-37 复用与并发认领**（★ rev3 加并发 · **rev4 修正承诺与测试手段**） | **串行**：同 `(materialVersionId, extractionConfigKey)` 第二次调用 ⇒ 既有 `candidateIds` + `reused = true` + `completed`；**适配器调用次数仍为 1**；**不写任何表**（指纹不变）；适配器**故意不可用**时也不受影响。<br>**并发 —— 必须用两个独立进程，或至少两个独立数据库连接**（单进程 `Promise.all` 只证明进程内串行化，**不算**）：① 断言**有效租约内只有 1 次模型调用**、**`completed` 运行只有 1 条**；未抢到者拿到**复用结果**或显式 **`in_progress`**，**且没有第二次模型调用**；② **租约接管**：令持有者过期 ⇒ 新代次可认领（新 `attemptSeq`；此时**出现第二次模型请求是允许的**）⇒ 断言**旧代次零残留**（无新增 `claim_candidate`、无新增 `fragment_evidence`、运行未被写成 `completed`），新代次正常 `completed`；③ 断言**部分唯一索引**确实阻止两个 `running` 并存（§M7.1a ①） |
@@ -1144,7 +1145,7 @@ tiancha research candidate extract <materialVersionId>
 | `<materialVersionId>` | 必填；该版本的规范化文本即输入（§M4.1 坐标） |
 | `--model` | **显式**选择模型路径；**缺失即 legacy 路径**（`ExplicitBlockExtractor`，`xcfg-` 身份） |
 | `--operator` | 记录到运行审计；**模型路径下必填**（谁发起了一次模型调用） |
-| `--timeout` / `--window-max-chars` | 可选；缺省用契约常量（§M6.2a / §M4.3） |
+| `--timeout` / `--window-max-chars` | 可选；缺省用契约常量（§M6.2a / §M4.3）。★ **语义澄清**：`--window-max-chars` **只对显式 `--model` 路径生效**；legacy `[CANDIDATE]` 路径**忽略**该参数（本片**不新增** CLI 层校验，也**不改变** legacy 行为） |
 
 * **模型路径必须通过显式 `--model` 选择；未提供 `--model` 时保持既有 legacy 默认路径**（§M11.2 / §M13.5 #2）。**不存在**"有适配器就用、没有就退回 `[CANDIDATE]`"的隐式行为；**反向同样成立** —— 一旦给了 `--model` 就**绝不**退回 legacy（§M14.6）。
 * 退出码：**0 仅当终态为 `completed` 且候选已落库**；`failed` / `in_progress` / `ADAPTER_NOT_CONFIGURED` 一律**非 0**，并打印机器可读原因（`--json` 时结构化）。
@@ -1221,8 +1222,11 @@ tiancha research candidate extract <materialVersionId>
 
 * **一个** `AbortController` 覆盖整次运行；`timeoutMs` 到期 ⇒ `abort()`；`signal` **逐批**传给 `adapter.extractBatch(input, signal)`。
 * 适配器义务：收到 abort ⇒ **终止在途请求并尽快 reject**；**不得**忽略 signal 把请求跑完（§M6.2a）。
-* 超时 ⇒ 与 legacy 路径**同一语义**：运行记 `failed` + `error` 以 `timeout:` 开头；**行不被收口成 `completed`**，租约自然过期（**E 的裁定不变**）。
-* 本系统**不保证**第三方 SDK 真能切断底层连接；保证的是"**不再 await、不使用其结果、不写任何表**"（§M6.2a）。
+* 超时 ⇒ 与 legacy 路径**同一语义**，且**必须分两层报告**（★ **timeout 语义澄清**）：
+  * **调用结果**：`RunResult.status = "failed"` + `error` 为超时文案（当前实现：`extraction timed out after Nms`）——**不得报告 `completed`**；
+  * **持久化 run 行**：超时**不在本次调用中收口** ⇒ `extraction_run.status` 保持 `running`、`finished_at = NULL`，**行不被收口成 `completed`**，租约自然过期后由既有 **lease / fencing** 机制处理（**E 的裁定不变**）；
+  * ★ 因此 **"调用结果 failed" ≠ "run 行已被关闭为 failed"** —— 不要因为看到 `failed` 就去把该行写成 `failed`，那等同于重开 Slice E。
+* 本系统**不保证**第三方 SDK 真能切断底层连接；保证的是"**不再 await、不使用其结果、不写任何业务表**"（§M6.2a；超时**不在本次调用中收口** run 行，见上）。
 
 ### §M14.6 `ADAPTER_NOT_CONFIGURED`（失败路径的唯一定义）
 
@@ -1277,7 +1281,7 @@ src/cli/tiancha.ts                                                  ← 薄组�
 | **W-2** | **逐批**：`extractBatch` 调用次数 = 窗口数；`snapshot.run.batchCount` = 窗口数；批次顺序按 `window.index` 升序 |
 | **W-3** | **身份分派**：模型路径产出 `mxcfg-…`、legacy 产出 `xcfg-…`；同一材料两条路径**互不复用**；改变窗口规则 / `maxQuoteChars` / 维度集合 / generation ⇒ configKey 变 ⇒ 候选 id 变（T-C6-30 的模型侧） |
 | **W-4** | **零容忍**：任一 quote 触发 V1 / V2 / V3 / V4 ⇒ 整次运行失败、**零候选 / 零 Fragment / 零 Evidence**、`extraction_run.status='failed'`，`error` 指明窗口与 quote 序号 |
-| **W-5** | **超时与 abort**（T-C6-34 的模型侧）：适配器永不 resolve ⇒ 运行 `failed` + `timeout:` 前缀；**断言适配器确实收到了 abort**；该行**未被写成 `completed`** |
+| **W-5** | **超时与 abort**（T-C6-34 的模型侧）：适配器永不 resolve ⇒ **调用结果** `failed` + 超时文案（§M6.2a 的**两层**口径）；**断言适配器确实收到了 abort**；**该 `extraction_run` 行保持 `running` / `finished_at = NULL`**（既未被收口成 `completed`，也**未**被写成 `failed`）|
 | **W-6** | **`ADAPTER_NOT_CONFIGURED`**（T-C6-36）：模型路径无可适配器 ⇒ 明确失败、**不写任何表**、**不静默退回** legacy（反例：退回 `[CANDIDATE]` 必须失败） |
 | **W-7** | **有效租约内模型调用恰好 1 次**（T-C6-37 的模型侧）：两个独立连接并发 ⇒ 只有 1 条模型调用序列；未抢到者 `in_progress` |
 | **W-8** | **completed reuse（模型路径）**：同配置第二次调用 ⇒ `reusedRun = true`、**`extractBatch` 调用次数不增加**、`extraction_run` 行逐字不变 |
