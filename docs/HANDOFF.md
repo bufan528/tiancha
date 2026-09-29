@@ -1,8 +1,8 @@
 # Tiancha · 天查 — 项目交接文档（HANDOFF）
 
-> **Phase C · C5-D · C-MVP-R1 · C6 均已实现并发布**（C6 含五片 + 独立复核三项修复 + **D-C6-G `REVISE` 目标管线** + **多来源证据展示**，见契约 §C6.25–§C6.27） · **代码验证基线 `0143ffd`**（= 最后一个非 `docs:` 提交；**基线的取法**：`git log --oneline` 中第一个非 `docs:` 提交） · 其后的 `docs:` 同步提交即发布 HEAD，`origin/main` 与本地 **1:1**（ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
-> 本文档已与真实代码状态**逐项核对（2026-09-27，第十三轮）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **469 tests / 469 pass / 0 fail**（125 suites） · `research smoke` PASS · 表 **32 张**。
-> 取代此前所有版本的 HANDOFF。README.md 已同步。**C6（资料闭环）五片 + 独立复核三项修复 + `REVISE` 目标管线 + 多来源证据展示均已实现并交付**；**模型提取器契约已定稿并进入实施**（[`docs/phaseC/c6-model-extractor-contract.md`](phaseC/c6-model-extractor-contract.md)，**rev11**：**实现按片推进，Slice A–E 均已验收，Slice E 已 FROZEN；Slice F（持久化与原子收口）已实现（`22b3951`）但被独立复核 REJECTED FOR REPAIR** —— **rev11 = F 修复轮的 docs-only 契约收紧，先于代码修复**；F / F2 边界见 §M13，修复口径见 §M13.2 / §M13.5a / §M13.7 / §M13.9）、**F 的代码修复未授权 · F2 未授权**；**仍未授权**：模型提取器代码修复与 F2 · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D/E（本文件 §0.1 已同步实现与授权状态）。
+> **Phase C · C5-D · C-MVP-R1 · C6 均已实现并发布**（C6 含五片 + 独立复核三项修复 + **D-C6-G `REVISE` 目标管线** + **多来源证据展示**，见契约 §C6.25–§C6.27） · **代码验证基线 `a5b80a4`**（= 当前最后一个非 `docs:` 提交；**基线的取法**：`git log --oneline` 中第一个非 `docs:` 提交） · 其后的 `docs:` 同步提交即发布 HEAD，`origin/main` 与本地 **1:1**（ahead/behind = 0/0） · 远端 `https://github.com/bufan528/tiancha`（main）
+> 本文档已与真实代码状态**逐项核对（2026-09-29，第十四轮）**：`npx tsc --noEmit` exit 0 · `packages/research` typecheck exit 0 · **538 tests / 538 pass / 0 fail**（135 suites；含 C6 模型提取器 Slice F 的 **F-1…F-17**） · `research smoke` PASS · 表 **32 张**。
+> 取代此前所有版本的 HANDOFF。README.md 已同步。**C6（资料闭环）五片 + 独立复核三项修复 + `REVISE` 目标管线 + 多来源证据展示均已实现并交付**；**模型提取器契约已定稿并进入实施**（[`docs/phaseC/c6-model-extractor-contract.md`](phaseC/c6-model-extractor-contract.md)，**rev12**：**实现按片推进，Slice A–E 均已验收（E 已 FROZEN）；Slice F 的审计链 = `22b3951`（首次实现）→ 独立复核 REJECTED FOR REPAIR → `1554054`（rev8–rev11 收紧修复口径，docs-only、先于代码修复）→ `a5b80a4`（三处修复 + 真正的 F-1…F-17 测试矩阵）⇒ Slice F ACCEPTED / FROZEN（`origin/main = a5b80a4`）**；F / F2 边界见 §M13）、**F2 未授权**；**仍未授权**：F2（模型链路接线）· 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D/E（本文件 §0.1 已同步实现与授权状态）。
 
 ---
 
@@ -12,13 +12,13 @@
 
 | 项 | 值 |
 |---|---|
-| 当前阶段 | **Phase C · C1→C5-D · C-MVP-R1 · C6（五片 + 复核三项修复 + `REVISE` 目标管线 + 多来源证据展示）全部已实现发布**；**C6 模型提取器**：Slice A–E 已验收（**E 已 FROZEN**）· **Slice F 已实现（`22b3951`）但被独立复核 REJECTED FOR REPAIR —— 代码修复未授权**（契约已升 **rev11**，docs-only 先于代码修复）；**未授权**：F 代码修复与 F2 · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D/E |
+| 当前阶段 | **Phase C · C1→C5-D · C-MVP-R1 · C6（五片 + 复核三项修复 + `REVISE` 目标管线 + 多来源证据展示）全部已实现发布**；**C6 模型提取器**：Slice A–E 已验收（**E 已 FROZEN**）· **Slice F 已闭环 —— 审计链 `22b3951`（首次实现）→ 独立复核 REJECTED FOR REPAIR → `1554054`（rev8–rev11 收紧修复口径）→ `a5b80a4`（三处修复 + 真正的 F-1…F-17）⇒ ACCEPTED / FROZEN**（契约 **rev12**）；**未授权**：**F2（模型链路接线）** · 原文切片 · U-1/U-2/U-3 · Wind · 自动发现 · Phase D/E |
 | 已发布范围 | C1（Knowledge Projection 语义对齐）· C2（Gap-driven Research Planning，含 Phase 2 Step 2-B/2-C）· C3（Priority/NextAction 验证）· C4（Report/Dossier 只读投影）· C5-A（推荐：Company/Proposal）· C5-B（人工决定：`confirm`/`reject` 是 `research_target` 唯一写路径）· C5-C（Plan 只读消费 Proposal/Decision）· **C5-D（Preparation 边界冻结 + Plan 只读摘要投影）—— 已实现并发布（`dc64c33` + `aa4dc95`）** · **C-MVP-R1（材料导入可靠性：状态机 + 续跑 + 并发原子认领 + 块级账本 + 五态返回）—— 已实现并发布（`e0fe004` … `709447e`）** · **C6（资料闭环：材料版本/Fragment/Evidence · 候选层 · 人工审阅闸门 · 投影**复用既有** `ingestClaims` · 报告按 `contentKind` 分流并展示证据定位）—— 五片已实现并交付，独立复核后的三项修复已落地（`4b74862` / `67f72a8` / `455b31d`）** · **D-C6-G `REVISE` 目标管线（`4f969b5`）+ 多来源证据展示（`0143ffd`）—— 已实现并交付** |
 | 验收状态 | C1–C5-D 与 **C-MVP-R1** 全部**已实现、已发布**；C5-D 闭环见 `c5-implementation-contract.md` §21.11；C-MVP-R1 闭环见 **`phaseC/implementation-contract.md` §29.12**，复核修正见 **§29.13**（fencing）、**§29.14**（5a 汇总排除）、**§29.15**（5a 崩溃窗口 + 残骸保守降级 + 扫描范围与歧义）、**§29.16**（取消按内容复用；歧义须保持 `legacy_failed`）、**§29.17**（Agent 入口与 CLI 同一装配；单个无法归属的重叠也触发保守降级）、**§29.18**（overlap 标记只增不减，仅 `--force` 重算；扫描排除本材料自己的 Claim）、**§29.19**（人工归属查看与确认流程：`material list` 展示未归属重叠 + `material attribute … --to <materialId>`）、**§29.20**（`attribute` 补存在性与 subject 归属校验）、**§29.21**（`attribute` 再补 **artifact kind = claim** 校验）—— **无剩余未满足条款** |
-| HEAD / 远端 | **代码验证基线 `0143ffd`**（= 本轮最后一个 `feat:` 提交）；**基线取法**：`git log --oneline` 中第一个非 `docs:` 提交；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不把 `docs:` 提交的 hash 写进本表**（它每次同步都会变，写了必然很快失准） |
-| 验证基线 | root `tsc` 0 · research typecheck 0 · **469 tests / 469 pass / 0 fail**（125 suites；C6 五片 38 例 + 复核修复 T-C6-9 / T-C6-10 / T-C6-13b / T-C6-14…T-C6-20 + **D-C6-G T-C6-21…T-C6-27** + 多来源 T-C6-28）· `research smoke` PASS |
+| HEAD / 远端 | **代码验证基线 `a5b80a4`**（= 当前最后一个 `feat:` 提交；C6 模型提取器 Slice F 修复）；**基线取法**：`git log --oneline` 中第一个非 `docs:` 提交；其后的 `docs:` 提交即发布 HEAD —— `origin/main` 与本地 **1:1**（**ahead/behind = 0/0**，worktree CLEAN）。**不把 `docs:` 提交的 hash 写进本表**（它每次同步都会变，写了必然很快失准） |
+| 验证基线 | root `tsc` 0 · research typecheck 0 · **538 tests / 538 pass / 0 fail**（135 suites；C6 五片 38 例 + 复核修复 T-C6-9 / T-C6-10 / T-C6-13b / T-C6-14…T-C6-20 + **D-C6-G T-C6-21…T-C6-27** + 多来源 T-C6-28 + **C6 模型提取器 Slice F 的 F-1…F-17**）· `research smoke` PASS |
 | 真实库 | `~/.tiancha/db/tiancha.sqlite`：**代码 schema 32 张表**（C6 第 ① 片 +3：`material_version` / `fragment` / `fragment_evidence`；第 ② 片 +3：`claim_candidate` / `candidate_review` / `extraction_run`），但**该库文件实际只有 24 张**（C5-A/B 的 `target_proposal` / `target_proposal_decision` 尚未建立 ⇒ 该库最后一次被打开早于 C5-A）；数据：`industry` 1（`人形机器人`）· `material` 0 · `industry_knowledge`/`knowledge_belief` 0 · `research_target`/`diligence_preparation`/`company` 0 |
-| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev16**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，§29.22 = 基线维护规则，§29.23 = 状态文档一致性校准）—— **无剩余未满足条款**。**C6（资料闭环）五片已全部实现并交付**（材料版本/Fragment/Evidence · 候选层 · 人工审阅闸门 · 投影**复用既有** `ingestClaims` · 报告按 `contentKind` 分流并展示证据与定位；见契约 §C6.18–§C6.24）。**独立复核后的三项修复已落地**（`4b74862` / `67f72a8` / `455b31d`，见契约 **§C6.25**）：① 演化目标（SUPERSEDE / REVISE）在**决定期与投影前**双重校验，知识侧拒绝时**不再**收口为 `finalized`；② 定位解析回材料原文 + 跨材料版本证据校验的测试补强；③ 决定与审计行**同一事务**。**`REVISE` 目标契约（D-C6-G）已锁定**（`confirm --relation REVISE` 必须显式 `--revises-claim <claimRef>`，不得自动选择；目标与 SUPERSEDE 同源校验、随决定持久化、重试不可更换；见契约 **§C6.26**）—— 已实现并交付（`4f969b5`）**；**多来源证据展示亦已交付**（`0143ffd`，§C6.27：逐条来源各自的定位与摘录）。**仍未实现 / 未授权**：模型提取器（**Slice A–E 已验收、E 已 FROZEN；Slice F 已实现 `22b3951` 但被独立复核 REJECTED FOR REPAIR，代码修复未授权；F2 未授权**；契约见 `docs/phaseC/c6-model-extractor-contract.md` **rev11**）· 原文切片（规范化位置→原文位置映射）· U-1/U-2/U-3 可用性小步 · Wind · 自动发现 · Phase D |
+| 下一步 | **C-MVP-R1 已完整实现并发布**（`§29` **rev16**：状态机 + 续跑 + 并发原子认领 + **fencing token** + 块级账本 + 五态返回 + **重叠检测（只检测、不推断来源；同文候选绝不合并）** + **人工登记归属** + 5a 汇总排除；实现闭环与八轮复核修正见 §29.12–§29.21，§29.22 = 基线维护规则，§29.23 = 状态文档一致性校准）—— **无剩余未满足条款**。**C6（资料闭环）五片已全部实现并交付**（材料版本/Fragment/Evidence · 候选层 · 人工审阅闸门 · 投影**复用既有** `ingestClaims` · 报告按 `contentKind` 分流并展示证据与定位；见契约 §C6.18–§C6.24）。**独立复核后的三项修复已落地**（`4b74862` / `67f72a8` / `455b31d`，见契约 **§C6.25**）：① 演化目标（SUPERSEDE / REVISE）在**决定期与投影前**双重校验，知识侧拒绝时**不再**收口为 `finalized`；② 定位解析回材料原文 + 跨材料版本证据校验的测试补强；③ 决定与审计行**同一事务**。**`REVISE` 目标契约（D-C6-G）已锁定**（`confirm --relation REVISE` 必须显式 `--revises-claim <claimRef>`，不得自动选择；目标与 SUPERSEDE 同源校验、随决定持久化、重试不可更换；见契约 **§C6.26**）—— 已实现并交付（`4f969b5`）**；**多来源证据展示亦已交付**（`0143ffd`，§C6.27：逐条来源各自的定位与摘录）。**仍未实现 / 未授权**：**F2（C6 模型提取器的模型链路接线）**（**Slice A–E 已验收、E 已 FROZEN；Slice F 已闭环并冻结 —— 审计链 `22b3951` → REJECTED FOR REPAIR → `1554054` → `a5b80a4`**；契约见 `docs/phaseC/c6-model-extractor-contract.md` **rev12**）· 原文切片（规范化位置→原文位置映射）· U-1/U-2/U-3 可用性小步 · Wind · 自动发现 · Phase D |
 | 之后 | Phase D（外环：Experience → Pattern → 方法论候选）· Phase E（Wind + 自动发现）—— 未授权 |
 
 ### 0.2 协作模式（★ 必须遵守 —— 本项目最主要的隐性契约）
@@ -55,7 +55,9 @@
 
 | commit | 含义 |
 |---|---|
-| `22b3951` | **C6 模型提取器 Slice F 实现**（唯一持久化入口 `persistValidatedCandidates()` + reviewed protection 的 SQL 守卫 + completed reuse + persistence 测试 F-1…F-16）—— **本轮 HEAD 侧的非 `docs:` 提交**；★ 被独立复核 **REJECTED FOR REPAIR**（3 项：persistence 异常未入 `failed` 收口 · close-out 顺序 · legacy bridge 边界），**代码修复未授权** |
+| `a5b80a4` | **C6 模型提取器 Slice F 修复**（① 只读 ① gate + ⑦ 最终 fenced `completed` close-out；② persistence 异常 ⇒ 事务外 fenced `failed`；③ 受保护候选零写入）+ **交付真正的 `phase-c6-persistence.test.ts`（F-1…F-17，17 例）** —— **当前代码验证基线**（= 当前 `origin/main`）；经独立复核 **ACCEPTED / FROZEN** |
+| `1554054` | **C6 模型提取器契约 rev11（docs-only）**：F 修复轮的契约收紧（legacy 兼容桥归属 §M13.5a · ①/⑦ 分列 · persistence 异常 ⇒ 事务外 fenced `failed` · 受保护候选零写入 · F-5 加严 / F-13 明确 / 新增 F-17）—— **先于代码修复**提交 |
+| `22b3951` | **C6 模型提取器 Slice F 首次实现**（唯一持久化入口 `persistValidatedCandidates()` + reviewed protection 的 SQL 守卫 + completed reuse）—— ★ 被独立复核 **REJECTED FOR REPAIR**（3 项：persistence 异常未入 `failed` 收口 · close-out 顺序 · legacy bridge 边界）；★ 其 `phase-c6-persistence.test.ts` 后经查为**实现副本、0 用例**（声称的「F-1…F-16 全绿 / 535 全量」不可复现），已由 **`a5b80a4`** 重写 |
 | `bcc7557` / `64c342a` | **C6 模型提取器 F 契约 rev10**（§M13.9 唯一持久化入口 + §M13.10 completed reuse 落点）/ **F 契约澄清 rev8–rev9**（§M13 = F / F2 边界） |
 | `9d47415` / `4f733a1` | **C6 模型提取器 Slice E rev2 / Slice E**（异步 run + 认领 + 租约 + fencing）—— **E 已 FROZEN** |
 | `52168ba` | **C6 模型提取器 Slice D**（`extraction_run` 迁移） |
@@ -248,7 +250,7 @@
 ```
 npx tsc --noEmit                             → exit 0
 npm --prefix packages/research run typecheck → exit 0
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 469 tests / 469 pass / 0 fail（125 suites）
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts → 538 tests / 538 pass / 0 fail（135 suites）
 node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real)
 ```
 
@@ -256,6 +258,7 @@ node --import tsx src/cli/tiancha.ts research smoke → PASS (child-session=real
 > 用两个 `new Date().toISOString()` 断言**互不相等**，同一毫秒内会偶发失败。
 > 2026-09-26 四次全量运行：**3 次 383/383 pass，1 次 382/383（仅 `C1-29` 失败）**；重跑即绿。
 > **2026-09-27（C6 复核修复后）连续全量：469/469 pass**（已多次复跑）。
+> **2026-09-29（C6 模型提取器 Slice F 冻结后）第十四轮全量：538/538 pass（135 suites，含 F-1…F-17）**。
 > 它**不是** C5-D 或后续改动引入的。修法（另立小步）：改用单调计数 / 注入时钟，而不是比较 wall-clock 字符串。
 
 ---
@@ -660,12 +663,12 @@ PoolItem    : item-<slotId>-<normalizedClaimRef>
 ```powershell
 npm install
 npx tsc --noEmit && npm --prefix packages/research run typecheck
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 469 pass
+node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 预期 538 pass
 node --import tsx src/cli/tiancha.ts research smoke                            # 预期 PASS
 ```
 
-**下一步功能**：**C6 模型提取器 Slice F 的修复轮** —— Slice F 已实现（`22b3951`）但被独立复核 **REJECTED FOR REPAIR**（3 个阻塞项：persistence 异常未入 `failed` 收口 · close-out 顺序 · legacy bridge 边界）。契约 `docs/phaseC/c6-model-extractor-contract.md` 已升 **rev11**（**docs-only 收紧，先于代码修复**）把修复口径锁死：**① §M13.5a** legacy `CandidateDraft → ValidatedCandidate` **确定性兼容桥**归 **F 的最小 compatibility wiring**（模型路径的 `ValidatedCandidate[]` 组装仍归 F2；桥只能有一处、只用 `dimension/statement/contentKind/confidence/evidenceRefs`、`quotes` 只能由 `evidenceRefs` 确定性反查、**不改 `ResolvedQuote` 六字段、不重调 B**）；**② §M13.9 澄清一** ① fencing gate 与 **⑦ 最终 fenced `completed` close-out** 是两个步骤 —— ① 可为 SQL 存在性判定但**不得改任何状态**，**⑦ 才是最终权威**（`changes() !== 1` ⇒ `LostLeaseError` ⇒ rollback）；**③ §M13.9 澄清二** persistence 异常 ⇒ **事务 rollback**（运行回到 `running`）⇒ **事务外 fenced `failed`** 收口（复用既有 `finishRun` 谓词；`changes() === 0` 安全忽略；业务异常是主错误、收口 best-effort 但必须 fenced）；**④ §M13.2 / §M13.9 澄清四** **受保护候选必须先判定再写入**（`protected ⇒ skippedReviewed`，**零 Fragment / Evidence 副作用**）；**⑤ §M13.7** **F-5 加严 · F-13 明确 · 新增 F-17**。**Step B 代码修复须单独授权**（白名单：`candidate-extraction-service.ts` · `phase-c6-persistence.test.ts` · `phase-c6-run-claim.test.ts`）。之后再由 **F2** 接通模型链路（A/B/C 接线 + `mxcfg-` 身份分派 + `AbortController` + `ADAPTER_NOT_CONFIGURED`），随后做受控试点（先用已有试点材料建立人工核对基准，再选真实普通报告验证漏提 / 误提 / 引用错位 / 重复口径处理；合成冲突继续只用于隔离库软件测试，不冒充真实业务证据）。
-> Phase B v1 的 **B1–B5 已全部完成**；**C6 五片 + 复核三项修复 + `REVISE` 目标管线 + 多来源证据展示**亦已完成（契约 §C6.18–§C6.27）。剩余：原文切片 · 模型提取器（**Slice A–E 已验收、E 已 FROZEN；Slice F 已实现（`22b3951`）但被独立复核 REJECTED FOR REPAIR —— 代码修复与 F2 均未授权**）。
+**下一步功能**：**F2 — C6 模型提取器的模型链路接线**（**须单独授权，当前未授权**）—— A/B/C 生产接线（`extractionWindowFor` 切窗口 → 逐批 `adapter.extractBatch(input, signal)` → `resolveQuotes`）· `mxcfg-` 身份分派 · `AbortController` + 逐批 `signal` · `ADAPTER_NOT_CONFIGURED`（**绝不**静默退回 `[CANDIDATE]`）· 端到端 T-C6-34 / T-C6-36 / T-C6-37；F2 清单见契约 **§M13.5**，F / F2 拆分见 **§M13.0**。**Slice F 已闭环并冻结**（`a5b80a4`，独立复核 ACCEPTED / FROZEN；契约 **rev12**）：三处修复 = ① 只读 ① gate + ⑦ 最终 fenced `completed` close-out（§M13.9 澄清一）· persistence 异常 ⇒ 事务外 fenced `failed`（澄清二）· 受保护候选先判定、零 Fragment/Evidence 写入（§M13.2 / 澄清四）；由**真正的 F-1…F-17 测试矩阵**（17 例，含顺序探针与三项 mutation 反证）证明。F2 完成后再做受控试点（先用已有试点材料建立人工核对基准，再选真实普通报告验证漏提 / 误提 / 引用错位 / 重复口径处理；合成冲突继续只用于隔离库软件测试，不冒充真实业务证据）。
+> Phase B v1 的 **B1–B5 已全部完成**；**C6 五片 + 复核三项修复 + `REVISE` 目标管线 + 多来源证据展示**亦已完成（契约 §C6.18–§C6.27）。剩余：原文切片 · **F2（模型提取器的模型链路接线，未授权）**。
 
 > **历史提醒（避免误判）**：`S1–S7`、`DATA-R1`、`C-MVP`、`Phase B v1 的 B1–B5`、`C-MVP-R1`、`C1–C5-D`、**`C6（五片 + 复核修复 + REVISE + 多来源展示）`** **均已完成**。
 > 若你看到旧版文档写着「S5 HOLD」「Phase B 待冻结」「B5 待授权」，那是**过时**信息。
@@ -693,7 +696,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | `docs/phaseC/implementation-contract.md` | **Phase C 总契约**（C1 语义 / SoT 边界 / 演化 / Human Gate / 幂等 / 不变量 / 验收场景）+ **§29 = C-MVP-R1（材料导入可靠性）—— 已实现并发布**；§29.12–§29.22 为实现闭环与八轮复核修正（**检测重叠但不推断来源**、**人工登记归属**、§29.22 = 基线维护规则） |
 | `docs/phaseC/c5-implementation-contract.md` | **C5-A → C5-D 单文件谱系契约**（§19 C5-B · §20 C5-C · §21 C5-D；**§21.11 = 实现与验收闭环**） |
 | `docs/phaseC/c6-implementation-contract.md` | **C6 资料闭环契约（已实现，rev15）**：材料版本 / Fragment + 结构化定位 / Evidence / 候选 / 人工审阅 / 投影复用既有 `ingestClaims` / 报告按 `contentKind` 分流并展示**逐条来源**；**§C6.24 = 收口复核修订**，**§C6.25 = 独立复核后的三项修复**，**§C6.26 = `REVISE` 目标契约与实现记录（D-C6-G）**，**§C6.27 = 多来源证据展示**，**§C6.28 = 模型提取器契约索引** |
-| `docs/phaseC/c6-model-extractor-contract.md` | **C6 模型提取器契约（rev11，契约定稿；实现按片推进：Slice A–E 已验收、E 已 FROZEN；Slice F 已实现（`22b3951`）但被独立复核 REJECTED FOR REPAIR、修复未授权；rev11 = F 修复轮的 docs-only 收紧；F / F2 边界见 §M13）**：D-C6-H 窗口分批（**分隔符归前窗、恰好覆盖全文**、单位 UTF-16 code unit、规则进身份）· D-C6-I 模型只给引用文本与位置、**引文即 Fragment**（精确 `char_range`）、ID 由天查生成、引用不成立则整次失败 · D-C6-J 异步 + 全成或全败单事务 + **已有成功运行则复用不重调** + 不覆盖已审核候选；含 §M9 改动清单与 T-C6-29…T-C6-38 验收；**§M13** = Slice F Contract Clarification（F/F2 拆分 · `reusedRun` vs `reused` · reviewed protection 含 `reviewedBy` · Repository SQL 守卫 · F 文件白名单 · 持久化唯一入口 §M13.9 · completed reuse 落点 §M13.10 · **legacy 兼容桥 §M13.5a** · **①/⑦ 两段式 fencing 与事务外 fenced `failed` 收口 §M13.9 澄清一/二** · **受保护候选零 Fragment / Evidence 写入 §M13.9 澄清四** · 测试矩阵 F-1…F-17） |
+| `docs/phaseC/c6-model-extractor-contract.md` | **C6 模型提取器契约（rev12，契约定稿；实现按片推进：Slice A–E 已验收、E 已 FROZEN；Slice F 已闭环并冻结 —— 审计链 `22b3951` → REJECTED FOR REPAIR → `1554054`（契约收紧）→ `a5b80a4`（修复）⇒ ACCEPTED / FROZEN；rev12 = F 状态校准（无语义变化）；F / F2 边界见 §M13）**：D-C6-H 窗口分批（**分隔符归前窗、恰好覆盖全文**、单位 UTF-16 code unit、规则进身份）· D-C6-I 模型只给引用文本与位置、**引文即 Fragment**（精确 `char_range`）、ID 由天查生成、引用不成立则整次失败 · D-C6-J 异步 + 全成或全败单事务 + **已有成功运行则复用不重调** + 不覆盖已审核候选；含 §M9 改动清单与 T-C6-29…T-C6-38 验收；**§M13** = Slice F Contract Clarification（F/F2 拆分 · `reusedRun` vs `reused` · reviewed protection 含 `reviewedBy` · Repository SQL 守卫 · F 文件白名单 · 持久化唯一入口 §M13.9 · completed reuse 落点 §M13.10 · **legacy 兼容桥 §M13.5a** · **①/⑦ 两段式 fencing 与事务外 fenced `failed` 收口 §M13.9 澄清一/二** · **受保护候选零 Fragment / Evidence 写入 §M13.9 澄清四** · 测试矩阵 F-1…F-17） |
 | `docs/architecture-review/05-business-intelligence-architecture-v3.md` | v3（v3.1 的前身，保留历史） |
 | `docs/architecture-review/04-research-intelligence-architecture-review.md` | 实现状态盘点 + 需求映射（部分设计已被 06 取代） |
 | `docs/architecture-review/01/02/03-*` | 早期 Gap Report / Blueprint v2 / v2.1-final-lock / rebaseline v3.1（**历史，部分过时**） |
@@ -732,7 +735,7 @@ node --import tsx src/cli/tiancha.ts research smoke                            #
 | **C-MVP-R1**（材料导入可靠性） | ✅ 契约 §29 rev16 | ✅ | ✅（T-R1-1…T-R1-28 + **Agent 工具面**：两进程并发、fencing、同文不合并、artifact-only 重叠、歧义失败且可识别、单条无法归属重叠的保守降级、标记粘性、人工归属闭环及其 5 项写入前校验、5a 证据拆分、5a 崩溃窗口） | ❌ | **真实库仍未用过材料导入**（`material` = 0 行） |
 | C6（资料闭环：Material → MaterialVersion → Fragment → Evidence → 候选 → Claim；**规则路径，无 LLM**） | ✅ | ✅ | ✅ | ❌ | 真实库 `material` = 0 行 ⇒ 从未在真实库用过；**五片已交付 + 独立复核三项修复**（契约 §C6.18–§C6.25） |
 | C6 `REVISE` 目标管线（D-C6-G）+ **多来源证据展示** | ✅ | ✅ | ✅ | ❌ | 必须显式 `--revises-claim <claimRef>`，**不得自动选择**；目标变 `revised`（**非** `superseded`）；候选的**每个**来源各自带定位与摘录（契约 §C6.26.8 / §C6.27） |
-| **C6 模型提取器**（普通报告自动进候选层） | ✅ 契约 `c6-model-extractor-contract.md` **rev11**（§M13 = F/F2 边界；rev11 = F 修复轮收紧） | ⚠️ 仅 Slice F | ⚠️ F-1…F-16 曾全绿（`22b3951`） | ❌ | Slice A–E 已验收、**E 已 FROZEN**；**Slice F 已实现（`22b3951`）但被独立复核 REJECTED FOR REPAIR**（persistence 异常未入 `failed` 收口 · close-out 顺序 · legacy bridge 边界）—— **代码修复未授权**，rev11 新增 **F-17** 待修复轮落地；**F2** = A/B/C 接线 + `mxcfg-` + `AbortController` + `ADAPTER_NOT_CONFIGURED`（未授权）；**当前仍须人工整理候选输入** |
+| **C6 模型提取器**（普通报告自动进候选层） | ✅ 契约 `c6-model-extractor-contract.md` **rev12**（§M13 = F/F2 边界；rev12 = F 状态校准） | ⚠️ 仅 Slice F（`a5b80a4`） | ✅ **F-1…F-17 = 17/17**（含 F-12 顺序探针 + 三项 mutation 反证） | ❌ | Slice A–E 已验收、**E 已 FROZEN**；**Slice F 已修复并通过独立复核 ⇒ ACCEPTED / FROZEN（`a5b80a4`）**（审计链：`22b3951` REJECTED FOR REPAIR → `1554054` 契约收紧 → `a5b80a4` 修复 + 真 F 矩阵）；**F2** = A/B/C 接线 + `mxcfg-` + `AbortController` + `ADAPTER_NOT_CONFIGURED`（**未授权**）；**当前仍须人工整理候选输入** |
 | **C6 未授权部分**：原文切片（规范化位置 → 原文位置） | ⛔ 未授权 | ❌ | ❌ | ❌ | **不阻塞**模型提取器首版；生产若需 PDF 页码 / 原始字符位置，须先完成它 |
 | Phase D（外环：Experience → Pattern → 方法论候选） | ⛔ 未授权 | ❌ | ❌ | ❌ | 红线 9：不预造空壳表 |
 | Phase E（Wind / 自动发现行业） | ⛔ 未授权 | ❌ | ❌ | ❌ | `echo-data-provider.ts` 仍是占位（`isRealExternalData=false`） |
