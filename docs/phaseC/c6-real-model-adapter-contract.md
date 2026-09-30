@@ -1,6 +1,6 @@
 # Phase C6 · Real Model Adapter / Provider Implementation Contract（D-RMA-*）
 
-> 状态：**rev6 — 纯文档、DESIGN ONLY、未实现、未授权实施**。本文件**不实施任何代码**，也**不修改**任何既有契约。
+> 状态：**rev7 — 纯文档、DESIGN ONLY、未实现、未授权实施**。本文件**不实施任何代码**，也**不修改**任何既有契约。
 > 基线：**`6bbb26b`**（C6 F2 生命周期 CLOSED / FROZEN；`origin/main`；验证 550/550 · 137 suites）。
 > 前置契约：[`docs/phaseC/c6-model-extractor-contract.md`](c6-model-extractor-contract.md)（**rev13**：§M1–§M14，其中 §M14 = F2 实施契约，**已实现并发布**）· [`docs/phaseC/c6-implementation-contract.md`](c6-implementation-contract.md) §C6.18–§C6.27（资料闭环）· [`docs/HANDOFF.md`](../HANDOFF.md) §10（**LLM 边界红线**）。
 > **rev2 依据**：用户 2026-09-29 的正式 A–R Contract Audit —— rev1 判为 **BLOCK / FINAL LOCK = NO**，并给出 15 项 BLOCKER + 6 项 SHOULD FIX（见 §R17）。rev2 **只把 rev1 已正确的架构方向精化为可实施、可测试、无歧义的条文**；不推翻 rev1 的架构结论。
@@ -130,9 +130,33 @@ credential 的任何形态
 
 契约要求**可执行的**边界，而不是文档承诺：
 
-1. **类型边界**：application 层不新增任何 provider 相关类型；adapter 只通过已冻结的接口（`ModelExtractionAdapter` + §R5.4 的最小扩展）与上层通信。
-2. **架构断言测试**：一条测试扫描 `packages/research/src/application/` 下**除 adapter 文件外**的源码，断言其中不出现 provider 标识（vendor 名、endpoint、`Authorization` 等），且不 import adapter 模块（§R13 T-RMA-13）。
+1. **类型边界**：application 层不新增任何 **provider implementation 相关**类型；adapter 只通过已冻结的接口（`ModelExtractionAdapter` + §R5.4 的最小扩展）与上层通信。**唯一的例外是 §R5.4 的 `AdapterIdentity`** —— 见下方"例外澄清"。
+2. **架构断言测试**：一条测试扫描 `packages/research/src/application/` 下**除 adapter 文件外**的源码，断言其中不出现 **provider implementation 标识**（provider SDK import、endpoint / URL 字面量、`Authorization`、vendor request / response / error 类型等），且不 import adapter 模块（§R13 T-RMA-13）。
+   **★ 该断言【不】针对 `AdapterIdentity` 的字段名与类型定义** —— `provider` / `model` / `deployment` / `endpointIdentity` / `adapterVersion` / `authMode` 是 §R3 冻结的**身份字段名**，不是 provider implementation leakage。
 3. **唯一入口断言**：`run()` 的模型路径只能通过 `ModelExtractionAdapter` 得到候选（§R13 T-RMA-16）。
+
+**★ 例外澄清（rev7；消除 §R1.3 ↔ `AdapterIdentity` 的字面冲突）**：
+
+```text
+`AdapterIdentity` 是 Tiancha-owned 的 provider-neutral identity value object，
+属于 application 与 adapter 之间的抽象身份数据契约。
+
+它：
+- 只包含 §R3.1 明确冻结的非敏感身份字段；
+- 不包含任何 provider SDK/API 类型；
+- 不包含 HTTP request/response、headers、credentials、vendor error、
+  transport 类型或 provider-specific option 类型；
+- application 只可把它作为抽象身份值读取/传递，不得据此依赖、
+  调用或分支到具体 provider 实现。
+
+因此，"application 层不认识 provider"在本契约中严格指：
+application 不依赖 provider 的实现、SDK、transport、协议细节或
+provider-specific execution semantics。
+
+`AdapterIdentity` 中的 `provider` / `model` / `deployment` /
+`endpointIdentity` 等字段仅属于 §R3 冻结的非敏感身份数据，
+不构成 provider implementation leakage。
+```
 
 ### §R1.4 Provider **profile** 与 Provider **instance**（★ rev2 术语分离；A 冻结）
 
@@ -752,7 +776,7 @@ interface ModelExtractionAdapter {
 }
 ```
 
-- `AdapterIdentity` 是**本片新增的一个只读结构化类型**（字段见 §R5.1(A)），定义在 `application/model-extraction.ts`（§R12.2 白名单）；除此之外**不得**新增任何身份类符号。
+- `AdapterIdentity` 是**本片新增的一个只读结构化类型**（字段见 §R5.1(A)），定义在 `application/model-extraction.ts`（§R12.2 白名单）；除此之外**不得**新增任何身份类符号。它是 **provider-neutral 的身份值对象**（见 §R1.3 的例外澄清）：只承载 §R3 冻结的非敏感身份字段，**不得**含任何 provider SDK / transport / HTTP / vendor 类型。
 - `adapterIdentity` 与 `modelVersion` 必须**一致**：`modelVersion === "pid-" + sha256Hex(stableStringify(adapterIdentity))`（复用既有能力；T-RMA-32 用 mutation probe 钉死）。
 - 若做成**可选**成员，"忘了提供"会静默退回 `{}`，正好把 F2 的 hard gate #11 打穿 ⇒ **必须必填**。
 3. **identity 与 snapshot 必须用同一个不可变值**（不允许"身份用真实值、快照写空"或反之）。该值经既有的 `generationHashOf()`（§M7.3 的 hard gate #11）进入 `mxcfg-` —— 本片**不得**新增第二个哈希函数或第二个身份域。
@@ -1280,7 +1304,7 @@ packages/research/src/providers/*.test.ts                     ← 本片测试�
 
 | 文件 | 允许的改动 | 理由 |
 |---|---|---|
-| `packages/research/src/application/model-extraction.ts` | **只允许**：(a) 为 `ModelExtractionAdapter` **增加两个必填只读成员** `adapterIdentity: AdapterIdentity` 与 `generationParams: ModelGenerationParams`（§R5.4）；(b) **新增一个只读类型 `AdapterIdentity`**（字段见 §R5.1(A)）。**不得**新增 `GenerationIdentity` 的任何符号；不得改 `ModelBatchInput` / `ModelQuote` / `ModelCandidateDraft` / `ModelBatchResult` / `resolveQuote(s)` 的任何语义 | 让 adapter 提供真实身份与生成参数 |
+| `packages/research/src/application/model-extraction.ts` | **只允许**：(a) 为 `ModelExtractionAdapter` **增加两个必填只读成员** `adapterIdentity: AdapterIdentity` 与 `generationParams: ModelGenerationParams`（§R5.4）；(b) **新增一个只读类型 `AdapterIdentity`**（字段见 §R5.1(A)；**provider-neutral 值对象**，见 §R1.3 的例外澄清 —— 只含 §R3 冻结的字段，不含 provider SDK / transport / vendor 类型）。**不得**新增 `GenerationIdentity` 的任何符号；不得改 `ModelBatchInput` / `ModelQuote` / `ModelCandidateDraft` / `ModelBatchResult` / `resolveQuote(s)` 的任何语义 | 让 adapter 提供真实身份与生成参数 |
 | `packages/research/src/application/candidate-extraction-service.ts` | **只允许**：(a) 模型路径的 `generation: {}`（身份 + snapshot）改为 adapter 的 `generationParams`（§R5.4）；(b) `snapshotFor()` **新增可选参数**，使**模型路径**的 `model.{modelVersion,promptVersion,parserVersion}` 取自 adapter（§R5.5）；(c) 把构造时已解析的 schemaVersion 作为**只读成员**暴露（`outputContract: ExtractionOutputContract`，§R4.3 的唯一数据流）；(d) **`claimRun()` 新增"身份来源"可选参数**，使**模型路径**写入 `extraction_run` 身份列时取 adapter 的值（§R5.7，接入点 4）。**不得**改 legacy 路径的 `generation: {}` / `snapshot.model.*` / `claimRun()` 的 legacy 分支、不得把两个共用点的 `this.extractor.*` 直接替换（会移动 legacy 字节）、不得改 `extractWithModel` 的编排顺序、不得改 timeout/lease/fencing 语义、**不得在多处重复解析 schemaVersion** | §R5.4 / §R5.5 / §R5.7 / §R4.3 四个接入点 |
 | `src/cli/research-commands.ts` | **只允许**把 `resolveModelAdapter()` 从"无参、恒 `undefined`"改为 **`resolveModelAdapter(outputContract: ExtractionOutputContract)`**（§R4.3 的唯一数据流），内部按 §R2 解析 credential + 校验能力（§R1.5）+ 构造真实 adapter；**不得**在该函数内解析 `schemaVersion`（owner 只能在 Service）、不得改 `ADAPTER_NOT_CONFIGURED` 的语义、不得改 `--model` 必须带 `--operator` 的规则、不得改其它子命令、不得改 `--json` 输出 | §R1.4 / §R1.5 / §R4.3 装配点 |
 | 既有测试 fake（`FakeModelAdapter` / `DeterministicFakeAdapter` / `HangingModelAdapter` 等） | **只允许**补齐新增的必填成员（`adapterIdentity` / `generationParams` / 能力声明）；**不得**改任何既有断言的语义 | 接口扩展的连带最小改动 |
@@ -1391,7 +1415,7 @@ rev3 写的是"替换全局 `fetch`；若环境无 `fetch`，再拦 `node:http` 
 | T-RMA-10 | 只改 temperature / max_tokens ⇒ `mxcfg-` 变化 | mutation probe（§R3.4） |
 | T-RMA-11 | 只改 adapterVersion ⇒ `mxcfg-` 变化 | mutation probe（§R3.4） |
 | T-RMA-12 | **调用次数不变式**（rev2 改写） | 成功：`calls == windowCount`；第 k 窗口失败：`calls == k`；一般上界 `calls ≤ windowCount × maxAttempts`（§R8.3） |
-| T-RMA-13 | application 层不认识 provider | 架构断言：provider 标识只出现在 adapter 文件（§R1.3） |
+| T-RMA-13 | **application 层不依赖 provider implementation**（rev7 改写，与 §R1.3 的例外澄清一致） | (a) application 不 import provider SDK / transport / HTTP / vendor 类型；(b) application 不出现 provider-specific request / response / error / option 类型；(c) **`AdapterIdentity` 仅作为 Tiancha-owned、provider-neutral 的身份值对象存在**（其字段名**不**构成违规）；(d) provider implementation details 只出现在 adapter / provider 文件；(e) application 不可直接实例化、调用或分支到具体 provider（§R1.3） |
 | T-RMA-14 | 改 usage ⇒ `mxcfg-` **不变** | §R5.0 / §R9.3 |
 | T-RMA-15 | **adapter 缺失** ⇒ `ADAPTER_NOT_CONFIGURED`（rev2 改写） | 用**测试专用**的"未装配"组合证明；**不得**与 credential 缺失混同（§R13 T-RMA-21） |
 | T-RMA-16 | 候选只能经 `ModelExtractionAdapter` 进入 | 唯一入口断言（§R1.3） |
@@ -1457,6 +1481,8 @@ rev3 写的是"替换全局 `fetch`；若环境无 `fetch`，再拦 `node:http` 
 □ 【rev5】`schemaVersion` 是否**只在 Service 解析一次**、经只读 `outputContract` 传给 `resolveModelAdapter()`，且 adapter 不解析 / 不提供 / 不覆盖、assembly 后不可替换？
 □ 【rev6】两个"共用点"（`snapshotFor()` 与 `claimRun()`）是否都按**路径**取来源，且 legacy 分支未被触碰（§R5.7）？
 □ 【rev6】`extraction_run` 的身份列在**模型路径**上是否来自 adapter（而非 legacy 提取器）？
+□ 【rev7】`AdapterIdentity` 是否只含 §R3 冻结的非敏感身份字段（未含 provider SDK / transport / HTTP / vendor 类型）？
+□ 【rev7】T-RMA-13 的断言是否**不**把 `AdapterIdentity` 的字段名（`provider` / `deployment` / `endpointIdentity` 等）当作 provider implementation leakage？
 ```
 
 ---
@@ -1516,5 +1542,6 @@ rev3 写的是"替换全局 `fetch`；若环境无 `fetch`，再拦 `node:http` 
 | **rev4** | **按 Final Lock 定向复核的修订**（rev3 = FINAL LOCK 暂不锁：2 个 P0 + 3 个 P1 + 一处解析细节）。**未实施任何代码**；**未修改**任何既有契约。<br>**P0-1（身份计算链钉死）** 新增 **§R5.6【最终身份不变量】**：RMA **不**计算 `mxcfg-`，只提供三个输入（AdapterIdentity→`modelVersion`、生成参数、Tiancha 侧版本），最终 `mxcfg-` **必须且只能**由 F2 既有的 `modelExtractionConfigKeyFor(...)` + `generationHashOf(...)` 以**今天的签名**计算；禁止新增 identity/hash/key 函数、禁止自拼前缀；并给出唯一身份链图 + 钉它的测试清单。<br>**P0-2（guard 绕过口）** §R13.0(2) 修正：**无条件同时** guard `globalThis.fetch` + `node:http` + `node:https`（不再"有 fetch 就只 guard fetch"）；断言升级为**三件套**（`guardCalls === 0` 且 `run()` 真实完成模型路径 且 至少一个有效候选）；T-RMA-27 同步改写。<br>**P1-1（schema 版本稳定性）** §R4.3 新增两条：`schemaVersion` 由服务**解析一次**（禁止多处重复表达式）、`schemaVersion → schema` **一对一不可变**（内容变化必须新版本）；T-RMA-22 增 (d)(e) 两个断言。<br>**P1-2（export 不得成为第二条实例化路径）** §R12.2 新增约束行：`index.ts` 的 export **只允许**用于类型引用与 `resolveModelAdapter()` 内部装配，CLI 侧**不得** `new <RealModelAdapter>()`；新增 **T-RMA-31** 覆盖。<br>**P1-3（命名统一）** §R5.0 重写为"**三个实际对象**"：`GenerationIdentity` 降为**概念术语**（不落 interface），runtime 实际只有 `AdapterIdentity` / `RequestIdentity` / `ExecutionTelemetry`；分层规则按三者重写。<br>**§R14** 自检表再增 5 条（rev4 项）。 |
 | **rev5** | **按 Final Lock Audit（BLOCK，2 个 P0）的定向修正**。**未实施任何代码**；**未修改**任何既有契约。<br>**P0-A（`GenerationIdentity` 命名矛盾）** rev4 的 §R5.0 已把它降为概念，但 §R12.2 / §R15.1(D-RMA-L) / §R5.4 仍要求它是"必填只读成员" ⇒ 实施者会面对两种互斥解释（新增 interface，或不新增但成员名未定）。rev5 在 **§R5.4** 用代码块**钉死真实成员**：`ModelExtractionAdapter` 只新增 `adapterIdentity: AdapterIdentity` 与 `generationParams: ModelGenerationParams` 两个必填只读成员；`AdapterIdentity` 是**唯一新增的只读类型**（定义在 `application/model-extraction.ts`）；**明令不得存在 `GenerationIdentity` 的任何代码符号**；并要求 `modelVersion === "pid-" + sha256Hex(stableStringify(adapterIdentity))`（T-RMA-32 用 mutation probe 钉）。§R5.0 / §R12.2 / §R15.1 / §R14 同步。<br>**P0-B（`schemaVersion` → assembly 的数据流）** rev4 同时说"Service 解析一次"与"装配期注入"，却没回答"装配发生在 `run()` 之前时，adapter 从哪拿到已解析值"。rev5 在 **§R4.3** 冻结**唯一数据流**：Service 构造时解析**恰好一次** → 以**只读成员** `outputContract: ExtractionOutputContract` 暴露 → CLI 交给 **`resolveModelAdapter(outputContract)`** → adapter **只读持有** → `run()` 用**同一个**值写 snapshot；并**封死三种旁路**（adapter 自解析 / resolver 自解析 / 先建后 `setSchema` 注入），明确 assembly 后不可替换。§R12.2 三行白名单同步（service 暴露只读 contract、resolver 签名、禁止在 resolver 内解析）；新增 T-RMA-33；并明确该签名变更属"补 F2 预留的装配空位"，不是修改 F2 语义。 |
 | **rev6** | **按 Final Lock 复核的两个 SHOULD FIX（S1 / S2）的落实**（rev5 = FINAL LOCK PASS（有条件），无新 BLOCKER）。**未实施任何代码**；**未修改**任何既有契约。<br>**S1（`this.extractor` 路径归属表）** 新增 **§R5.7**：实地核实 `candidate-extraction-service.ts` 中 `this.extractor` 共 **3 处、4 行**，并逐行标注归属 —— `L235–242`（legacy `xcfg-` 身份，**不得动**）· `L564–569`（`snapshotFor()` 的 `model.*`，**legacy/model 共用**，模型路径必须改）· `L757`（legacy 分支内的 `extract()`，**不得动**）· **`L970–971`（`claimRun()` 的 INSERT 写入 `extraction_run` 身份列，legacy/model 共用 —— rev5 遗漏的第 4 处接入点）**。据此把 §R0.3 的"三处接入点"更正为**四处**，并规定两个共用点必须"按路径取来源"、**不得直接替换共享代码里的 `this.extractor.*`**（否则移动 legacy 字节、T-RMA-24 打回）。<br>**S2（T-RMA-17 golden）** 明确重建测试的 golden 必须包含 **`dimensionHints` 的全文与顺序**（进 prompt 且顺序敏感）+ `generation.extra.adapterIdentity` 的可读字段全集。<br>**连带** §R12.2 的 `candidate-extraction-service.ts` 行新增 (d)（`claimRun()` 的身份来源可选参数）；**T-RMA-24** 扩展为同时覆盖 `extraction_run` 身份列；§R14 自检表 +2 条 rev6 项。 |
+| **rev7** | **按 Final Lock Audit（BLOCK，仅 1 个 P0）的最小边界澄清**。**未实施任何代码**；**未修改**任何既有契约。<br>**P0（§R1.3 ↔ `AdapterIdentity` 字面冲突）** rev6 同时规定"application 层不新增任何 provider 相关类型 / provider 标识只出现在 adapter 文件"（§R1.3 / T-RMA-13）**与**"在 `application/model-extraction.ts` 新增 `AdapterIdentity`（含 provider / deployment / endpointIdentity）"（§R12.2）⇒ 实施者会被自己的 T-RMA-13 判定违规，且必须自行解释契约。rev7 **只做澄清、不动架构**：<br>① **§R1.3 新增"例外澄清"**：`AdapterIdentity` 是 Tiancha-owned 的 **provider-neutral identity value object**（只含 §R3.1 冻结的非敏感身份字段；不含任何 provider SDK/API 类型、HTTP request/response、headers、credentials、vendor error、transport 类型或 provider-specific option 类型；application 只可作为抽象身份值读取/传递，不得据此依赖/调用/分支到具体 provider）；并明确"application 层不认识 provider"在本契约中**严格指**不依赖 provider 的实现、SDK、transport、协议细节或 provider-specific execution semantics。<br>② **§R1.3 第 1/2 点同步收紧**：类型边界改述为"不新增任何 **provider implementation 相关**类型"；架构断言改述为扫描 **provider implementation 标识**（SDK import、endpoint / URL 字面量、`Authorization`、vendor request/response/error 类型），并明确**该断言【不】针对 `AdapterIdentity` 的字段名与类型定义**（它们是 §R3 冻结的身份字段名）。<br>③ **T-RMA-13 改写**为"application 层不依赖 provider implementation"，断言五条：(a) 不 import provider SDK / transport / HTTP / vendor 类型；(b) 不出现 provider-specific request / response / error / option 类型；(c) **`AdapterIdentity` 仅作为 provider-neutral 身份值对象存在（字段名不构成违规）**；(d) provider implementation details 只出现在 adapter / provider 文件；(e) 不可直接实例化、调用或分支到具体 provider。<br>④ §R5.4 / §R12.2 的 `AdapterIdentity` 定义处加指向 §R1.3 例外澄清的注记；§R14 自检表 +2 条 rev7 项。 |
 
-**End of contract（rev6: Real Model Adapter / Provider Implementation Contract —— 纯文档、DESIGN ONLY、**未实现**、**未授权实施**。基线 `6bbb26b`（F2 CLOSED / FROZEN）。rev2 = 按用户 2026-09-29 的正式 A–R Contract Audit（rev1 BLOCK）修订：补齐 REQUIRED 能力与 fail closed、`ModelResolverPort` 隔离、GenerationIdentity / ExecutionTelemetry 分层、`schemaVersion` 单一 owner、abort 唯一归类、错误协议、调用次数不变式、telemetry 仅内存、endpoint 身份归属、按实际 repo 的目录白名单、以及 9 条新硬门测试；**rev3** 再闭合 Final Lock Audit 的 4 个阻塞与 2 个验收细节：schema **如何到达** adapter（Tiancha 侧只读 `ExtractionOutputContract` + 装配期注入）、身份双层（AdapterIdentity / RequestIdentity）+ **唯一 snapshot 落点表**、`index.ts` 单行导出、§R15 五项全部冻结（含本地无认证模式与 `authMode` 进身份）、零真实网络 guard 的可执行方案、§R7.5 装配错误与 CLI 映射（三条互斥路径 + T-RMA-30）；**rev4** 再定向钉死 Final Lock 遗留的 2 个 P0 与 3 个 P1：**P0-1** §R5.6【最终身份不变量】（RMA 不计算/不拼接/不新增 identity 函数，`mxcfg-` 仍只由既有 `modelExtractionConfigKeyFor` + `generationHashOf` 产生）、**P0-2** T-RMA-27 的网络 guard **无条件**覆盖 `fetch + node:http + node:https` 三入口并断言三件套、**P1** ①`schemaVersion` 解析一次且与 schema 一对一稳定 ②`index.ts` 的 export 不得成为第二条 adapter 实例化路径（唯一装配入口仍是 `resolveModelAdapter()`）③`GenerationIdentity` 降级为概念术语（runtime 只有 AdapterIdentity / RequestIdentity / ExecutionTelemetry 三个对象）；**rev5** 再闭合 Final Lock 的 2 个 P0：**P0-A** 消灭 `GenerationIdentity` 的命名矛盾（§R5.4 钉死 adapter 侧真实成员 = `adapterIdentity: AdapterIdentity` + `generationParams: ModelGenerationParams`，并明令**不得**存在 `GenerationIdentity` 代码符号；§R5.0 / §R12.2 / §R15.1(D-RMA-L) / §R14 / T-RMA-32 同步）、**P0-B** 钉死 `schemaVersion → ExtractionOutputContract → resolveModelAdapter(outputContract) → RealModelAdapter` 的**唯一数据流**（Service 解析一次 + 只读 `outputContract` + 装配期注入 + assembly 后不可替换 + 三种旁路全部封死；§R12.2 / T-RMA-33 同步）；**rev6** 落实 Final Lock 复核的 S1（新增 §R5.7 `this.extractor` 路径归属表，并据此把接入点由三处更正为**四处** —— 补上此前遗漏的 `claimRun()` INSERT 身份列）与 S2（T-RMA-17 的 golden 必须含 `dimensionHints` 全文与顺序）。本片只做一件事：把已冻结的 `ModelExtractionAdapter` 缝接到**一个**真实 provider instance，并保持 F2 的全部语义不变 —— 不新增研究能力、不改数据模型、不新增 port、不做多 provider / fallback / routing / 隐藏 retry。**真实模型适配器仍未授权**；实施前须完成 **Final Lock 复核**（§R15 的全部裁定项已冻结，无遗留待裁定项））.**
+**End of contract（rev7: Real Model Adapter / Provider Implementation Contract —— 纯文档、DESIGN ONLY、**未实现**、**未授权实施**。基线 `6bbb26b`（F2 CLOSED / FROZEN）。rev2 = 按用户 2026-09-29 的正式 A–R Contract Audit（rev1 BLOCK）修订：补齐 REQUIRED 能力与 fail closed、`ModelResolverPort` 隔离、GenerationIdentity / ExecutionTelemetry 分层、`schemaVersion` 单一 owner、abort 唯一归类、错误协议、调用次数不变式、telemetry 仅内存、endpoint 身份归属、按实际 repo 的目录白名单、以及 9 条新硬门测试；**rev3** 再闭合 Final Lock Audit 的 4 个阻塞与 2 个验收细节：schema **如何到达** adapter（Tiancha 侧只读 `ExtractionOutputContract` + 装配期注入）、身份双层（AdapterIdentity / RequestIdentity）+ **唯一 snapshot 落点表**、`index.ts` 单行导出、§R15 五项全部冻结（含本地无认证模式与 `authMode` 进身份）、零真实网络 guard 的可执行方案、§R7.5 装配错误与 CLI 映射（三条互斥路径 + T-RMA-30）；**rev4** 再定向钉死 Final Lock 遗留的 2 个 P0 与 3 个 P1：**P0-1** §R5.6【最终身份不变量】（RMA 不计算/不拼接/不新增 identity 函数，`mxcfg-` 仍只由既有 `modelExtractionConfigKeyFor` + `generationHashOf` 产生）、**P0-2** T-RMA-27 的网络 guard **无条件**覆盖 `fetch + node:http + node:https` 三入口并断言三件套、**P1** ①`schemaVersion` 解析一次且与 schema 一对一稳定 ②`index.ts` 的 export 不得成为第二条 adapter 实例化路径（唯一装配入口仍是 `resolveModelAdapter()`）③`GenerationIdentity` 降级为概念术语（runtime 只有 AdapterIdentity / RequestIdentity / ExecutionTelemetry 三个对象）；**rev5** 再闭合 Final Lock 的 2 个 P0：**P0-A** 消灭 `GenerationIdentity` 的命名矛盾（§R5.4 钉死 adapter 侧真实成员 = `adapterIdentity: AdapterIdentity` + `generationParams: ModelGenerationParams`，并明令**不得**存在 `GenerationIdentity` 代码符号；§R5.0 / §R12.2 / §R15.1(D-RMA-L) / §R14 / T-RMA-32 同步）、**P0-B** 钉死 `schemaVersion → ExtractionOutputContract → resolveModelAdapter(outputContract) → RealModelAdapter` 的**唯一数据流**（Service 解析一次 + 只读 `outputContract` + 装配期注入 + assembly 后不可替换 + 三种旁路全部封死；§R12.2 / T-RMA-33 同步）；**rev6** 落实 Final Lock 复核的 S1（新增 §R5.7 `this.extractor` 路径归属表，并据此把接入点由三处更正为**四处** —— 补上此前遗漏的 `claimRun()` INSERT 身份列）与 S2（T-RMA-17 的 golden 必须含 `dimensionHints` 全文与顺序）。本片只做一件事：把已冻结的 `ModelExtractionAdapter` 缝接到**一个**真实 provider instance，并保持 F2 的全部语义不变 —— 不新增研究能力、不改数据模型、不新增 port、不做多 provider / fallback / routing / 隐藏 retry。**真实模型适配器仍未授权**；实施前须完成 **Final Lock 复核**（§R15 的全部裁定项已冻结，无遗留待裁定项）；**rev7** 消除 §R1.3 ↔ `AdapterIdentity` 的字面冲突（§R1.3 新增"例外澄清"：`AdapterIdentity` 是 Tiancha-owned、provider-neutral 的身份值对象；§R1.3 第 1/2 点与 **T-RMA-13** 同步改写为"application 层不依赖 provider implementation"，并明确该断言**不**针对 `AdapterIdentity` 的字段名））.**
