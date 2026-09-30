@@ -563,6 +563,13 @@ export class CandidateExtractionService {
      * keeps `"unbound"` (unchanged, so no legacy identity/snapshot byte moves).
      */
     methodologyVersionId?: string;
+    /**
+     * ★ §R5.4 (A-2) — the MODEL path passes the ADAPTER's real generation parameters here; the legacy
+     * path omits it and keeps `{}` byte-for-byte. This is the generation half of §R5.7's "take the
+     * source BY PATH" rule: the caller supplies the very same value it feeds into the identity, so
+     * nothing is re-derived. (The `model.*` half of §R5.7 is Slice A-3 and is untouched here.)
+     */
+    modelGeneration?: ModelExtractionAdapter["generationParams"];
   }): ExtractionConfigSnapshot {
     return {
       windowRule: {
@@ -578,7 +585,10 @@ export class CandidateExtractionService {
         parserVersion: this.parserVersion,
         schemaVersion: this.schemaVersion,
       },
-      generation: {},
+      // ★ §R5.4 (A-2): the MODEL path records the adapter's REAL generation parameters (they reach the
+      // identity through the existing `generationHashOf`, §M7.3 hard gate #11); the legacy path keeps
+      // `{}` exactly as before.
+      generation: input.modelGeneration ?? {},
       methodology: {
         methodologyVersionId: input.methodologyVersionId ?? "unbound",
         dimensionHints: input.dimensionHints,
@@ -688,7 +698,8 @@ export class CandidateExtractionService {
         : modelExtractionConfigKeyFor({
             windowRule: rule,
             maxQuoteChars: rule.maxQuoteChars,
-            generation: {},
+            // ★ §R5.4 (A-2) — the SAME value the snapshot records (one source, no re-derivation).
+            generation: opts.model.generationParams,
             methodologyVersionId: methodology.versionId,
             dimensionHints,
             modelVersion: opts.model.modelVersion,
@@ -835,6 +846,9 @@ export class CandidateExtractionService {
           ...(snapshotMethodologyVersionId === undefined
             ? {}
             : { methodologyVersionId: snapshotMethodologyVersionId }),
+          // ★ §R5.4 (A-2) — BY PATH: only the model path supplies the adapter's real generation
+          // parameters, and it supplies the SAME value the identity above was built from.
+          ...(opts.model === undefined ? {} : { modelGeneration: opts.model.generationParams }),
         }),
         candidates: units,
       });

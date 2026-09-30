@@ -91,6 +91,23 @@ export interface OpenAiCompatibleAdapterDeps {
 /** Default generation parameters: explicit (never provider-side implicit defaults). */
 export const DEFAULT_GENERATION_PARAMS: ModelGenerationParams = Object.freeze({ temperature: 0 });
 
+/**
+ * ★ §R5.0 — ONLY the four frozen, identity-bearing generation fields may enter `generationParams`
+ * (`temperature` / `topP` / `maxOutputTokens` / `seed`). Provider-specific options (`toolConfig`,
+ * `extra`, vendor extensions, …) must NEVER be promoted into the shared identity surface, so they are
+ * dropped here instead of being carried along.
+ */
+export function pickFrozenGenerationParams(input?: ModelGenerationParams): ModelGenerationParams {
+  // Built as a literal because `ModelGenerationParams` fields are READ-ONLY: only the four frozen
+  // fields are copied, and absent ones are omitted entirely (never written as `undefined`).
+  return Object.freeze({
+    ...(input?.temperature === undefined ? {} : { temperature: input.temperature }),
+    ...(input?.topP === undefined ? {} : { topP: input.topP }),
+    ...(input?.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
+    ...(input?.seed === undefined ? {} : { seed: input.seed }),
+  });
+}
+
 const DEFAULT_PATHS: Readonly<Record<string, string>> = Object.freeze({ http: "80", https: "443" });
 
 /**
@@ -158,7 +175,7 @@ export class OpenAiCompatibleModelAdapter implements ModelExtractionAdapter {
     this.outputContract = deps.outputContract;
     this.instance = deps.instance;
     this.capabilities = Object.freeze({ ...deps.capabilities });
-    this.generationParams = Object.freeze({ ...(deps.generationParams ?? DEFAULT_GENERATION_PARAMS) });
+    this.generationParams = pickFrozenGenerationParams(deps.generationParams ?? DEFAULT_GENERATION_PARAMS);
     this.authMode = deps.credential.authMode;
     this.apiKey = deps.credential.apiKey;
     this.adapterIdentity = Object.freeze({
