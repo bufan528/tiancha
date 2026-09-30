@@ -64,6 +64,15 @@ class DeterministicFakeAdapter implements ModelExtractionAdapter {
   readonly modelVersion = "fake-model-1";
   readonly promptVersion = "fake-prompt-1";
   readonly parserVersion = "fake-parser-1";
+  readonly adapterIdentity = {
+    provider: "fake",
+    model: "fake-model-1",
+    deployment: "fake-deployment-1",
+    endpointIdentity: "127.0.0.1:1",
+    adapterVersion: "fake-adapter-1",
+    authMode: "none",
+  } as const;
+  readonly generationParams = {};
   readonly calls: ModelBatchInput[] = [];
 
   constructor(private readonly plan: (input: ModelBatchInput) => ModelCandidateDraft[]) {}

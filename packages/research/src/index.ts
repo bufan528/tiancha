@@ -14,6 +14,8 @@ export * from "./evidence/index.js";
 export * from "./dossier/index.js";
 export * from "./scoring/index.js";
 export * from "./providers/echo-data-provider.js";
+export * from "./providers/openai-compatible-model-adapter.js";
+export * from "./application/extraction-output-contract.js";
 export * from "./methodology/methodology-v1.js";
 export * from "./application/opportunity-discovery-service.js";
 export * from "./application/knowledge-projection-service.js";

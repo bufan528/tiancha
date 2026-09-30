@@ -25,6 +25,7 @@
 
 import { sha256Hex, type FragmentLocator } from "../domain/material-source.js";
 import type { ExtractionWindow } from "./extraction-window.js";
+import type { ModelGenerationParams } from "./model-extraction-config.js";
 
 // ---------------------------------------------------------------------------
 // §M3.4 — what a model is allowed to SEE (read-only, no storage, no ids)
@@ -89,10 +90,39 @@ export interface ModelBatchResult {
  * no timeout, no `AbortController` lifecycle, no retry. Implementing the async *semantics* is
  * Slice E.
  */
+/**
+ * ★ C6 · RMA (§R5.1(A) / §R1.3) — what an adapter declares about ITSELF: a Tiancha-owned,
+ * provider-neutral identity VALUE OBJECT.
+ *
+ * It carries ONLY the non-sensitive identity fields frozen in §R3.1. It carries NO provider SDK/API
+ * type, no HTTP request/response, no HTTP header, no credential, no vendor error, no transport type
+ * and no provider-specific option type. The application layer may read and pass it, but it must not
+ * branch on, call, or depend on a concrete provider through it — "the application layer does not
+ * know the provider" means it does not depend on a provider IMPLEMENTATION.
+ */
+export interface AdapterIdentity {
+  readonly provider: string;
+  readonly model: string;
+  readonly deployment: string;
+  /** §R3.1 — the canonical endpoint identity (not a raw base URL). */
+  readonly endpointIdentity: string;
+  readonly adapterVersion: string;
+  /** §R2.1 — "no auth" is an EXPLICIT mode, and it participates in the identity. */
+  readonly authMode: "api-key" | "none";
+}
+
 export interface ModelExtractionAdapter {
   readonly modelVersion: string;
   readonly promptVersion: string;
   readonly parserVersion: string;
+  /**
+   * ★ §R5.4 — the adapter's declared identity. REQUIRED and read-only ON PURPOSE: an OPTIONAL member
+   * would let "forgot to provide it" fall silently back to `{}`, which is exactly the hole F2's
+   * generation hard-gate #11 closes.
+   */
+  readonly adapterIdentity: AdapterIdentity;
+  /** ★ §R5.4 — the generation parameters that ENTER the identity (via the existing `generationHashOf`). */
+  readonly generationParams: ModelGenerationParams;
   extractBatch(input: ModelBatchInput, signal: AbortSignal): Promise<ModelBatchResult>;
 }
 

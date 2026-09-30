@@ -47,6 +47,7 @@ import {
   type ModelExtractionAdapter,
   type ResolvedQuote,
 } from "./model-extraction.js";
+import { extractionOutputContractFor, type ExtractionOutputContract } from "./extraction-output-contract.js";
 import { METHODOLOGY_V1 } from "../methodology/methodology-v1.js";
 import type { MethodologyVersion } from "../domain/methodology.js";
 import type { ResearchRepository } from "../storage/research-repository.js";
@@ -213,18 +214,28 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: (
 }
 
 export class CandidateExtractionService {
+  /**
+   * ★ §R4.3 (rev5) — the Tiancha-owned output contract, resolved from `schemaVersion` EXACTLY ONCE,
+   * here at construction, and exposed READ-ONLY so the CLI can hand the very same value to
+   * `resolveModelAdapter(outputContract)`. Nothing else may resolve `schemaVersion` again
+   * (T-RMA-33), and the contract may not be replaced after assembly.
+   */
+  readonly outputContract: ExtractionOutputContract;
   constructor(
     private readonly repo: ResearchRepository,
     private readonly extractor: CandidateExtractor,
     private readonly options: CandidateExtractionOptions = {},
-  ) {}
+  ) {
+    this.outputContract = extractionOutputContractFor(options.schemaVersion ?? DEFAULT_SCHEMA_VERSION);
+  }
 
   private get parserVersion(): string {
     return this.options.parserVersion ?? DEFAULT_PARSER_VERSION;
   }
 
+  /** The single source of truth is now `outputContract.version` (§R4.3). */
   private get schemaVersion(): string {
-    return this.options.schemaVersion ?? DEFAULT_SCHEMA_VERSION;
+    return this.outputContract.version;
   }
 
   private now(): string {

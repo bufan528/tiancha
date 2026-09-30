@@ -88,6 +88,10 @@ import {
   type ModelExtractionAdapter,
 } from "@tiancha/research";
 import { KnowledgeRepository } from "@tiancha/research";
+// ★ C6 · RMA (§R12.2) — the provider boundary is reached ONLY through the package surface, and the
+// assembly itself lives INSIDE the package, so this CLI seam names no provider detail at all.
+import { ProviderError, assembleModelAdapter } from "@tiancha/research";
+import type { ExtractionOutputContract } from "@tiancha/research";
 import { CandidateProjectionService } from "@tiancha/research";
 import { locatorKey } from "@tiancha/research";
 import {
@@ -1490,8 +1494,11 @@ export const ADAPTER_NOT_CONFIGURED = "ADAPTER_NOT_CONFIGURED";
  * ★ It must NEVER be replaced by a fake / mock / echo adapter (§M14.6 / §M14.7): that would assert
  * "the model is integrated" while nothing is, and it would make the `--model` switch untrustworthy.
  */
-export function resolveModelAdapter(): ModelExtractionAdapter | undefined {
-  return undefined;
+export function resolveModelAdapter(outputContract: ExtractionOutputContract): ModelExtractionAdapter | undefined {
+  // ★ §R7.5 — the assembly lives INSIDE the provider boundary; this seam only routes the resolved,
+  // read-only Tiancha contract (§R4.3) into it. Its three outcomes (undefined / throw / adapter) and
+  // the credential + capability rules (§R2 / §R1.5) are implemented there, not here.
+  return assembleModelAdapter(outputContract, process.env);
 }
 
 /**
@@ -1525,7 +1532,15 @@ export async function runCandidateExtract(
     if (opts.operator === undefined) {
       return fail(deps, "--operator is required with --model (who asked for the model call)");
     }
-    model = resolveModelAdapter();
+    // §R7.5 — the assembly layer has THREE mutually exclusive outcomes. Path (2) (configured but
+    // unusable) is caught HERE: same `--json` shape, nothing written, never a legacy fallback.
+    try {
+      model = resolveModelAdapter(deps.extraction.outputContract);
+    } catch (err) {
+      const reason = err instanceof ProviderError ? err.code : "configuration";
+      if (opts.json) deps.out(toJson({ status: "failed", reason }));
+      return fail(deps, err instanceof Error ? err.message : String(err));
+    }
     if (model === undefined) {
       if (opts.json) deps.out(toJson({ status: "failed", reason: ADAPTER_NOT_CONFIGURED }));
       return fail(
