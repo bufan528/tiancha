@@ -62,25 +62,20 @@ const CANDIDATE_BATCH_SCHEMA: Readonly<Record<string, unknown>> = Object.freeze(
   },
 });
 
-/** The immutable version → schema map. A version is NEVER mutated in place (§R4.3). */
-const SCHEMAS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = Object.freeze({
-  "candidate-schema/v1": CANDIDATE_BATCH_SCHEMA,
-});
+// ★ §R4.3 rev8 — this release defines exactly ONE schema shape, so there is deliberately NO version
+// table here: a table would invent "this version is known, that one is not", which the contract
+// forbids. `schemaVersion` stays a VERSION IDENTITY (it enters the config key / identity verbatim);
+// it does not select a schema in this release. See §R4.3 【本期 schema 形状范围】.
 
 /**
- * Look up the contract for an ALREADY-RESOLVED version.
+ * Build the contract for an ALREADY-RESOLVED version (§R4.3 rev8 / 【本期 schema 形状范围】).
  *
- * A version with its own frozen schema uses it; any OTHER version maps to the baseline schema. This
- * keeps the promise that matters — one version always yields the SAME schema (replayable chain) —
- * while staying behaviour-preserving for the service's existing callers, which are free to pass a
- * custom `schemaVersion` (the version is recorded verbatim either way, and it still enters the
- * identity).
+ *  • This release defines ONE schema shape, so EVERY legal `version` string resolves to it — the
+ *    version is recorded VERBATIM and still enters the identity, but it does not select a shape.
+ *  • No `version` may be judged illegal here: deciding a version is "unknown" (and failing
+ *    configuration) would re-introduce the version table the contract forbids.
+ *  • A future second shape must freeze an explicit "version → shape" map in the contract itself.
  */
 export function extractionOutputContractFor(version: string): ExtractionOutputContract {
-  return Object.freeze({ version, schema: SCHEMAS[version] ?? CANDIDATE_BATCH_SCHEMA });
-}
-
-/** The versions this build knows (diagnostics/tests only). */
-export function knownExtractionOutputSchemaVersions(): readonly string[] {
-  return Object.freeze(Object.keys(SCHEMAS));
+  return Object.freeze({ version, schema: CANDIDATE_BATCH_SCHEMA });
 }

@@ -49,7 +49,7 @@ function forbiddenFetch(): { fetchImpl: FetchLike; calls: { n: number } } {
 }
 
 describe("§R4.3 — the Tiancha-owned ExtractionOutputContract", () => {
-  test("a known version maps to a frozen contract; the SAME version always yields the SAME schema", () => {
+  test("the contract is frozen, and the SAME version always yields the SAME schema", () => {
     const a = extractionOutputContractFor("candidate-schema/v1");
     const b = extractionOutputContractFor("candidate-schema/v1");
     assert.equal(a.version, "candidate-schema/v1");
@@ -57,10 +57,15 @@ describe("§R4.3 — the Tiancha-owned ExtractionOutputContract", () => {
     assert.ok(Object.isFrozen(a) && Object.isFrozen(a.schema), "the contract and its schema are immutable");
   });
 
-  test("an unknown version still yields a usable contract (baseline schema, version recorded verbatim)", () => {
-    const c = extractionOutputContractFor("candidate-schema/v2");
-    assert.equal(c.version, "candidate-schema/v2");
-    assert.deepEqual(c.schema, CONTRACT.schema, "unknown versions map to the baseline schema");
+  test("§R4.3 (rev8): EVERY legal version resolves to the single current shape, kept verbatim", () => {
+    // ★ rev8 forbids a version registry: declaring a version "unknown" (and failing configuration)
+    // is not allowed, so all of these behave identically — only the recorded version differs.
+    for (const version of ["candidate-schema/v1", "candidate-schema/v2", "candidate-schema/v999", "exotic/v3"]) {
+      const c = extractionOutputContractFor(version);
+      assert.equal(c.version, version, "the version is recorded VERBATIM (it still enters the identity)");
+      assert.deepEqual(c.schema, CONTRACT.schema, "this release defines ONE shape — there is no version table");
+      assert.ok(Object.isFrozen(c));
+    }
   });
 });
 
