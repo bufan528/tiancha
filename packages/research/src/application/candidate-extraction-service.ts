@@ -846,12 +846,23 @@ export class CandidateExtractionService {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // R7.3 — a CLASSIFIED failure is reported as `code: message`. The code is read STRUCTURALLY (a
+      // plain string property), so the application layer still never depends on a provider type
+      // (§R1.3 / T-RMA-13). A plain error — e.g. the timeout below, which MUST keep F2's historical
+      // `extraction timed out after Nms` text — carries no code and is reported verbatim.
+      const classifiedCode = (err as { readonly code?: unknown } | null | undefined)?.code;
+      const reportedError =
+        typeof classifiedCode === "string"
+          ? classifiedCode.length > 0
+            ? `${classifiedCode}: ${message}`
+            : message
+          : message;
       if (err instanceof CandidateExtractionTimeoutError) {
         // ★ timeout ≠ lease failure: leave the row `running`, let the lease lapse by itself.
-        return { extractionId, created: 0, reused: 0, merged: 0, skippedReviewed: 0, candidateIds: [], status: "failed", reusedRun: false, error: message };
+        return { extractionId, created: 0, reused: 0, merged: 0, skippedReviewed: 0, candidateIds: [], status: "failed", reusedRun: false, error: reportedError };
       }
-      this.finishRun({ extractionId, generation, owner, candidateIds: [], error: message, at: this.now() });
-      return { extractionId, created: 0, reused: 0, merged: 0, skippedReviewed: 0, candidateIds: [], status: "failed", reusedRun: false, error: message };
+      this.finishRun({ extractionId, generation, owner, candidateIds: [], error: reportedError, at: this.now() });
+      return { extractionId, created: 0, reused: 0, merged: 0, skippedReviewed: 0, candidateIds: [], status: "failed", reusedRun: false, error: reportedError };
     }
 
     // Identity is deterministic, so the ids are known BEFORE anything is written.

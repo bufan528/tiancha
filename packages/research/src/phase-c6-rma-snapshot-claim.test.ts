@@ -127,7 +127,7 @@ function rows(e: Env): Row[] {
               schema_version, status, attempt_seq, config_snapshot_json
          FROM extraction_run ORDER BY attempt_seq ASC, rowid ASC`,
     )
-    .all() as Row[];
+    .all() as unknown as Row[];
 }
 
 async function runModel(e: Env, adapter: ModelExtractionAdapter, at = AT) {
