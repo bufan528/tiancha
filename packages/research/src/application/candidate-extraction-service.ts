@@ -213,6 +213,23 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: (
   }
 }
 
+/**
+ * ★ §R5.7 (A-3) — the identity the MODEL path records. ONE source feeds BOTH the snapshot's `model.*`
+ * and the run row's identity columns, so the two projections cannot drift. The legacy path never
+ * builds one and keeps its existing `this.extractor.*` / `this.parserVersion` sources byte-for-byte.
+ */
+function modelIdentityFor(model: ModelExtractionAdapter): {
+  modelVersion: string;
+  promptVersion: string;
+  parserVersion: string;
+} {
+  return {
+    modelVersion: model.modelVersion,
+    promptVersion: model.promptVersion,
+    parserVersion: model.parserVersion,
+  };
+}
+
 export class CandidateExtractionService {
   /**
    * ★ §R4.3 (rev5) — the Tiancha-owned output contract, resolved from `schemaVersion` EXACTLY ONCE,
@@ -570,6 +587,16 @@ export class CandidateExtractionService {
      * nothing is re-derived. (The `model.*` half of §R5.7 is Slice A-3 and is untouched here.)
      */
     modelGeneration?: ModelExtractionAdapter["generationParams"];
+    /**
+     * ★ §R5.7 (A-3) — the MODEL path passes the adapter identity here; the legacy path omits it and
+     * keeps the existing sources BYTE-FOR-BYTE. `schemaVersion` stays service-side on BOTH paths
+     * (§R4.3) — it is deliberately NOT part of this input.
+     */
+    modelIdentity?: {
+      modelVersion: string;
+      promptVersion: string;
+      parserVersion: string;
+    };
   }): ExtractionConfigSnapshot {
     return {
       windowRule: {
@@ -580,9 +607,12 @@ export class CandidateExtractionService {
       },
       quotePolicy: { maxQuoteChars: input.rule.maxQuoteChars, allowedStances: ["supports"] },
       model: {
-        modelVersion: this.extractor.modelVersion,
-        promptVersion: this.extractor.promptVersion,
-        parserVersion: this.parserVersion,
+        // ★ §R5.7 (A-3) — BY PATH: the model path overrides these three with the adapter's identity;
+        // the legacy path keeps the original sources unchanged (no mechanical global replacement).
+        modelVersion: input.modelIdentity?.modelVersion ?? this.extractor.modelVersion,
+        promptVersion: input.modelIdentity?.promptVersion ?? this.extractor.promptVersion,
+        parserVersion: input.modelIdentity?.parserVersion ?? this.parserVersion,
+        // §R4.3 — Tiancha-owned on BOTH paths, single source, never part of the identity input above.
         schemaVersion: this.schemaVersion,
       },
       // ★ §R5.4 (A-2): the MODEL path records the adapter's REAL generation parameters (they reach the
@@ -730,6 +760,7 @@ export class CandidateExtractionService {
       leaseMs,
       startedAt,
       now,
+      ...(opts.model === undefined ? {} : { identity: modelIdentityFor(opts.model) }),
     });
     if (claim.kind === "reused") {
       // ★ §M13.10 — ZERO side effects: the existing completed run is reused VERBATIM. No new
@@ -849,6 +880,7 @@ export class CandidateExtractionService {
           // ★ §R5.4 (A-2) — BY PATH: only the model path supplies the adapter's real generation
           // parameters, and it supplies the SAME value the identity above was built from.
           ...(opts.model === undefined ? {} : { modelGeneration: opts.model.generationParams }),
+          ...(opts.model === undefined ? {} : { modelIdentity: modelIdentityFor(opts.model) }),
         }),
         candidates: units,
       });
@@ -906,6 +938,16 @@ export class CandidateExtractionService {
     startedAt: string;
     /** ★ "The present" — the ONLY input to every lease decision here. */
     now: string;
+    /**
+     * ★ §R5.7 (A-3) — the MODEL path's identity for the three IDENTITY COLUMNS only. It is
+     * deliberately NOT an input to any WHERE clause: the reuse and lease predicates use ONLY
+     * `materialVersionId` + `configKey` (+ status), so identity can never influence reuse (§N1).
+     */
+    identity?: {
+      modelVersion: string;
+      promptVersion: string;
+      parserVersion: string;
+    };
   }):
     | { kind: "claimed"; extractionId: string; attemptSeq: number; generation: number }
     | { kind: "reused"; extractionId: string; candidateIds: string[] }
@@ -992,9 +1034,11 @@ export class CandidateExtractionService {
       ).run(
         extractionId,
         input.materialVersionId,
-        this.extractor.modelVersion,
-        this.extractor.promptVersion,
-        this.parserVersion,
+        // ★ §R5.7 (A-3) — identity columns BY PATH (model ⇒ adapter, legacy ⇒ unchanged). These are
+        // INSERT values only; they appear in NO WHERE clause, so reuse is untouched (§N1).
+        input.identity?.modelVersion ?? this.extractor.modelVersion,
+        input.identity?.promptVersion ?? this.extractor.promptVersion,
+        input.identity?.parserVersion ?? this.parserVersion,
         this.schemaVersion,
         input.configKey,
         input.startedAt,
