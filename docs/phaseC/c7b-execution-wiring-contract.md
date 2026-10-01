@@ -463,6 +463,8 @@ D-C7B-12 L-5b closure target adjudicated（rev4 新增 —— 本条为 closure 
            ⇒ 确定性：P-1/P-2/P-3 是 DAG 结构与已持久化 Task 执行事实的【纯函数】；相同输入必得
               相同判定；不依赖挂钟、重试预算余量或任何运行时可变状态。
 
+           ⇒ 恢复：closure 载体（G2-a）尚未授权 ⇒ 载体选定前【不得持久化】；恢复路径上后继 Task 的
+             "永久不可执行"状态必须【从持久化事实 + DAG 重新推导】，不得读取未持久化的 closure 假设。
          ★ closure 执行方式（V2 —— 代码必然，非风格选择）：
            由 Orchestrator 【直接执行 Task 状态写（`failed`）】，明确作为 §5.2 O-5 的生命周期转换，
            【不经】TaskEngine.fail()：
