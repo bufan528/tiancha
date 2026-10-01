@@ -1,6 +1,8 @@
 # C7-B · Research Execution Wiring — Implementation Contract
 
-> **rev1 · 问题空间与边界设计（CONTRACT DESIGN ONLY）**
+> **rev3 · 问题空间与边界 + 语义契约（CONTRACT DESIGN ONLY）**
+>
+> ★ **C7-B 不负责创造新的研究认知层。它负责把已有执行能力与已有研究业务能力接起来。**
 > 状态：**DESIGN ONLY · NOT AUTHORIZED · NOT IMPLEMENTED**。本文件**只界定问题与边界**，不含实现、不含 schema。
 > 基线：`HEAD = 25b9ace`（C7 设计草案已入库，未 push）· `origin/main = 3972035`（C6 RMA FINAL/PUBLISHED/FROZEN）。
 > 前置：`docs/phaseC/c7-research-execution-expansion.md`（§10 G2 Preflight = PASS）· `c6-real-model-adapter-contract.md`（rev8 FROZEN）· `docs/HANDOFF.md` §10。
@@ -169,10 +171,10 @@ provenance debt（D-C7-G）：`lock ④ / lock ⑤` 的原始规格文档不在�
 
 ## §5 三大契约问题（★ 本契约的核心：先钉语义，后选载体）
 
-### §5.1 生命周期契约（继承既有状态机，不得新增）
+### §5.1 生命周期契约（语义已钉死 —— 继承既有状态机，不得新增）
 
 ```text
-既有（只读确认，不得扩展）：
+既有状态机（只读确认，不得扩展、不得新增）：
   ResearchRunStatus    = planning | active | waiting_input | completed | failed | cancelled   （6）
   ResearchRoundStatus  = planned | running | review | completed | rejected                    （5）
   TaskStatus           = queued | running | waiting | completed | failed | cancelled          （6）
@@ -181,33 +183,73 @@ provenance debt（D-C7-G）：`lock ④ / lock ⑤` 的原始规格文档不在�
   TaskAttemptStatus    = running | succeeded | failed | aborted                                （4）
   TaskType（11 种）= plan | hypothesis | collect | extract_industry | resolve | enrich |
                      evaluate | critic | dossier_update | report | human_gate
-必须钉死（本契约需回答）：
-  ① 三个"非终态但非运行"的语义边界：Run.waiting_input / Task.waiting / Round.review
-     —— 分别由谁进入、由谁离开、与 Human Gate 的关系
-  ② 终态的收口责任：谁有权把 Task/Round/Run 置为 completed / failed / cancelled
-  ③ 一个 Task 失败时，同 round 内后继任务的传播规则（阻断？跳过？整体 round rejected？）
-  ④ `TaskAttempt` 的追加语义与 `activeAttemptId` 的关系（resume 时旧 attempt 保持不可变）
+
+钉死的语义（rev2 裁定，rev3 澄清）：
+  L-1 三个"非终态但非运行"的语义（只使用既有状态，不新增）：
+        Run.waiting_input  由"需要人工输入"进入；人工输入经合法入口提交后离开。
+        Task.waiting       由"依赖未满足 或 等待人工闸门"进入；条件消除后回到可运行。
+        Round.review       由"本轮任务全部到达终态、等待判定"进入。
+       三者均【不得】被解释为终态，也【不得】新增任何平行状态。
+  L-2 终态收口责任（权威 owner 唯一）：
+        Task 终态     ⇒ Orchestrator 判定（依据 TaskEngine 报告的执行结果）
+        Round / Run 终态 ⇒ 各自的权威 owner 按生命周期规则执行
+  L-3 失败传播（对应裁定 D-C7B-5，rev3 澄清）：
+        Task failed ⇒ 依赖它的后继 Task 不可运行（non-runnable）。
+        ★ `non-runnable`【不是】TaskStatus —— 它是【派生的调度就绪条件（readiness predicate）】。
+          依赖未满足的后继 Task 保持在既有【非终态】status；调度器【MUST NOT】将其入队。
+          【禁止】新增状态（`blocked` / `skipped` / `dependency_failed` 一律禁止）。
+        【禁止】把失败依赖"跳过"当作成功前置；
+        【不得】把 Task failure 机械等价为 Round.rejected（后者是 Round 层既有状态，语义不同）。
+  L-4 TaskAttempt 与 activeAttemptId：
+        attempt 为不可变执行历史；一个 Task 在任一时刻至多一个 active attempt；
+        合法恢复 ⇒ 追加【新】attempt（旧 attempt 一律不可变）；
+        终端 attempt 永不被修改（与既有域语义一致）。
+  L-5 ★ OPEN ITEM（rev3 标记，待既有语义取证）：依赖【永久失败】时，后继 Task 最终如何合法收口？
+        取证事实（只读，rev3 本轮）：
+          · `TaskStatus.cancelled` 与 `waiting` 在既有代码中【从未被设置】
+            （TaskEngine 只设 running / completed / failed；其余 `"cancelled"` 命中属
+             NextActionStatus / HumanGateStatus / ResearchRunStatus，不是 TaskStatus）；
+          · 该 enum 成员与 `TASK_TERMINAL_STATUSES` 是【声明式】的，其【触发语义】在仓库中不可考
+            （与 D-C7G 的 provenance debt 同性质）。
+        ⇒ rev3【不】规定后继 Task 收口为任何具体状态；
+          该决定必须以【既有 TaskStatus / cancellation 语义取证】为前提，并另行裁定。
+        ⇒ 语义补齐之前：依赖失败的后继 Task 保持在既有非终态且不入队（不产生新状态、不自动跳过）。
+        该行为仅为 L-5 未裁定期间的临时安全约束，
+        不构成依赖永久失败后的最终生命周期闭合语义。
 不得做：新增状态、新增状态机、复用别的层的状态表示执行层状态。
 ```
 
-### §5.2 所有权契约（谁创建 / 谁推进 / 谁收口）
+### §5.2 所有权契约（语义已钉死 —— 单一权威，禁止第二套写者）
 
 ```text
-现状（G2 取证）：
+现状（G2 取证，作为基线）：
   Orchestrator  创建 Run / Round（并 emit `round_created`）· 校验 DAG · 平铺入队
   TaskEngine    创建 Attempt（randomUUID）+ child session · 显式 succeed/fail（由调用者驱动）
   调用者        构造 ResearchTask[]（本该由工厂产生 —— G2-b 缺口）
   事件           Orchestrator / TaskEngine / 调用者均可 emit（经 ResearchEventAdapter）
-必须钉死（本契约需回答）：
-  ① Run/Round 的权威写入者是谁（是否仍唯一为 Orchestrator）
-  ② Task 的创建者（若新增派生器：它是"提议者"还是"创建者"？谁真正把 Task 入图）
-  ③ Attempt 的追加者（TaskEngine 独占？）
-  ④ 终态收口者（与 §5.1 ② 对应）
-  ⑤ 并发：同一 Run/Round 是否允许并发推进；若不，如何互斥（既有 material 层已有租约/fencing 先例，可参照其【语义】）
-不得做：引入第二套写者；让执行层的写者绕过既有 ORCHESTRATOR/TASKENGINE 的职责边界。
+
+钉死的语义（rev2 裁定，rev3 澄清 —— D-C7B-2 / D-C7B-3）：
+  O-1 Run / Round 的权威写入者 = Orchestrator（唯一）。
+  O-2 Task 的创建：提议者与创建者【分离】——
+        TaskDerivation（纯函数、确定性、无副作用、不持久化）= 提议者，产出 ResearchTask 定义；
+        Orchestrator = 唯一权威创建者/入图者，校验/提交派生结果进入 Round。
+  O-3 Attempt 的追加者 = TaskEngine（执行权威）；TaskEngine 执行"已被授权的 Task"。
+  O-4 依赖/就绪权威 = Orchestrator（决定"现在哪个 Task 可入队"）；
+        TaskEngine 只做局部运行守卫（可拒绝非法启动），【MUST NOT】独立调度下游 Task，
+        也【不得】维护第二套 dependency scheduler。
+  O-5 终态收口者：与 §5.1 L-2 一致（Task 由 Orchestrator 收口；Round/Run 由各自权威 owner）。
+        ★ 桥接（rev3，用于保护 I-8）：TaskEngine reports execution outcome；
+          Orchestrator owns the authoritative lifecycle transition of Task。
+          C7-B MUST NOT reinterpret an existing TaskEngine outcome API
+          as a second Task lifecycle state machine.
+          ⇒ 既有 `TaskEngine.succeed() / fail()` 的【可观察语义不被改变】：
+            它们表达"执行结果"，【不】直接等价于 Task 生命周期状态机。
+  O-6 并发：同一 Run/Round 的推进不引入第二套写者；互斥语义（若有）须与既有 material 层的
+        租约/fencing【语义】一致，但本契约【不】在此选择载体或实现方式。
+不得做：引入第二套写者；让执行层的写者绕过 Orchestrator / TaskEngine 的既有职责边界。
 ```
 
-### §5.3 恢复语义契约（恢复到哪、依据什么、幂等锚点）
+### §5.3 恢复语义契约（语义已钉死 —— 粒度 = Task）
 
 ```text
 现状（G2 取证）：
@@ -215,13 +257,26 @@ provenance debt（D-C7-G）：`lock ④ / lock ⑤` 的原始规格文档不在�
   human gate：完整（resumeToken hash + scope + 单次 + 过期）
   candidate projection：幂等（同 candidate ⇒ 同 claim id）
   执行层：无
-必须钉死（本契约需回答）：
-  ① 恢复粒度：attempt 级 / task 级 / round 级 / run 级 —— 决定持久化最小集
-  ② 恢复判据：依据什么判定"这一步已经做过"（attempt 状态？业务侧幂等锚点？两者？）
-  ③ 恢复与业务幂等的对齐：恢复不得导致重复 Material / 重复 Fragment / 重复 Candidate / 重复 Claim
-  ④ 恢复后 attempt 关系：追加新 attempt（域语义），旧 attempt 不可变
-  ⑤ "不可自动恢复"的情形（参照 material 层既有先例：legacy 残骸不自动续跑，需人工决定）
-不得做：把"重跑"伪装成"恢复"；修改已终态的 attempt/task。
+
+钉死的语义（rev2 裁定，rev3 澄清 —— D-C7B-1）：
+  R-1 Task is the minimum resumable execution unit.
+        Run / Round recovery = reconstruct orchestration state → identify incomplete / recoverable
+        Tasks → resume Tasks according to their persisted execution facts.
+        Run = orchestration scope · Round = execution grouping · Task = resumable unit ·
+        Attempt = immutable execution attempt · Event = durable history.
+        ★ recovery ≠ automatic recovery：v1 recovery is explicitly initiated by a legal
+          resume action and is NOT automatic（见 R-5）。
+
+  R-2 恢复判据：以 Task 的可执行事实为准（不是"重跑"）；具体事实集属 §5.4（未选载体）。
+  R-3 恢复与业务幂等的对齐（强制）：恢复【不得】导致重复 Material / Fragment / Candidate / Claim；
+        必须落在既有幂等锚点上（既有身份机制，I-3）。
+  R-4 恢复后 attempt 关系：Resume MUST NOT mutate an existing terminal TaskAttempt；
+        Resume creates a NEW TaskAttempt when a Task is legally resumed.
+  R-5 不可自动恢复 / 不自动恢复（rev3 澄清）：
+        恢复语义存在 ≠ 自动恢复策略存在。
+        v1 的 resume 必须由【显式合法动作】发起（explicit / legal resume action），【不】自动触发；
+        并参照 material 层既有先例：残骸不自动续跑，需人工决定。
+不得做：把"重跑"伪装成"恢复"；修改已终态的 attempt/task；为恢复而在本契约内选择持久化载体。
 ```
 
 ### §5.4 持久化载体问题（★ 只列问题与判据，不选方案 —— G2-a 的约束）
@@ -238,6 +293,7 @@ provenance debt（D-C7-G）：`lock ④ / lock ⑤` 的原始规格文档不在�
 判据（用于将来评估任何载体提案）：
   最小性 · 权威单一性（谁是 SoT）· 与既有事件流的关系 · 与既有 resume 语义的一致性 ·
   幂等锚点是否落在既有身份机制上（不新建身份函数）· 可迁移性（既有 migration 机制）
+★ rev2 状态：本节的 Q1…Q5 与判据【原样保留】，rev2 仍未选择任何持久化载体。
 ★ 明确：任何"新增表 / 改 schema"的提案都必须【另行】获得显式授权（D-C7-C）。
 ```
 
@@ -254,11 +310,83 @@ I-5  不得新增状态 / 状态机；执行层状态不得与知识层状态混
 I-6  不得绕过 Human Gate（选对象 / 审候选 / 升版）
 I-7  不得为 G2-a 直接进入 schema 设计
 I-8  不得改动 C6 RMA 与既有 Execution Engine 的可观察语义
+I-9  只有一个 execution application service；CLI 与 Agent tool 均为【适配器】，不得各自实现执行逻辑
+I-10 不引入新的自动 retry policy；`ResearchTask.retry` 不得成为绕开 C6 §R8 的后门
+I-11 Execution state 不得投影进 `research_state`（执行事实 ≠ 知识结论）
+I-12 运行观测（tokenUsage / cost 等）不得新增持久化，不得成为 durable 执行 SoT
+I-13 不得把既有 TaskEngine outcome API（`succeed` / `fail`）重解释为第二套 Task 生命周期状态机
 ```
 
 ---
 
-## §7 待裁定（需要用户决策 —— 本契约的问题清单）
+## §7 裁定记录（D-C7B-1…11 —— 全部已裁定，rev2 并入）
+
+```text
+D-C7B-1  ACCEPT
+         Task = minimum resumable execution unit.
+         Run/Round recovery reconstructs orchestration state and resumes Tasks;
+         TaskAttempt = immutable execution history / attempt anchor;
+         resume never mutates a terminal attempt (appends a NEW attempt).
+
+D-C7B-2  MODIFY
+         Pure deterministic TaskDerivation proposes Task definitions (no persistence, no side effects);
+         Orchestrator is the authoritative Task creator / graph inserter.
+
+D-C7B-3  MODIFY
+         Orchestrator owns dependency / readiness scheduling;
+         TaskEngine executes authorized Tasks and enforces local start invariants,
+         but does not become a second scheduler.
+
+D-C7B-4  ACCEPT
+         CLI + Agent Tool;
+         both are adapters over ONE canonical execution application service.
+         Allowed: start / resume execution · inspect execution state · submit legal human input.
+         Forbidden: bypassing Human Gate to auto-confirm Target / Candidate / Methodology revision.
+
+D-C7B-5  MODIFY（rev3 澄清）
+         Failed Task blocks dependent Tasks. No dependency skipping.
+         `non-runnable` is NOT a TaskStatus — it is a derived scheduling condition
+         (readiness predicate): the dependent Task keeps an existing NON-TERMINAL status and
+         MUST NOT be enqueued. No new `blocked` / `skipped` / `dependency_failed` state.
+         Round/Run closure remains with their authoritative owners
+         (a Task failure is NOT mechanically a Round.rejected).
+         ★ OPEN: the final legal closure of a dependent Task after a PERMANENT dependency failure
+           is unresolved and requires prior evidence of the existing TaskStatus / cancellation
+           semantics (see §5.1 L-5).
+
+D-C7B-6  ACCEPT
+         Task retry semantics are distinct from C6 RMA retry.
+         C6 RMA v1 remains maxAttempts = 1.
+         No new automatic retry policy in C7-B v1; Task retry must not become a backdoor to §R8.
+
+D-C7B-7  ACCEPT
+         tokenUsage / cost are runtime observation only under C6 §R9;
+         they may be produced, observed in-process, and asserted in tests / CLI run output,
+         but MUST NOT become a durable execution SoT and MUST NOT add telemetry persistence.
+
+D-C7B-8  ACCEPT
+         Execution state does NOT project into `research_state`.
+         (No `Task failed → uncertain`, no `Task completed → confirmed`.) The two layers stay independent.
+
+D-C7B-9  MODIFY（rev3 澄清）
+         TaskEngine MUST NOT directly own the RMA boundary.
+         Task execution invokes the EXISTING research-domain extraction capability
+         (the existing extraction service), which invokes C6 RMA.
+         C7-B WIRES to that existing capability; it MUST NOT create a second / new
+         extraction service, nor another abstraction layer.
+         (TaskEngine = execution · existing Extraction Service = extraction workflow / IO contract ·
+          C6 RMA = provider adapter boundary.)
+D-C7B-10 MODIFY
+         v1 primary vertical slice:
+             collect → Material → extract_industry → C6 RMA → Candidate → Human Review → Claim.
+         `human_gate` integrates as a governance / DAG capability, NOT as a mandatory fixed position
+         in that chain; its completion must come from a real human action (never model-completed).
+
+D-C7B-11 ACCEPT
+         No new TaskType. Existing 11 types are sufficient; v1 activates only the required subset.
+```
+
+### §7.1 原问题清单（保留原文，已由上方裁定取代）
 
 ```text
 D-C7B-1  恢复粒度选哪一层（attempt / task / round / run）？—— 决定 §5.4 的最小集
@@ -274,7 +402,15 @@ D-C7B-10 v1 最小 vertical slice：先接哪些 TaskType（是否仅 collect / 
 D-C7B-11 既有 11 种 TaskType 是否足够，还是 v1 只用子集（不新增类型）？
 ```
 
----
+### §7.2 本轮仍【未被授权】的事项
+
+```text
+❌ §5.4 持久化载体选择      ❌ 新表 / schema      ❌ migration
+❌ retry 实现               ❌ Execution Engine redesign
+❌ C6 RMA modification      ❌ Experience domain
+❌ 自动选 ResearchTarget     ❌ 自动 Human Gate
+❌ 依赖永久失败后的后继 Task 收口语义（待既有 TaskStatus / cancellation 语义取证，见 §5.1 L-5）
+```
 
 ## §8 明确不做（防膨胀）
 
@@ -298,4 +434,4 @@ D-C7B-11 既有 11 种 TaskType 是否足够，还是 v1 只用子集（不新�
   4. Final Lock 之后，才可能有实现授权
 ```
 
-**End of rev1（C7-B · Research Execution Wiring — Implementation Contract · 问题空间与边界设计 · DESIGN ONLY · NOT AUTHORIZED · NOT IMPLEMENTED。基线 `25b9ace`。本文件不含 schema、不含实现。）**
+**End of rev3（C7-B · Research Execution Wiring — Implementation Contract · 问题空间与边界 + 语义契约 · DESIGN ONLY · NOT AUTHORIZED · NOT IMPLEMENTED。基线 `af42985`。本文件不含 schema、不含实现、不含持久化载体选择。）**
