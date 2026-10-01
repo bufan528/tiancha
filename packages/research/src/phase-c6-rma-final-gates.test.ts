@@ -347,6 +347,43 @@ describe("Slice A-4 · part 1 — boundaries and isolation", () => {
     assert.equal(a.modelVersion, b.modelVersion, "the SECRET is not part of the identity");
     assert.equal(a.modelVersion, `pid-${sha256Hex(stableStringify(a.adapterIdentity))}`);
   });
+
+  test("★ §R1.6 — the extraction path never depends on `ModelResolverPort` (the agent runtime's resolver)", () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+    // The extraction path = the application layer + the provider boundary + the CLI's extraction
+    // assembly point. The agent runtime (`src/agent/*`, `src/cli/tiancha.ts`) is deliberately NOT in
+    // it: that is the port's one legitimate consumer (§R1.6).
+    const extractionFiles: Array<{ label: string; text: string }> = [
+      ...applicationSources().map((s) => ({ label: `application/${s.file}`, text: s.text })),
+      ...providerSources().map((s) => ({ label: `providers/${s.file}`, text: s.text })),
+      {
+        label: "src/cli/research-commands.ts",
+        text: readFileSync(join(root, "src", "cli", "research-commands.ts"), "utf8"),
+      },
+    ];
+
+    // ① the scan really covers the extraction path (a vacuous scan would prove nothing).
+    assert.ok(extractionFiles.length >= 30, "the extraction path is really in scope");
+
+    // ② not one file of it may name the port — neither import it nor mention it.
+    for (const { label, text } of extractionFiles) {
+      assert.doesNotMatch(text, /ModelResolverPort|model-resolver/, `${label} must not depend on ModelResolverPort (§R1.6)`);
+    }
+
+    // ③ reverse sentinel: the agent runtime consumes the port IN THE SAME DIRECTORY as the extraction
+    //    entry scanned above (`src/cli/`), so a green result cannot be vacuous and the scan is
+    //    genuinely scoped to the extraction entry rather than to the CLI directory as a whole.
+    assert.match(
+      readFileSync(join(root, "src", "cli", "tiancha.ts"), "utf8"),
+      /ModelResolverPort/,
+      "the agent runtime remains the port's legitimate consumer (so this scan is not vacuous)",
+    );
+    assert.match(
+      readFileSync(join(APP_DIR, "..", "ports", "model-resolver.port.ts"), "utf8"),
+      /export interface ModelResolverPort/,
+      "the port itself still exists — the scan targets a real boundary",
+    );
+  });
 });
 
 
