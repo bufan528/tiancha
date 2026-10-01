@@ -1,6 +1,6 @@
 # C7-B · Research Execution Wiring — Implementation Contract
 
-> **rev3 · 问题空间与边界 + 语义契约（CONTRACT DESIGN ONLY）**
+> **rev4 · 问题空间与边界 + 语义契约 + L-5b closure 裁定（CONTRACT DESIGN ONLY）**
 >
 > ★ **C7-B 不负责创造新的研究认知层。它负责把已有执行能力与已有研究业务能力接起来。**
 > 状态：**DESIGN ONLY · NOT AUTHORIZED · NOT IMPLEMENTED**。本文件**只界定问题与边界**，不含实现、不含 schema。
@@ -187,35 +187,70 @@ provenance debt（D-C7-G）：`lock ④ / lock ⑤` 的原始规格文档不在�
 钉死的语义（rev2 裁定，rev3 澄清）：
   L-1 三个"非终态但非运行"的语义（只使用既有状态，不新增）：
         Run.waiting_input  由"需要人工输入"进入；人工输入经合法入口提交后离开。
-        Task.waiting       由"依赖未满足 或 等待人工闸门"进入；条件消除后回到可运行。
+        Task.waiting       由"等待外部输入"进入（HumanGate / 数据源返回）；外部输入到达后回到可运行。
+        ★ 语义边界（L-5b Q1 裁定）：Task.waiting【不吸收】dependency starvation ——
+          "依赖未满足"不是 waiting 的原因；它只由 readiness predicate 表达（见 L-3）。
         Round.review       由"本轮任务全部到达终态、等待判定"进入。
        三者均【不得】被解释为终态，也【不得】新增任何平行状态。
   L-2 终态收口责任（权威 owner 唯一）：
         Task 终态     ⇒ Orchestrator 判定（依据 TaskEngine 报告的执行结果）
         Round / Run 终态 ⇒ 各自的权威 owner 按生命周期规则执行
-  L-3 失败传播（对应裁定 D-C7B-5，rev3 澄清）：
-        Task failed ⇒ 依赖它的后继 Task 不可运行（non-runnable）。
+  L-3 依赖不可执行的传播（对应裁定 D-C7B-5 + L-5b；rev4 澄清）：
         ★ `non-runnable`【不是】TaskStatus —— 它是【派生的调度就绪条件（readiness predicate）】。
           依赖未满足的后继 Task 保持在既有【非终态】status；调度器【MUST NOT】将其入队。
           【禁止】新增状态（`blocked` / `skipped` / `dependency_failed` 一律禁止）。
+        ★ 两个阶段必须严格区分（否则本条与 L-6 会自相矛盾）：
+          阶段①（暂不可运行）：依赖未满足、但【存在】合法恢复路径
+                ⇒ 保持既有非终态 + 不入队；非终态 ≠ waiting ≠ 终态。
+          阶段②（永久不可执行）：Orchestrator 经确定性 DAG 评估判定【永久不可能】
+                ⇒ lifecycle closure ⇒ Task.status = `failed`（见 L-6 / DEPENDENCY-CLOSURE-1）。
+          在阶段②判定完成【之前】：non-runnable 【≠】 waiting、【≠】 cancelled、【≠】 failed。
         【禁止】把失败依赖"跳过"当作成功前置；
-        【不得】把 Task failure 机械等价为 Round.rejected（后者是 Round 层既有状态，语义不同）。
+        【禁止】把 dependency impossibility 机械等价为 Round.rejected；
+        【不得】把 Task failure 机械等价为 Round.rejected（后者是 Round 层既有状态，语义不同）；
+        ★ 传播的是【永久不可执行事实】（由 Orchestrator 逐级评估），【不是】`failed` status 的机械级联。
+        ★ 阶段①（暂不可运行）的 Task 持有 `queued`（V1 裁定，基于代码证据）：
+          · `status` 是 ResearchTask 的构造必填字段（domain/task.ts:67）⇒ 不存在"无状态 Task"；
+            唯一合法初值 = `queued`（全仓两个构造点均赋 queued：src/cli/tiancha.ts:166 ·
+            packages/research/src/task-graph.test.ts:11）。
+          · 阶段①采用 3a：未就绪 Task 保持在 DAG 内、【不向 TaskEngine 注册】；status 仍为
+            构造时赋的 `queued` ⇒ "MUST NOT enqueue" 字面成立、零代码成本。
+          · 解耦事实（V1 的关键证伪）：`TaskEngine.enqueue()` 只做重复检查 + Map 注册，
+            【不写 status】（runtime/task-engine.ts:34-39）⇒ "queued 状态"（构造方赋）与
+            "enqueue 动词"（引擎登记）在代码层面本就解耦；`start()` 首行 mustGet（:54）
+            ⇒ 未注册 Task 本就无法被 start ⇒ 天然守卫已在。
+          · TaskEngine 无内部调度循环（全仓无 setInterval / while(true)）；queued 静置无副作用；
+            queued → running 仅由显式 start（runtime/task-engine.ts:53）触发。
+          · DAG 成员资格 ≠ 引擎注册：恢复语义（R-1/R-2）以 DAG 成员资格为准，不受 3a 影响。
   L-4 TaskAttempt 与 activeAttemptId：
         attempt 为不可变执行历史；一个 Task 在任一时刻至多一个 active attempt；
         合法恢复 ⇒ 追加【新】attempt（旧 attempt 一律不可变）；
         终端 attempt 永不被修改（与既有域语义一致）。
-  L-5 ★ OPEN ITEM（rev3 标记，待既有语义取证）：依赖【永久失败】时，后继 Task 最终如何合法收口？
-        取证事实（只读，rev3 本轮）：
-          · `TaskStatus.cancelled` 与 `waiting` 在既有代码中【从未被设置】
-            （TaskEngine 只设 running / completed / failed；其余 `"cancelled"` 命中属
-             NextActionStatus / HumanGateStatus / ResearchRunStatus，不是 TaskStatus）；
-          · 该 enum 成员与 `TASK_TERMINAL_STATUSES` 是【声明式】的，其【触发语义】在仓库中不可考
-            （与 D-C7G 的 provenance debt 同性质）。
-        ⇒ rev3【不】规定后继 Task 收口为任何具体状态；
-          该决定必须以【既有 TaskStatus / cancellation 语义取证】为前提，并另行裁定。
-        ⇒ 语义补齐之前：依赖失败的后继 Task 保持在既有非终态且不入队（不产生新状态、不自动跳过）。
-        该行为仅为 L-5 未裁定期间的临时安全约束，
-        不构成依赖永久失败后的最终生命周期闭合语义。
+  L-5 dependency 永久失败后的生命周期收口（L-5b · rev4 已裁定；原 ★ OPEN ITEM 已关闭）：
+        裁定（Q10）：closure target = `failed`（既有终态成员；不新增任何状态）。
+        `failed` 语义 = Task lifecycle terminal state：
+            "Task has terminated without successful completion."
+            （【不是】"execution attempt failed" —— 执行失败只是进入该状态的原因之一）
+        两类进入原因（仅【语义分类】，rev4【不新增】failureReason 字段 / 不涉 schema）：
+            · execution_failure        —— 经 TaskEngine.fail()；存在 TaskAttempt
+            · dependency_impossibility —— Orchestrator lifecycle closure；【不创建】TaskAttempt
+        约束：closure 由 Orchestrator 完成；不经 TaskEngine.fail()；不伪造 execution outcome；
+              不可撤销（terminal closure irreversible；新的恢复机会不得 resurrect 旧 Task）。
+        完整行为禁令见 §6 的 DEPENDENCY-CLOSURE-1；permanence 判定条件见 §6 的 I-15。
+        ★ 原取证事实（保留为 provenance 记录）：`TaskStatus.cancelled` 与 `waiting` 在既有代码中
+          【从未被设置】（TaskEngine 只设 running / completed / failed）；该 enum 成员与
+          `TASK_TERMINAL_STATUSES` 是【声明式】的，其触发语义在仓库中不可考（与 D-C7G 同性质）。
+  L-6 dependency-impossibility closure 的可执行语义（rev4 新增）：
+        唯一合法路径：Dependency facts → Orchestrator DAG evaluation →
+            permanent impossibility confirmed（P-1 ∧ P-2 ∧ P-3；唯一定义处 §7 D-C7B-12）→ Task lifecycle closure →
+            Task.status = `failed`
+        【禁止】路径：TaskEngine 观察到 dependency failed ⇒ 自行置 Task.status = failed
+            （TaskEngine 不是 scheduler authority —— 见 §5.2 O-4）
+        结果特征：不创建 TaskAttempt · 不调用 TaskEngine.fail() · 不伪造 execution outcome ·
+                  进入终态后不可转移（I-4）
+        ★ 该 closure 是 §5.2 O-5 所载"Task 终态由 Orchestrator 收口"的【生命周期转换】，
+          【不是】对既有 TaskEngine outcome API 的重解释（见 I-8 / I-13）。
+        ★ 确定性与恢复约束（V6）：见 §7 D-C7B-12，本处不重复。
 不得做：新增状态、新增状态机、复用别的层的状态表示执行层状态。
 ```
 
@@ -295,6 +330,7 @@ provenance debt（D-C7-G）：`lock ④ / lock ⑤` 的原始规格文档不在�
   幂等锚点是否落在既有身份机制上（不新建身份函数）· 可迁移性（既有 migration 机制）
 ★ rev2 状态：本节的 Q1…Q5 与判据【原样保留】，rev2 仍未选择任何持久化载体。
 ★ 明确：任何"新增表 / 改 schema"的提案都必须【另行】获得显式授权（D-C7-C）。
+★ 确定性与恢复约束（V6）：见 §7 D-C7B-12，本处不重复。
 ```
 
 ---
@@ -315,6 +351,32 @@ I-10 不引入新的自动 retry policy；`ResearchTask.retry` 不得成为绕�
 I-11 Execution state 不得投影进 `research_state`（执行事实 ≠ 知识结论）
 I-12 运行观测（tokenUsage / cost 等）不得新增持久化，不得成为 durable 执行 SoT
 I-13 不得把既有 TaskEngine outcome API（`succeed` / `fail`）重解释为第二套 Task 生命周期状态机
+
+DEPENDENCY-CLOSURE-1（rev4 新增 —— closure 行为禁令）
+（命名型 invariant：与 I-1…I-16 编号体系并列；本条为 closure 行为禁令；P-1 / P-2 / P-3 的定义见 §7 D-C7B-12）
+
+A Task may enter terminal status `failed` due to
+deterministically established permanent dependency impossibility
+without creating a TaskAttempt.
+
+Such closure MUST be performed by the Orchestrator and MUST NOT
+be represented by TaskEngine.fail(), MUST NOT synthesize an attempt,
+and MUST NOT infer permanence from a single failed dependency/attempt
+or retry exhaustion.
+
+★ permanent dependency impossibility requires P-1 AND P-2 AND P-3（定义见 §7 D-C7B-12；
+  本条不重复其定义）—— 上面的 MUST NOT 列表是【禁令示例】，不是"其余任何事实都可以推出 permanence"的许可。
+
+I-14  `failed` 可由 Orchestrator 对"该 Task 无剩余合法执行路径"的确定性判定触发，
+      即使该 Task 从未有 TaskAttempt。
+I-15  permanent 判定必须【同时】满足 P-1（dependency terminal）AND P-2（no legal recovery path）
+      AND P-3（deterministic DAG evaluation）；不得由单条失败事实（dependency failed /
+      attempt failed / attempts exhausted / retry exhausted / timeout / inactivity）单独推出。
+      判定者为 Orchestrator。（P-x 定义见 §7 D-C7B-12）
+I-16  派生 readiness / diagnostic 信息（例如 Task 是否可运行、哪些依赖阻塞它、
+      确定性评估是否确立"永久不可能"）【不得】构成第二套 Task lifecycle、
+      不得具有独立 terminal transition、不得绕过 TaskStatus、不得成为第二个 lifecycle authority。
+      （本条约束的是【语义类别】，不规定任何具体方法名 / 字段名 / API。）
 ```
 
 ---
@@ -343,17 +405,16 @@ D-C7B-4  ACCEPT
          Allowed: start / resume execution · inspect execution state · submit legal human input.
          Forbidden: bypassing Human Gate to auto-confirm Target / Candidate / Methodology revision.
 
-D-C7B-5  MODIFY（rev3 澄清）
+D-C7B-5  MODIFY（rev4 收窄为行为陈述 + 引用）
          Failed Task blocks dependent Tasks. No dependency skipping.
          `non-runnable` is NOT a TaskStatus — it is a derived scheduling condition
-         (readiness predicate): the dependent Task keeps an existing NON-TERMINAL status and
-         MUST NOT be enqueued. No new `blocked` / `skipped` / `dependency_failed` state.
+         (readiness predicate): the dependent Task keeps an existing NON-TERMINAL status
+         UNTIL the Orchestrator establishes permanent impossibility, and MUST NOT be enqueued.
+         No new `blocked` / `skipped` / `dependency_failed` state.
          Round/Run closure remains with their authoritative owners
          (a Task failure is NOT mechanically a Round.rejected).
-         ★ OPEN: the final legal closure of a dependent Task after a PERMANENT dependency failure
-           is unresolved and requires prior evidence of the existing TaskStatus / cancellation
-           semantics (see §5.1 L-5).
 
+         → 调度器不得启动 / 注册未就绪 Task；判定与收口规则见 D-C7B-12（本处不重复实质内容）。
 D-C7B-6  ACCEPT
          Task retry semantics are distinct from C6 RMA retry.
          C6 RMA v1 remains maxAttempts = 1.
@@ -386,6 +447,48 @@ D-C7B-11 ACCEPT
          No new TaskType. Existing 11 types are sufficient; v1 activates only the required subset.
 ```
 
+D-C7B-12 L-5b closure target adjudicated（rev4 新增 —— 本条为 closure 语义的唯一权威记录）
+         target = `failed`（Task lifecycle terminal state: "Task has terminated without successful
+         completion."）；执行者 = Orchestrator。L-5a = scheduler readiness（PARTIALLY RESOLVED，
+         见 §5.1 L-3）；L-5b = lifecycle closure（RESOLVED，见 §5.1 L-5 / L-6）。
+
+         ★ permanence 判定与恢复（P-1 / P-2 / P-3 的唯一定义处；L-6 / §6 / I-15 均引用本条）：
+           （本条同时是 V6「确定性 + 恢复」的唯一权威表述）
+           P-1  dependency terminal —— 所有阻断该 Task 的相关 dependency 均已进入不可继续改变的终态事实
+           P-2  no legal recovery path —— 不存在当前契约允许的合法恢复路径（resume / 新 attempt /
+                人工补输入等）
+           P-3  deterministic DAG evaluation —— Orchestrator 对 DAG 做确定性闭包评估，
+                证明该 Task 不存在任何合法执行路径
+           ⇒ permanent dependency impossibility 当且仅当 P-1 AND P-2 AND P-3 同时成立。
+           ⇒ 确定性：P-1/P-2/P-3 是 DAG 结构与已持久化 Task 执行事实的【纯函数】；相同输入必得
+              相同判定；不依赖挂钟、重试预算余量或任何运行时可变状态。
+
+         ★ closure 执行方式（V2 —— 代码必然，非风格选择）：
+           由 Orchestrator 【直接执行 Task 状态写（`failed`）】，明确作为 §5.2 O-5 的生命周期转换，
+           【不经】TaskEngine.fail()：
+             `TaskEngine.fail()` 内部取 currentAttempt；无 activeAttemptId 即 throw
+             （runtime/task-engine.ts:135-140）；activeAttemptId 的唯一赋值点是 start()（:71）
+             ⇒ 从未 start 的 Task 机械上无法经 fail() 收口。
+           closure 【不产生 TaskAttempt】（从未启动的 Task 合法拥有 0 个 attempt；收口不得伪造）。
+
+         ★ 为何选 `failed` 而非 `cancelled`：
+           ① provenance 强度：`failed` = enum + terminal 集合 + 【真实 writer】+ 既有终态声明
+              （`TASK_TERMINAL_STATUSES`，domain/task.ts:38-42；历史来源 docs/phase0/04-research-kernel-design.md:67）
+              + Orchestrator 收口权（L-2 / O-5）⇒ 证据链完整；
+           ② 契约负担：采用 `cancelled` 须【首次】为其定义 trigger 语义，且同名 `NextAction.cancelled`
+              具备【可逆】语义（cancelled → open），与本裁定的"不可撤销"相悖。
+           ③ 折叠通道（措辞已按 V3 修正）：`fail()` 第三参即 TaskAttemptStatus
+              （runtime/task-engine.ts:113），`"aborted"` 为该类型合法成员
+              （domain/task-attempt.ts:9），且 L119 无条件 `setStatus(task, "failed")`
+              ⇒ 【签名保证】attempt 中止会被折叠为 Task `failed`；
+              ★ 但全仓【当前无】`fail(..., "aborted")` 调用先例 ⇒ 该折叠是"签名保证的通道"，
+                而非"已发生的既有行为"。
+           ④ 不新增状态：I-5 禁止新增状态 / 状态机 ⇒ 不得引入 blocked / skipped / dependency_failed。
+
+         ★ 两类进入原因（仅【语义分类】，不新增 failureReason 字段 / 不涉 schema）：
+           · execution_failure        —— 经 TaskEngine.fail()；存在 TaskAttempt
+           · dependency_impossibility —— Orchestrator lifecycle closure；不创建 TaskAttempt；
+                                        irreversible（不可撤销；新的恢复机会不得 resurrect 旧 Task）
 ### §7.1 原问题清单（保留原文，已由上方裁定取代）
 
 ```text
@@ -409,7 +512,9 @@ D-C7B-11 既有 11 种 TaskType 是否足够，还是 v1 只用子集（不新�
 ❌ retry 实现               ❌ Execution Engine redesign
 ❌ C6 RMA modification      ❌ Experience domain
 ❌ 自动选 ResearchTarget     ❌ 自动 Human Gate
-❌ 依赖永久失败后的后继 Task 收口语义（待既有 TaskStatus / cancellation 语义取证，见 §5.1 L-5）
+❌ Round lifecycle 设计（Round 终态声明缺口 = 独立契约问题，另行 Round Lifecycle Contract Audit）
+❌ Run lifecycle 交互设计（Run 状态独立于 Round/Task；不随本次 closure 裁定一并设计）
+❌ closure audit carrier / persistence carrier（auditability REQUIRED，carrier DEFERRED —— 需显式授权）
 ```
 
 ## §8 明确不做（防膨胀）
@@ -434,4 +539,4 @@ D-C7B-11 既有 11 种 TaskType 是否足够，还是 v1 只用子集（不新�
   4. Final Lock 之后，才可能有实现授权
 ```
 
-**End of rev3（C7-B · Research Execution Wiring — Implementation Contract · 问题空间与边界 + 语义契约 · DESIGN ONLY · NOT AUTHORIZED · NOT IMPLEMENTED。基线 `af42985`。本文件不含 schema、不含实现、不含持久化载体选择。）**
+**End of rev4（C7-B · Research Execution Wiring — Implementation Contract · 问题空间与边界 + 语义契约 + L-5b closure 裁定 · DESIGN ONLY · NOT AUTHORIZED · NOT IMPLEMENTED。基线 `b291a5c`。本文件不含 schema、不含实现、不含持久化载体选择。）**
