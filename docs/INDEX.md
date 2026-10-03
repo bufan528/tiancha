@@ -15,6 +15,7 @@
 | [`architecture-review/07-domain-model-design.md`](./architecture-review/07-domain-model-design.md) | **领域模型**：10 限界上下文、聚合与不变量（I1–I16）、identity、生命周期、**§3.8a 评分口径（12→7 两层映射）** |
 | [`architecture-review/08-code-design.md`](./architecture-review/08-code-design.md) | **代码设计**：Phase A 详细设计 + S1–S7 小步拆分、表 / 接口 / 工具 |
 | [`phaseB/implementation-contract.md`](./phaseB/implementation-contract.md) | **Phase B v1 实现契约（B1–B5 已全部实现并发布，见其 §12）**：`ResearchNeed / ChainTemplate / ResearchPosition / ResearchTarget / QuestionTargetFit / DiligencePreparation` 的字段 · identity · 不变量 · 写入边界 · T-B1–T-B12 |
+| [`phaseC/round-lifecycle-contract.md`](./phaseC/round-lifecycle-contract.md) | **Round 生命周期契约（rev1；语义已裁定、尚未实现）**：Round terminal 集合（`completed`/`rejected`）· `planned` v1 unreachable · `running → review`（全部 Task terminal）· `review → completed/rejected`（**Orchestrator 为唯一 authority**）· `rejected` no-reopen · `completed ⇒ all Tasks terminal` · `Task.failed ≠ 机械 rejected`。**scope 限定**：仅在 Round 语义范围内优先；不覆盖 Task/Execution wiring（[`phaseC/c7b-execution-wiring-contract.md`](./phaseC/c7b-execution-wiring-contract.md)）与 Phase C 业务语义（[`phaseC/implementation-contract.md`](./phaseC/implementation-contract.md)）；不定义 Run lifecycle · persistence · event carrier · Runtime inheritance |
 
 ## 🕘 历史（设计演进记录；部分内容已被 06/07/08 取代）
 
