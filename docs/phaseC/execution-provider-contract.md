@@ -1,9 +1,9 @@
 # AF-1 · Execution Provider Contract
 
-> **Status:** rev1 — DESIGN ONLY · **FINAL LOCK CANDIDATE**（待 Human Contract Review）
-> **Scope:** docs-only。本契约不含任何实现；未授权 production code / port implementation / TaskEngine 修改 / adapter 修改 / `stepRound()` 修改 / AF-4 caller / timeout 实现 / persistence / tests。
+> **Status:** rev2 — DESIGN ONLY · **O-AF1-1 ADJUDICATED**（rev2 仅收口 Q-EP9-1…Q-EP9-4 的最小接口语义；rev1 的 EP-1…EP-15 与 §1–§17 语义**逐字未改**）
+> **Scope:** docs-only。本契约不含任何实现；未授权 production code / port implementation / TaskEngine 修改 / adapter 修改 / `stepRound()` 修改 / AF-4 caller / timeout 实现 / persistence / tests。**rev2 亦未授权**：任何 TypeScript 改动 / Provider 实现 / ExecutionOutcome 代码类型 / AF-4 / Artifactization / commit / push。
 > **上游依据:** `docs/phaseC/round-execution-driver-contract.md`（R2 · FROZEN）· `docs/phaseC/round-lifecycle-contract.md`（rev1 · FROZEN）· `docs/phaseC/c7b-execution-wiring-contract.md`（rev4 · FROZEN）
-> **证据基础:** R2 Post-Publish Architecture Audit（AF-1/AF-4 findings）+ AF-1-B Preflight（P1–P4）
+> **证据基础:** R2 Post-Publish Architecture Audit（AF-1/AF-4 findings）+ AF-1-B Preflight（P1–P4）+ O-AF1-1 Preflight（既有载体取证）
 
 ---
 
@@ -13,9 +13,11 @@
 AF-1  Execution Provider Wiring Gap     🟢 ACCEPTED（原 IG-2，已升级定性）
    Preflight                            CLOSED（P1–P4）
    Q-EP-1 … Q-EP-8                      CLOSED
-本契约                                  📄 DOCS-ONLY · 待 Human Contract Review · 未 commit / 未 push
-AF-2 + AF-3                             🟡 OPEN（TaskEngine Execution Failure Boundary，独立立项）
-AF-4                                    🟡 HOLD（execution coordinator / caller，本契约显式保留）
+   O-AF1-1 Adjudication (rev2)          CLOSED（Q-EP9-1…Q-EP9-4 → §18）
+本契约                                  📄 rev2 · DOCS-ONLY · 待 Human Contract Review · 未 commit / 未 push
+AF-2 + AF-3                             🔒 FROZEN · 🟢 PUBLISHED（eef63ac）
+AF-4                                    🟡 HOLD（execution coordinator / caller，本契约显式保留；其 Contract
+                                        依赖的 O-AF1-1 最小 shape 已于 rev2 裁定）
 R2 / R2 Contract                        🔒 FROZEN · 🟢 PUBLISHED（275b84d）
 G2-b · G2-e · C7-C · Run lifecycle      🔴 HOLD
 Concurrency                             ⛔ OUT / FUTURE
@@ -455,10 +457,11 @@ E-7  端口现状（packages/research/src/ports/agent-session-factory.port.ts:46
 
 ```text
 O-AF1-1  ExecutionProviderPort 的具体 API shape（方法签名 / 参数 / 返回载体 / 是否使用
-         ExecutionOutcome 联合类型）                                      → 后续设计项
+         ExecutionOutcome 联合类型）                            🟢 CLOSED（rev2 → §18，Q-EP9-1/2/3/4）
 O-AF1-2  Provider 持有粒度（session 单独 / session+services）               → 实现细节（§4）
 O-AF1-3  execution timeout 的具体数值来源（配置项 / 端口参数 / 环境）        → 后续设计项
-O-AF1-4  ExecutionOutcome 的 output 承载形态（文本 / messages 原件 / 引用）  → 后续设计项
+O-AF1-4  ExecutionOutcome 的 output 承载形态（文本 / messages 原件 / 引用）
+                                                                🟢 CLOSED（rev2 → §18，ExecutionOutput）
 O-AF1-5  「谁 await provider.execute()」+「谁收口 complete()/fail()」        → AF-4（HOLD）
 O-AF1-6  preflight throw 之后 session 是否仍需 dispose 的运行时验证          → 需运行时取证（非只读可得）
 O-AF1-7  concrete session 清理的真实语义（abort → dispose 还是 dispose only）→ 与 AF-2/AF-3 共同裁定
@@ -483,11 +486,20 @@ Q-EP-7   🟢 CLOSED   execution timeout 归 Provider；不新增 TaskEngine sch
 Q-EP-8   🟢 CLOSED   Provider 不直接调用 TaskEngine.complete()/fail()（PROHIBITED）
 ```
 
-**本轮未裁决 / 显式保留：**
+**rev2 追加（O-AF1-1 收口 —— 详见 §18）：**
 
 ```text
-AF-2 + AF-3   TaskEngine Execution Failure Boundary（含 start 部分失败、收口清理失败）→ 独立立项，OPEN
-AF-4          execution coordinator / stepRound caller → HOLD
+Q-EP9-1  🟢 CLOSED   session 建立者 = B（复用 TaskEngine.start() 已建立的 session）
+Q-EP9-2  🟢 CLOSED   失败统一为 ExecutionOutcome.failed（+ ExecutionError.kind 作 provider 侧诊断分类）
+Q-EP9-3  🟢 CLOSED   ExecutionHandle 只允许 sessionId
+Q-EP9-4  🟢 CLOSED   ExecutionRequest 接受 ResearchContext
+```
+
+**仍显式保留：**
+
+```text
+AF-2 + AF-3   TaskEngine Execution Failure Boundary → 🔒 FROZEN · 🟢 PUBLISHED（eef63ac）
+AF-4          execution coordinator / stepRound caller → HOLD（其依赖的最小 shape 已由 §18 裁定）
 ```
 
 ---
@@ -502,3 +514,227 @@ AF-4          execution coordinator / stepRound caller → HOLD
 ✅ 本契约未产生 Claim / Fact / Knowledge / Candidate / 0–100 分
 ✅ 本契约未引入任何 Pi 类型进入 research 层的定义（EP-15）
 ```
+
+---
+
+## §18 rev2 · O-AF1-1 Adjudication — ExecutionProviderPort / ExecutionOutcome 最小语义 shape
+
+> **本节范围：** 只解决 `execute(...)` 与 `ExecutionOutcome` 的最小 shape。
+> **明确不解决：** Artifactization · `TaskEngine.complete()/fail()` 的调用责任 · AF-4 coordinator 形态 · timeout 实现 · cleanup 实现 · retry · recovery · concurrency。
+> rev1 的 EP-1…EP-15 与 §1–§17 语义**逐字未改**。
+
+### §18.1 裁定汇总（Q-EP9-1 … Q-EP9-4）
+
+| 问题 | 裁定 |
+| --- | --- |
+| **Q-EP9-1** | **B** —— 复用 `TaskEngine.start(taskId)` 已建立的 session（**不**新建第二个 session） |
+| **Q-EP9-2** | 失败**统一**为 `ExecutionOutcome.failed`；`ExecutionError.kind` 只作 provider 侧诊断分类 |
+| **Q-EP9-3** | `ExecutionHandle` **只允许** `sessionId` |
+| **Q-EP9-4** | `ExecutionRequest` **接受** `ResearchContext` |
+
+**Q-EP9-1 = B 的实现边界（同时冻结）：**
+
+```text
+选 B ≠ 允许 Provider 直接依赖 ChildSession 的具体能力。
+ExecutionHandle 是 AF-1 的 research-neutral opaque handle；
+concrete Pi session 及其 sessionId → concrete session registry
+仍归 composition root / provider implementation 所有。
+⇒ 因此【不得】写成 execute(session: ChildSession, ...)
+   （否则 Provider 会开始依赖 research-facing lifecycle abstraction，并被逐步塞入
+    prompt / abort / subscribe，最终把 Pi execution API 泄漏进 research）。
+```
+
+**Q-EP9-2 = 统一为单一出口（冻结）：**
+
+```text
+不在 ExecutionOutcome 顶层增加 timeout / aborted / preflight_failed / provider_failed ...
+—— 这些不是同一层面的 lifecycle state。
+⇒ Provider 保持单一语义出口：
+     provider.execute(...)
+        ├── success            → succeeded
+        └── execution failure  → failed
+   而不是把 Provider 逐渐变成第二套 lifecycle engine。
+```
+
+**Q-EP9-4 = 接受 ResearchContext（冻结）：**
+
+```text
+ResearchContext 已是 research-neutral 上下文载体，且明确不是 Pi AgentMessage / entry。
+⇒ 不重新拆出 resourceLoaderOptions / systemPrompt / scope / objective 再由 AF-4 造第二套
+   execution context（不重复造轮子 / 不新增第二套上下文模型）。
+
+⚠️ 但它也不能成为领域写入口：
+     ResearchContext → provider execution input                     ✅
+     ResearchContext → Claim / Fact / Knowledge / Candidate          ❌
+   Provider 能看到 context 【不等于】Provider 可进行研究知识写回。
+```
+
+### §18.2 最小语义 shape（冻结）
+
+```ts
+interface ExecutionProviderPort {
+    execute(
+        handle: ExecutionHandle,
+        request: ExecutionRequest
+    ): Promise<ExecutionOutcome>;
+}
+
+interface ExecutionHandle {
+    sessionId: string;
+}
+
+interface ExecutionRequest {
+    taskId: string;
+    runId: string;
+    roundId?: string;
+    model: string;
+    thinkingLevel: string;
+    context?: ResearchContext;
+}
+
+type ExecutionOutcome =
+    | {
+        status: "succeeded";
+        output: ExecutionOutput;
+      }
+    | {
+        status: "failed";
+        error: ExecutionError;
+      };
+
+interface ExecutionOutput {
+    text?: string;
+    messages?: unknown[];
+    raw?: unknown;
+}
+
+interface ExecutionError {
+    message: string;
+    kind?: string;
+}
+```
+
+> **注：** 上表为**语义 shape**，**不是**实现授权；rev2 未创建任何 TypeScript。
+
+### §18.3 `ExecutionHandle` 的构成约束（冻结）
+
+```text
+ExecutionHandle = identity，而不是 capability object。
+
+✅ 只允许：sessionId
+❌ 当前不得加入：taskId · runId · roundId · prompt() · abort() · dispose() ·
+                agent · services · messages
+
+理由：
+ · taskId / runId / roundId 已属 ExecutionRequest / Task domain context；
+ · prompt / abort / AgentSession / AgentSessionServices 属 concrete
+   provider / composition-root implementation。
+```
+
+### §18.4 `sessionId → concrete session` registry 的四条禁令（冻结）
+
+```text
+Registry 允许存在（composition root / provider-owned），但【不得进入 research contract】：
+
+❌ 不允许根据 `child-${taskId}` 这种字符串约定反推 session
+❌ 不允许 research 层自己维护 Pi session registry
+❌ 不允许把 registry 暴露为 Research port
+❌ 不允许通过 ExecutionHandle 暴露 concrete session
+
+⇒ Registry 是 implementation detail。
+⇒ 并保持 AF-1 原有冻结：concrete Pi AgentSession is composition-root/provider owned.
+```
+
+### §18.5 类型泄漏与语义纪律（冻结）
+
+```text
+① `unknown[]` / `unknown` 的语义 = opaque provider output，
+   【不是】允许 Pi 类型偷偷穿透：
+     ExecutionOutput.messages 【不得】声明成 AgentMessage[]；
+     亦【不得】通过类型别名间接泄漏 Pi 类型。
+
+② `raw?: unknown` 可保留为最小 shape，但语义冻结为：
+     "provider-owned opaque execution result;
+      its persistence/materialization is outside O-AF1-1."
+   ⇒ 不在 O-AF1-1 里暗示 raw → ArtifactStore（那是 R-EC-6 / AF-4 artifactization）。
+
+③ ExecutionError.kind 不是 TaskAttempt.status，也不是 Task.status，
+   更不是新的 lifecycle state machine。
+     ExecutionOutcome.failed + error.kind = "timeout"
+     ⇏ TaskAttempt = aborted
+     ⇏ Task = cancelled
+     ⇏ TaskAttempt = failed
+   ⇒ Execution failure classification ≠ Task lifecycle classification（保持分离）。
+```
+
+### §18.6 四条护栏（rev2 冻结）
+
+```text
+1. Provider 不建立第二个 session
+2. ExecutionHandle 不暴露 concrete Pi capability
+3. ExecutionOutcome 不成为 Task/Attempt lifecycle
+4. artifactization 不属于 O-AF1-1
+```
+
+### §18.7 四层关系（rev2 定格）
+
+```text
+┌───────────────────────────────────────────┐
+│ R2 Round Execution Driver                 │
+│  readiness → TaskEngine.start()           │
+│  ≤ 1 dispatch / invocation                │
+└─────────────────────┬─────────────────────┘
+                      ▼
+┌───────────────────────────────────────────┐
+│ AF-2 / AF-3 TaskEngine                    │
+│  Task lifecycle · Attempt lifecycle       │
+│  start failure boundary                   │
+│  finalization boundary                    │
+└─────────────────────┬─────────────────────┘
+                      │ ExecutionHandle
+                      ▼
+┌───────────────────────────────────────────┐
+│ AF-1 Execution Provider                   │
+│  execute(handle, request)                 │
+│      → ExecutionOutcome (succeeded/failed)│
+└─────────────────────┬─────────────────────┘
+                      ▼
+┌───────────────────────────────────────────┐
+│ AF-4 Execution Coordinator                │
+│  consume outcome · artifactization        │
+│  complete / fail · execution coordination │
+└───────────────────────────────────────────┘
+```
+
+```text
+AF-4 ≠ scheduler
+AF-4 ≠ TaskEngine
+AF-4 ≠ Provider
+AF-4 ≠ Round lifecycle
+```
+
+### §18.8 O-AF1-1 关闭声明
+
+```text
+O-AF1-1  SEMANTIC SHAPE ADJUDICATED（Q-EP9-1 … Q-EP9-4 CLOSED）
+⇒ AF-4 Contract 的前置依赖已解除；但在 AF-1 rev2 Contract Review 通过前【不】进入 AF-4 Contract。
+⇒ 仍未关闭：O-AF1-2（持有粒度 · 实现细节）· O-AF1-3（timeout 数值来源）·
+             O-AF1-5（→ AF-4）· O-AF1-6（需运行时取证）· O-AF1-7（→ 与 AF-2/3 共同裁定）
+```
+
+---
+
+## §19 rev2 OUT 复核清单
+
+```text
+✅ rev2 未改任何 TypeScript（未创建 Provider 实现 / 未创建 ExecutionOutcome 代码类型）
+✅ rev2 未写 AF-4 / 未解决 Artifactization / 未修改 TaskEngine
+✅ rev2 未修改 rev1 的 EP-1…EP-15 与 §1–§17 语义（逐字未改）
+✅ rev2 未新增 Task/Round/Run lifecycle；未新增 scheduler / retry / recovery / concurrency
+✅ rev2 未产生 Claim / Fact / Knowledge / Candidate / 0–100 分
+✅ 未 commit · 未 push
+```
+
+---
+
+**End of contract（rev2）**
