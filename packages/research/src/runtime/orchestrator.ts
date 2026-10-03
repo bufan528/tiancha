@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { isTaskTerminal } from "../domain/index.js";
 import type {
   ResearchRun,
   ResearchRound,
@@ -80,15 +81,84 @@ export class Orchestrator {
     return round;
   }
 
+  /**
+   * Pure terminal-fact check: does every task belonging to this round sit in a Task
+   * terminal state? Reads the TaskEngine read-only surface only — no side effects.
+   *
+   * Membership is taken from the round's own `taskIds` (the DAG topo order), NOT from
+   * `task.roundId`: the latter is filled in by the caller when constructing tasks, and the
+   * existing call sites pass a placeholder value, so it is not authoritative. A task that
+   * is not registered in the engine (stage ① "do not enqueue a not-ready task", C7-B rev4
+   * §5.1 L-3) therefore counts as NOT terminal and blocks settlement.
+   *
+   * NOTE (round-lifecycle-contract rev1 §4): an empty task set satisfies `every`, so a
+   * round with `taskIds = []` counts as settled. This slice deliberately does NOT
+   * introduce an "a round must have at least one task" rule.
+   */
+  allRoundTasksTerminal(roundId: string): boolean {
+    const round = this.mustGetRound(roundId);
+    const byId = new Map(this.engine.list().map((task) => [task.taskId, task]));
+    return round.taskIds.every((taskId) => {
+      const task = byId.get(taskId);
+      return task !== undefined && isTaskTerminal(task.status);
+    });
+  }
+
+  /**
+   * Orchestrator lifecycle operation (NOT a pure predicate — it writes `round.status`):
+   *   running --(all round tasks terminal)--> review
+   *
+   * Only valid from `running`; any other status is returned unchanged, so a round is
+   * never settled twice. Creates no TaskAttempt, mutates no task, and does not touch
+   * TaskEngine lifecycle.
+   */
+  settleRound(roundId: string): ResearchRound {
+    const round = this.mustGetRound(roundId);
+    if (round.status !== "running") return round;
+    if (!this.allRoundTasksTerminal(roundId)) return round;
+    return this.setRoundStatus(round, "review");
+  }
+
+  /**
+   * Round lifecycle closure. The only legal transitions are:
+   *   review -> completed | rejected
+   *
+   * Everything else throws: `running -> completed|rejected`, `review -> review`, and any
+   * transition out of a terminal round (terminal is irreversible).
+   *
+   * `completed` additionally requires every round task to be terminal — a state
+   * invariant, not merely a caller assumption.
+   *
+   * `rejected` never reopens a task: this method never touches task state.
+   */
   finishRound(roundId: string, status: ResearchRoundStatus, rejectionReason?: string): ResearchRound {
     const round = this.mustGetRound(roundId);
+    if (round.status !== "review") {
+      throw new Error(
+        `cannot finish round ${roundId} from status "${round.status}" (only "review" may close)`,
+      );
+    }
+    if (status !== "completed" && status !== "rejected") {
+      throw new Error(
+        `cannot finish round ${roundId} as "${status}" (only "completed" | "rejected")`,
+      );
+    }
+    if (status === "completed" && !this.allRoundTasksTerminal(roundId)) {
+      throw new Error(`cannot complete round ${roundId}: not every round task is terminal`);
+    }
     const updated: ResearchRound = {
       ...round,
       status,
-      rejectionReason,
+      rejectionReason: status === "rejected" ? rejectionReason : undefined,
       updatedAt: new Date().toISOString(),
     };
     this.rounds.set(roundId, updated);
+    return updated;
+  }
+
+  private setRoundStatus(round: ResearchRound, status: ResearchRoundStatus): ResearchRound {
+    const updated: ResearchRound = { ...round, status, updatedAt: new Date().toISOString() };
+    this.rounds.set(round.roundId, updated);
     return updated;
   }
 
