@@ -16,6 +16,23 @@ import { buildTaskGraph, validateDAG } from "../domain/task-graph.js";
 import type { TaskEngine } from "./task-engine.js";
 import type { ResearchEventAdapter } from "./research-event-adapter.js";
 
+/**
+ * Result of one Round execution step (see
+ * `docs/phaseC/round-execution-driver-contract.md` rev1 §7).
+ *
+ * - `dispatched`  — a ready Task was handed to the existing `TaskEngine.start()`.
+ *                   It does NOT mean the Task completed: **R2 guarantees dispatch semantics only**;
+ *                   execution-provider behaviour and task-outcome production are outside this slice.
+ * - `settled`     — every Round task was terminal, so the existing `settleRound()` ran
+ *                   (Round running -> review). It does NOT mean the Round "finished".
+ * - `no_progress` — no ready Task and not all tasks terminal; this invocation stops.
+ *                   It NEVER implies waiting / failed / blocked / cancelled (D-RED-4).
+ */
+export type RoundStepResult =
+  | { kind: "dispatched"; taskId: string }
+  | { kind: "settled"; roundId: string }
+  | { kind: "no_progress" };
+
 export class Orchestrator {
   private readonly runs = new Map<string, ResearchRun>();
   private readonly rounds = new Map<string, ResearchRound>();
@@ -154,6 +171,57 @@ export class Orchestrator {
     };
     this.rounds.set(roundId, updated);
     return updated;
+  }
+
+  /**
+   * Internal, conservative readiness test (contract §4). Instantaneous facts only — no side
+   * effects, no new state, no persistence.
+   *
+   *   ready(task) ⇔ task.status === "queued"
+   *                 ∧ ∀ dep ∈ task.dependencies : dep.status === "completed"
+   *
+   * Anything not provably ready is not ready. A failed / cancelled dependency makes the task
+   * non-runnable *for now*: it is NOT a permanent-impossibility conclusion (R-4.8) and MUST NOT
+   * be turned into a terminal state. Round membership is checked by the caller via `round.taskIds`.
+   */
+  private isReady(task: ResearchTask, byId: Map<string, ResearchTask>): boolean {
+    if (task.status !== "queued") return false;
+    return task.dependencies.every((depId) => byId.get(depId)?.status === "completed");
+  }
+
+  /**
+   * One Round execution step — the Round Execution Driver, step-shaped (contract §7):
+   *
+   *   1. read current Round / Task / dependency facts
+   *   2. compute the currently ready Tasks (conservative, §4)
+   *   3. if one is ready: pick the FIRST in the existing `round.taskIds` order (R2-ORDER-1, §5)
+   *      and call the existing `TaskEngine.start(taskId)` ⇒ `{ kind: "dispatched" }`
+   *   4. otherwise: if `allRoundTasksTerminal(roundId)` ⇒ `settleRound(roundId)` ⇒
+   *      `{ kind: "settled" }`; else ⇒ `{ kind: "no_progress" }`
+   *
+   * Hard bounds: at most one dispatch per invocation and NO loop (D-RED-7); never waits for
+   * completion (outcomes are reported through the existing TaskEngine API and are observed by a
+   * SUBSEQUENT step); writes no Round status directly (D-RED-6); a `TaskEngine.start()` throw
+   * propagates to the caller and neither `complete()` nor `fail()` is called (Q-RED-2).
+   */
+  async stepRound(roundId: string): Promise<RoundStepResult> {
+    const round = this.mustGetRound(roundId);
+    const byId = new Map(this.engine.list().map((task) => [task.taskId, task]));
+
+    for (const taskId of round.taskIds) {
+      const task = byId.get(taskId);
+      // Membership comes from `round.taskIds`; an unregistered task is not provably ready (R-4.6).
+      if (task !== undefined && this.isReady(task, byId)) {
+        await this.engine.start(taskId);
+        return { kind: "dispatched", taskId };
+      }
+    }
+
+    if (this.allRoundTasksTerminal(roundId)) {
+      this.settleRound(roundId);
+      return { kind: "settled", roundId };
+    }
+    return { kind: "no_progress" };
   }
 
   private setRoundStatus(round: ResearchRound, status: ResearchRoundStatus): ResearchRound {
