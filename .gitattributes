@@ -1,0 +1,22 @@
+# 默认：自动识别文本文件，工作区统一使用 LF
+* text=auto eol=lf
+
+# Windows 脚本：cmd.exe 依赖 CRLF，避免批处理执行异常
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件：不做行尾转换，不生成文本 diff
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.node  binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.tar   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
