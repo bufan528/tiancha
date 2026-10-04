@@ -6,3 +6,4 @@ export * from "./tool-provider.port.js";
 export * from "./resource-loader-factory.port.js";
 export * from "./research-context-provider.port.js";
 export * from "./data-provider.port.js";
+export * from "./execution-provider.port.js";
