@@ -1,6 +1,7 @@
 # AF-4 · Execution Coordinator Implementation Contract
 
-> **Status:** rev1 — DOCS-ONLY · **AUTHORIZED TO DRAFT** · **NOT YET APPROVED**（待 Human Contract Review）
+> **Status:** rev2 — DOCS-ONLY · **AUTHORIZED TO DRAFT** · **NOT YET APPROVED**（待 Human Contract Review）
+> **rev2 说明（精确修订，不推翻 rev1）:** 落实 AF-4 Pre-Implementation Audit 的四项接缝裁定，仅改四处 —— §3（D-6 输入来源）· §4（入口与 `DispatchedExecutionContext`）· §8（E-3 settlement 语义）· §9（F-6 artifact 持久化失败收口）；并同步 §14 T-*、§15、§16、§17 的相关表述。**未修改 R2 / TaskEngine / 上游任何契约。**
 > **Scope:** docs-only。把已冻结的 AF-4 设计语义压缩成**可直接执行的工程合同**；**不重复** `execution-coordinator-contract.md`（693 行设计契约）。
 > **上游依据（严格继承，均不修改）:** `docs/phaseC/execution-coordinator-contract.md`（AF-4 Contract rev1 · APPROVED @1e796a5）· `docs/phaseC/execution-provider-contract.md`（AF-1 rev2 · FROZEN @c3fb4d6）· `docs/phaseC/task-engine-failure-boundary-contract.md`（AF-2+AF-3 · FROZEN @eef63ac）· `docs/phaseC/round-execution-driver-contract.md`（R2 · FROZEN @275b84d）· `docs/phaseC/round-lifecycle-contract.md`（FROZEN）· `docs/phaseC/c7b-execution-wiring-contract.md`（rev4 · FROZEN）
 > **本契约不授权实现。** 未授权：AF-4 production implementation · AF-2/AF-3 implementation · Run lifecycle implementation · Concurrency · Scheduler · G2-b · G2-e · C7-C · 任何代码 / 测试 / README / INDEX / HANDOFF / commit / push。
@@ -11,15 +12,35 @@
 
 ```text
 AF-4 Contract rev1                       ✅ APPROVED · 🟢 PUBLISHED · 🔒 FROZEN（1e796a5）
-AF-4 Implementation Contract（本文）     🟡 AUTHORIZED TO DRAFT · DOCS-ONLY · ❌ NOT YET APPROVED
+AF-4 Implementation Contract（本文）     🟡 rev2 · AUTHORIZED TO DRAFT · DOCS-ONLY · ❌ NOT YET APPROVED
+AF-4 Pre-Implementation Audit            ❌ FAIL / HOLD（P0-1 · P0-2 · P1-D/E/F/G）
 AF-4 Implementation                      ❌ NOT AUTHORIZED
+AF-1 Provider Implementation             🟡 应先独立立项（AF-4 不实现 Provider）
 AF-2 / AF-3 Implementation               ❌ NOT AUTHORIZED
 Run lifecycle implementation             ❌ NOT AUTHORIZED
+TaskEngine                               🔒 当前不修改
+R2                                       🔒 FROZEN（不修改）
 Concurrency · Scheduler                  ⛔ OUT
 G2-b · G2-e · C7-C                       🔴 HOLD
 ```
 
-**本轮唯一允许的动作：在 `docs/phaseC/` 下新建本契约文件。不碰代码、不 commit、不 push。**
+**rev2 固化的四项接缝裁定（Pre-Implementation Audit 结论）：**
+
+```text
+J-1  P0-1 + P1-G（session handoff / caller）：采用 (c) ——
+     「谁调用 TaskEngine.start()，谁拥有其返回值」；由 future integration caller 持有该返回值，
+     并向 AF-4 传递**窄化后的 execution context**。
+     ⛔ 不修改 R2（不扩 RoundStepResult）· 不修改 TaskEngine（不新增 execution-context API）
+     ⛔ AF-4 不重新 start / 不猜 sessionId / 不访问 TaskEngine private state
+J-2  P0-2（Provider 来源）：先独立完成 **AF-1 Provider implementation slice**，AF-4 再消费。
+     ⛔ `buildAgentSessionFactory` ≠ ExecutionProvider ⇒ 不得包装前者冒充 Provider
+J-3  P1-E（settlement）：AF-4 **自身**保证「对一个 execution attempt 至多一次 settlement 调用」；
+     **不宣称** TaskEngine 提供 exactly-once。⛔ 本轮不修改 TaskEngine。
+J-4  P1-F（artifact 持久化失败）：由 AF-4 调用 `fail()` 收口；
+     settlement 失败原因必须标记为 **artifact persistence failure**，**不是 Provider failure**。
+```
+
+**本轮唯一允许的动作：修订本契约文件（rev2）。不碰代码、不改 R2 / TaskEngine、不实现 Provider、不 commit、不 push。**
 
 ---
 
@@ -83,6 +104,9 @@ D-5  新增  packages/research/src/phase-c7-execution-coordinator.test.ts
           测试义务 T-*（§14）
 D-6  装配  src/cli/tiancha.ts（composition root）
           注入 provider 实现 + coordinator 装配（**不新增 CLI 子命令**，见 §15 O-IC-1）
+          ⇒ ★ rev2：本项**只装配既有依赖**。`future integration caller` 归属见 §4.1 A-2c；
+             **AF-4 不拥有 dispatch、不重新 start、不创建 registry**；
+             Provider implementation 的新增/修改**不属于 AF-4**（见 §0 J-2）
 ```
 
 ```text
@@ -102,10 +126,23 @@ ExecutionRequest → Coordinator
 ```
 
 ```text
-A-1  唯一合法输入 = 一个【已 dispatch】的 Task（成功经过 `TaskEngine.start()` 的返回）。
-A-2  Coordinator 的 entry 语义（单 Task，不循环）：
-         executeDispatchedTask(taskId: string): Promise<void>
-     ⇒ 只处理这一个 Task 的一次 coordination。
+A-1  唯一合法输入 = 一个【已 dispatch 的 Execution】（成功经过 `TaskEngine.start()`）。
+       来源 = 该次 `start()` 的返回值，由【持有返回值的那一方】投影为下列窄化结构。
+A-2a ★ rev2 · 窄化输入结构（AF-4 只消费这个，不消费完整 start() 返回对象）：
+         DispatchedExecutionContext {
+             taskId:    string
+             attemptId: string
+             sessionId: string
+         }
+     ⇒ 这是 AF-4 的全部输入事实；完整 `{ task, attempt, session }` 对象【不进入 AF-4】。
+A-2b ★ rev2 · entry 语义（单 Execution，不循环）：
+         executeDispatchedExecution(context: DispatchedExecutionContext): Promise<void>
+A-2c ★ rev2 · 来源责任（谁拥有 start() 返回值）：
+         TaskEngine.start() 的返回值 → 【future integration caller】持有
+                                     → 投影为 DispatchedExecutionContext
+                                     → AF-4
+     ⇒ 「谁调用 start()，谁拥有其返回值」；AF-4 【不】重新 start、
+       【不】猜 sessionId、【不】访问 TaskEngine private state、【不】拥有 dispatch。
 A-3  Coordinator 【不】接受 queued Task，【不】做 readiness / dependency evaluation /
      `stepRound` / enqueue / start（那些属 R2 + TaskEngine）。
 ```
@@ -126,11 +163,14 @@ interface ExecutionRequest {
 ### §4.3 关联 / 身份 / 参数（工程冻结）
 
 ```text
-A-4  task-attempt 关联：`attemptId` 取自【当前 active attempt】
-       （权威来源：`TaskEngine.start()` 的返回 `{ attempt }`；
+A-4  task-attempt 关联：`attemptId` 取自 A-2a 的 `DispatchedExecutionContext.attemptId`
+       （其上游权威来源 = `TaskEngine.start()` 返回的 `{ attempt }`；
         不得自行生成 attempt 身份 —— R-EC-9）
 A-5  provider reference：`ExecutionHandle = { sessionId: string }`
-       （取自 `TaskEngine.start()` 返回的 `{ session }` 的 `sessionId`）
+       （`sessionId` 取自 A-2a 的 `DispatchedExecutionContext.sessionId`；
+        其上游权威来源 = `TaskEngine.start()` 返回的 `{ session }`）
+       ⇒ concrete session 的解析归 composition root / provider 侧 registry（AF-1 rev2 §18.4），
+         **不属 AF-4、不由 AF-4 创建**
 A-6  invocation parameters：`model` / `thinkingLevel` 一律取自 A-4 的 attempt，
        **不得重新调用 `ModelRouter.resolve()`**（AC-3 / Gate E-1/E-2）
 A-7  correlation / identity：
@@ -138,6 +178,18 @@ A-7  correlation / identity：
        · artifact 关联键 = `{ taskId, attemptId, runId, roundId? }`
        · 不得引入第三套 identity 函数（C7-B I-3）
 A-8  artifact kind = `"execution"`（常量，不由调用方传入）
+A-9  ★ 事实来源唯一性（不得二次猜测）：除 A-2a 的三字段外，`ExecutionRequest` 其余字段的
+     来源【唯一】指定如下 ——
+       · runId / roundId?      ← `TaskEngine.get(taskId)` 返回的 `ResearchTask`（公开 API）
+       · model / thinkingLevel ← `TaskEngine.listAttempts(taskId)` 中与 A-2a.attemptId 匹配的
+                                  那一条 `TaskAttempt`
+                                  （其权威上游仍是 `TaskEngine.start()` 建立的 attempt）
+       · context?              ← 由 future integration caller / 上层提供（可选；缺省即不注入）
+     ⇒ 除上述来源外，**不得**以任何其他方式推导这些 execution facts：
+         ❌ 不得重新调用 `ModelRouter.resolve()`
+         ❌ 不得猜 `sessionId`（含从 `child-${taskId}` 字符串反推）
+         ❌ 不得访问 `TaskEngine` private state（`attempts` / `openSessions`）
+         ❌ 不得从 Task / 其他对象的其他字段推断这些事实
 ```
 
 ---
@@ -244,7 +296,9 @@ D-11 【禁止】用 report / dossier / score / claim / fact / evidence 承载�
   2. 构造 ExecutionRequest（§4.2 / §4.3）
   3. await provider.execute(handle, request)
   4. outcome.status === "succeeded" ⇒ 构造 execution artifact ⇒ await artifactStore.put(...)
-  5. TaskEngine.complete(taskId, [artifactRef])
+       · put 成功 ⇒ 得 `ArtifactRef` ⇒ TaskEngine.complete(taskId, [artifactRef])
+       · ★ rev2 · put 失败 ⇒ TaskEngine.fail(taskId, reason)
+           其中 reason 必须标记为 **artifact persistence failure**，**不是** Provider failure（见 §9 F-6 / J-4）
 
 失败路径：
   1. await provider.execute(handle, request)
@@ -254,9 +308,15 @@ D-11 【禁止】用 report / dossier / score / claim / fact / evidence 承载�
 ```text
 E-1  `TaskEngine.complete()` / `TaskEngine.fail()` 是**唯一** Task lifecycle settlement API（AC-10）。
 E-2  Coordinator 【不】直接写 `Task.status` / `TaskAttempt.status` / `Round.status` / `Run.status`。
-E-3  一次 Task 只能 settlement 一次：
-       · 由 TaskEngine 既有 terminal 守卫保证（终态不可转移）
-       · AF-4 **不得**新增第二套幂等/去重机制
+E-3  ★ rev2 · settlement 次数（两层语义，不得混为一谈）：
+       · AF-4【自身】保证：对【一个 execution attempt】至多发起一次 settlement 调用
+           （one execution ⇒ one complete() OR one fail()）
+       · AF-4【不宣称】TaskEngine 提供 exactly-once guarantee。
+           现行 TaskEngine 的 terminal 守卫只禁止「终态转到【另一个】状态」，
+           **不**提供幂等 / exactly-once（`completed → completed` 不会被拒绝）
+       · AF-4 **不得**新增第二套幂等 / 去重机制
+       · 若未来业务需要更强的 exactly-once / idempotency，
+           应另立 **TaskEngine failure-boundary 修订**，不在本契约内
 ```
 
 ### §8.2 Ownership
@@ -282,14 +342,21 @@ E-3  一次 Task 只能 settlement 一次：
 | F-3 | `invalid output`（provider 返回不可用输出） | `"failed"`（`error.kind="provider"`） | ❌ | ✅ `fail()` | Provider / AF-1 | ❌ NO |
 | F-4 | `transport failure`（链路失败） | `"failed"`（`error.kind="provider"`） | ❌ | ✅ `fail()` | Provider / AF-1 | ❌ NO |
 | F-5 | `execution failure`（preflight throw 等，AF-1 Q-EP-3） | `"failed"`（`error.kind="preflight"`） | ❌ | ✅ `fail()` | Provider / AF-1 | ❌ NO |
-| F-6 | `artifact failure`（`ArtifactStore.put()` 抛错） | —（outcome 已是 succeeded） | ❌（未落盘） | ❌（**不**调 `complete()`） | AF-4 / storage | ❌ NO |
+| F-6 | `artifact persistence failure`（`ArtifactStore.put()` 抛错） | ✅ provider 侧已是 `"succeeded"` | ❌（未落盘） | ✅ **`fail()`**（reason = artifact persistence failure） | AF-4 / storage（**不是 Provider**） | ❌ NO |
 | F-7 | `settlement failure`（`complete()` 抛错，如 terminal 守卫） | —（已是 succeeded） | ✅（已落盘） | ❌（调用失败） | TaskEngine（AF-2/3） | ❌ NO |
 
 ```text
 F-8   orphan 允许：F-7 的产物即 orphan execution artifact；
       处置 = 不回滚 / 不伪造 completed / 不重调 complete / 不删 artifact（AC-8/AC-9）。
-F-9  F-6 的语义：artifact 未落盘 ⇒ **不得**调用 `complete()`（因为没有 ArtifactRef 可传）。
-      ⇒ 此时不产生 settlement；Task 保持非终态（其后续处置属 AF-2/3 / 上层问题，不在本契约）。
+F-9  ★ rev2 · F-6 的语义（按 J-4 收紧）：artifact 未落盘 ⇒ **不得**调用 `complete()`
+      （没有 ArtifactRef 可传），改为调用 **`fail()`** 收口。
+      ⇒ 此时出现【Provider outcome = succeeded，Task settlement = failed】的分离，
+        **两者不得混成一个概念**：
+          · Provider outcome 仍属实（execution 本身成功）
+          · Task settlement 为 failed，reason 必须明确标记为
+            **artifact persistence failure**（**不是** provider failure、**不是** execution failure）
+      ⇒ 与 F-7 的区别：F-6 无 orphan（无 artifact 落盘），但通过 `fail()` 收口，
+        **不留"永久 running"**（修正 rev1 的悬置语义）
 F-10 【禁止】rollback / transaction / compensation / delete artifact / retry complete / 自动修复。
 F-11 【禁止】任何自动重试、重试队列、退避调度（本契约内）。
 ```
@@ -381,7 +448,10 @@ V-6  observable evidence：新测试文件 `packages/research/src/phase-c7-execu
 ```text
 T-A1  已 dispatch 前置：对未 dispatch / 终态 Task 调用 entry ⇒ 行为符合 §4.1（不越界、不吞错）
 T-A2  execution facts 来源：model / thinkingLevel 等于 attempt 的值（stub 记录 resolve 调用次数 = 0）
-T-A3  handle 来源：provider 收到的 handle.sessionId == start() 返回 session 的 sessionId
+T-A3  handle 来源：provider 收到的 handle.sessionId == DispatchedExecutionContext.sessionId
+T-A4  ★ rev2 · 输入契约：entry 只接受 `DispatchedExecutionContext`（taskId/attemptId/sessionId）；
+      不接受完整 `start()` 返回对象、不接受裸 `taskId` 字符串参数
+T-A5  ★ rev2 · 来源责任：coordinator 内【无】`TaskEngine.start()` 调用（stub 断言 start 调用计数 = 0）
 T-B1  一次 coordination 只调用 provider.execute 一次（stub 调用计数 = 1）
 T-B2  不访问 registry / 不做 discovery（stub 断言无对应调用面）
 T-C1  仅接受 status ∈ {"succeeded","failed"}；无第二套分类字段（类型层断言）
@@ -392,6 +462,7 @@ T-D3  artifact 的 taskId/attemptId/runId 等于真实执行事实
 T-E1  成功 ⇒ 调用 complete(taskId, [artifactRef]) 一次
 T-E2  失败 ⇒ 调用 fail(taskId, error.message) 一次
 T-E3  Coordinator 未直接写任何 status（无 setStatus / 无直接赋值）
+T-E4  ★ rev2 · at-most-one：对一次 execution，`complete()` 与 `fail()` 的调用总数 ≤ 1
 T-F1  put 抛错 ⇒ 不调用 complete（F-6）
 T-F2  complete 抛错 ⇒ 不回滚 artifact / 不重调 complete（F-7 / AC-8）
 T-G1  settlement 之后修改 stub attempt 的字段 ⇒ coordinator 结果不受影响（G 时序约束）
@@ -404,7 +475,9 @@ T-12  静态断言：§12 D-1…D-10 全部证否（可用源文本正则 + 符�
 ## §15 延期项（Explicitly Deferred）
 
 ```text
-O-IC-1  具体 caller adapter（CLI 子命令 / Runtime 方法 / future layer）——本契约只定义 entry 语义
+O-IC-1  ★ rev2 · future integration caller 的形态（CLI 子命令 / Runtime 方法 / future layer）——
+        它负责持有 `TaskEngine.start()` 的返回值并投影为 `DispatchedExecutionContext`；
+        本契约只定义入口语义（§4.1 A-2a / A-2c），**不实现该 caller**
 O-IC-2  ExecutionRequest.context 的构造者（谁提供 ResearchContext）
 O-IC-3  execution artifact 的 schemaVersion 取值
 O-IC-4  ExecutionProviderPort 的实现（Pi 侧 adapter / registry）—— 属 composition root
@@ -412,6 +485,7 @@ O-IC-5  orphan execution artifact 的清理 / 诊断 —— 独立 persistence/r
 O-IC-6  durable execution-error artifact（若未来需要）—— 独立 observability 议题
 O-IC-7  timeout 数值来源（AF-1 O-AF1-3）
 O-IC-8  AF-2/AF-3 implementation（start failure boundary / finalization）
+O-IC-9  ★ rev2 · AF-1 Provider implementation slice（J-2：须先独立立项）—— AF-4 只消费其成果
 ```
 
 ---
@@ -419,8 +493,10 @@ O-IC-8  AF-2/AF-3 implementation（start failure boundary / finalization）
 ## §16 风险与开放项（需另行裁定）
 
 ```text
-R-1  F-6 的后果（artifact 未落盘 ⇒ 无 settlement）会使 Task 停在非终态；
-     其后续处置需 AF-2/3 或上层裁定 —— 本契约不引入补偿机制。
+R-1  ★ rev2 · F-6 已由 J-4 收口：artifact 未落盘 ⇒ 调 `fail()`（reason = artifact persistence failure），
+     不再出现"永久 running"。仍然开放的观察点是：
+     【Provider outcome = succeeded 而 Task settlement = failed】这一分离如何在可观测层表达 ——
+     本契约沿用既有事件载体（§11 OBS-2），**不新增事件类型**；如需更强表达，属独立 observability 议题。
 R-2  `ResearchTask.outputs` 声明为 `string[]` 而注释写 "ArtifactRefs only"（既有宽泛），
      本契约沿用既有 `complete()` 行为，不做类型改造。
 R-3  `artifacts DB` 与 `TaskEngine` 内存状态的持久性边界不在本契约内（无跨库事务）。
@@ -441,6 +517,16 @@ R-3  `artifacts DB` 与 `TaskEngine` 内存状态的持久性边界不在本契�
 ✅ 未引入任何 Pi 类型进入 research 层的定义
 ```
 
+**rev2 追加（四项接缝裁定 J-1…J-4）：**
+
+```text
+✅ rev2 未修改 R2（未扩 RoundStepResult）· 未修改 TaskEngine（未新增 execution-context API）
+✅ rev2 未实现 Provider（J-2：先独立立项 AF-1 Provider implementation slice 后再消费）
+✅ rev2 未宣称 TaskEngine exactly-once（J-3：改为 AF-4 自身 at-most-one settlement 调用）
+✅ rev2 未引入事务 / 补偿 / 回滚（F-6 通过既有 `fail()` 收口，非新增机制）
+✅ rev2 未借四项接缝裁定扩大 AF-4 设计范围（仅精确修订 §3/§4/§8/§9 四处 + 配套表述）
+```
+
 ---
 
-**End of contract（rev1 · Implementation Contract）**
+**End of contract（rev2 · Implementation Contract）**
