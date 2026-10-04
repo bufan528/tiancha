@@ -90,16 +90,21 @@ S-8  验证 Gate 的工程化形式（H）
 **实现阶段（未来、另行授权）允许触碰的文件白名单**（本契约只登记，不修改）：
 
 ```text
-D-1  新增  packages/research/src/ports/execution-provider.port.ts
-          `ExecutionProviderPort` · `ExecutionHandle` · `ExecutionRequest` ·
-          `ExecutionOutcome` · `ExecutionOutput` · `ExecutionError`
-          （结构严格等于 AF-1 rev2 §18.2）
+D-1  ★ micro-amendment：既有依赖（existing dependency）· consume only
+          packages/research/src/ports/execution-provider.port.ts
+            `ExecutionProviderPort` · `ExecutionHandle` · `ExecutionRequest` ·
+            `ExecutionOutcome` · `ExecutionOutput` · `ExecutionError`
+            （结构严格等于 AF-1 rev2 §18.2）
+          · 该文件由 **AF-1 Provider Implementation Slice 创建并拥有**
+          · AF-4 仅 **import / consume**
+          · AF-4 **不得** create / recreate / redefine / duplicate / modify
+          · 本条目【保留在白名单内】，以保持交付面可审计（而非删除）
 D-2  新增  packages/research/src/application/execution-coordinator.ts
           `ExecutionCoordinator`：单 Task coordination entry + 成功/失败两条路径
 D-3  修改  packages/research/src/domain/artifact.ts
           `ArtifactKind` 增加 `"execution"` 单一值（不改既有 6 值）
 D-4  修改  packages/research/src/ports/index.ts
-          导出 D-1 的新端口
+          导出 D-1 所指向的既有 ExecutionProvider port
 D-5  新增  packages/research/src/phase-c7-execution-coordinator.test.ts
           测试义务 T-*（§14）
 D-6  装配  src/cli/tiancha.ts（composition root）
