@@ -25,6 +25,7 @@ import {
 // --- Research kernel imports ------------------------------------------------
 import {
   TianchaRuntime,
+  SessionRegistry,
   type AgentSessionFactoryPort,
   type ModelResolverPort,
   type EventBusPort,
@@ -32,6 +33,7 @@ import {
   type ChildSession,
   type MethodologyDimension,
 } from "@tiancha/research";
+import { PiSessionCapabilityAdapter } from "../agent/pi-session-capability-adapter.js";
 import {
   migratePiToTiancha,
   ReadOnlySessionManager,
@@ -98,7 +100,27 @@ async function resolveModel(): Promise<ModelResolverPort> {
   };
 }
 
-async function buildAgentSessionFactory(): Promise<AgentSessionFactoryPort> {
+/**
+ * AF-1C · Pi composition boundary 的 AgentSessionFactory。
+ *
+ * ★ AF-1C Implementation Contract（🔒 FROZEN · docs/phaseC/af1c-implementation-contract.md）:
+ *   · IC-6-1  Registry ownership = composition root（本 CLI 侧）；TaskEngine 不持有 Registry
+ *   · IC-7-1  seam = 优先级 1：composition root 直接持有同一个 SessionRegistry 实例，
+ *             并把【最小能力】交给 factory（这里以构造参数形式传入，不公开整个 registry）
+ *   · IC-6-2  register 的唯一【注册调用点】= create() 内、`return ChildSession` 之前
+ *             （同一栈帧内同时可见 sessionId 与 AgentSession ⇒ 结构上不可错配）
+ *   · IC-6-3  remove 绑定 ChildSession.close()（先关底层 session，再 remove）
+ *   · IC-5-1/5-2 Adapter 只做类型视图收窄（Pi AgentSession → ExecutionSessionCapability）
+ *
+ * ★ IC-6-2.1（必须逐字遵守）：register 调用点已裁定 ≠ register 已接入生产运行链。
+ *   本挂点只是把 capability 写入 registry；AF-1C Provider 尚未接入运行链，
+ *   没有任何消费者 lookup ⇒ 该写入不改变任何既有生产行为（G-04 生产化仍 DEFERRED）。
+ *
+ * ★ G-05 锁定：close() 内【沿用既有】底层 session 关闭语义（当前实现是静默 no-op，
+ *   因为 Pi AgentSession 只有同步 dispose() / async abort()，没有 close()）。
+ *   本轮不得因需要 remove 就把它升级成 dispose()/abort()。
+ */
+function buildAgentSessionFactory(registry: SessionRegistry): AgentSessionFactoryPort {
   const cwd = process.cwd();
   return {
     async create(opts: ChildSessionOptions): Promise<ChildSession> {
@@ -120,12 +142,20 @@ async function buildAgentSessionFactory(): Promise<AgentSessionFactoryPort> {
         noTools: "all",
         model: undefined,
       });
+
+      // ★ AF-1C IC-6-2：唯一【注册】调用点 —— 同一栈帧内配对 sessionId 与 capability。
+      const sessionId = `child-${opts.taskId}`;
+      registry.register(sessionId, new PiSessionCapabilityAdapter(result.session));
+
       const s = result.session as unknown as { close?: () => Promise<void> } | undefined;
       return {
-        sessionId: `child-${opts.taskId}`,
+        sessionId,
         taskId: opts.taskId,
         async close() {
+          // ★ G-05：沿用既有 close 语义（no-op），不升级为 dispose/abort。
           await s?.close?.();
+          // ★ AF-1C IC-6-3：唯一【生命周期】调用点 —— 先关底层 session，后移除映射。
+          registry.remove(sessionId);
         },
       };
     },
@@ -142,7 +172,10 @@ async function cmdResearchSmoke(): Promise<void> {
 
   const bus: EventBusPort = createEventBus() as unknown as EventBusPort;
   const modelResolver = await resolveModel();
-  const factory = await buildAgentSessionFactory();
+  // ★ AF-1C IC-7-1（优先级 1）：composition root 直接持有【同一个】SessionRegistry 实例，
+  //   并把最小能力交给 factory。该实例与将来交给 PiExecutionProvider 的必须是同一个（IC-7-1.1）。
+  const registry = new SessionRegistry();
+  const factory = buildAgentSessionFactory(registry);
 
   const runtime = new TianchaRuntime({
     cwd: process.cwd(),
