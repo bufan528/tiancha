@@ -168,7 +168,7 @@ IP-B-4  【务必区分】`OpenAiCompatibleModelAdapter implements ModelExtracti
 ```text
 IP-B-5  `execute(handle: ExecutionHandle, request: ExecutionRequest): Promise<ExecutionOutcome>`
           · 入参 handle  = { sessionId: string }（opaque 身份，非能力对象）
-          · 入参 request = { taskId, runId, roundId?, model, thinkingLevel, context? }
+          · 入参 request = { taskId, runId, roundId?, model, thinkingLevel, prompt, context? }
           · 返回 outcome = AF-1 rev2 §18.2 的联合类型（status: "succeeded" | "failed"）
 IP-B-6  一次 execute 对应一次执行；provider 不循环、不批量、不自建 scheduler
 IP-B-7  error semantics：provider 抛错 ⇒ 归入 execution failure（由 AF-1 rev2 定义）
@@ -531,6 +531,50 @@ R-4  ✅ **保持 DEFER（A-4 · §8）**：不修 CLI / 不修 R2；
 ✅ 本契约未产生 Claim / Fact / Knowledge / Candidate / 0–100 分
 ✅ 本契约未修改 README / INDEX / HANDOFF；未 commit；未 push
 ✅ 未引入任何 Pi 类型进入 research 层的定义
+```
+
+---
+
+## §18 Amendment 2 — ExecutionRequest `prompt` carrier synchronization
+
+```text
+Amendment: 2
+Status:    IMPLEMENTED / PENDING REVIEW（【不是】APPROVED / FROZEN —— 本契约仍为 NOT YET APPROVED）
+Subject:   ExecutionRequest prompt carrier synchronization
+Change:    §5.2 IP-B-5 的 `request` 字段级 inline 列表加入 `prompt`
+           （{ taskId, runId, roundId?, model, thinkingLevel, prompt, context? }）
+Reason:    synchronize AF-1 Implementation Contract with AF-1 rev2 Amendment 1（②）· AF-1A Port Amendment（①）
+Scope:     §5.2 IP-B-5 的 ExecutionRequest inline 字段列表 only
+```
+
+```text
+【身份声明（冻结）】
+  本 Amendment 2 是 `rev1 + Amendment 1` 的【后续同步修订】。
+  · 只同步 `ExecutionRequest.prompt`；
+  · 【不】创建新的 contract rev（不产生 rev2；不改写现有 Status / 状态表 / End of contract 行）；
+  · 【不】改变既有 Amendment 1 的其他语义。
+```
+
+```text
+【字段语义（沿用，不在本 Amendment 重新设计）】
+  `prompt` 是【上游执行调用方】提供的数据字段，随 `ExecutionRequest` 传递。
+  ⇒ Provider 【不】生成、不推断、不改写、不替换 prompt。
+  ⇒ 【不】引入任何 `ExecutionInput` / prompt resolver / prompt generator / prompt policy /
+     runtime abstraction 等新概念。
+```
+
+```text
+【既有关系（同步后继续成立）】
+  · §4 IP-A-2：「结构【逐字等于】AF-1 rev2 §18.2」—— 本 Amendment 同步后【继续成立】
+    （AF-1 rev2 §18.2 已于 ② 落地 `prompt: string`；本处 inline 列表与之保持一致）。
+  · §5.2 IP-B-5 的 `execute(handle, request)` 签名【未变】。
+```
+
+```text
+✅ 本 Amendment 只改 §5.2 IP-B-5 的 ExecutionRequest inline 字段列表（新增 1 项 `prompt`）。
+✅ 本 Amendment 未改 L3 Status / L23 状态表 / End of contract 行
+   （保持 `rev1 + Amendment 1` 与 NOT YET APPROVED）。
+✅ 本 Amendment 未改 `execute` 签名 / `ExecutionHandle` / `ResearchContext` / 其他 IP-A·IP-B 条款。
 ```
 
 ---

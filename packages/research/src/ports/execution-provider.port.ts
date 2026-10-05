@@ -26,7 +26,8 @@ export interface ExecutionHandle {
 }
 
 /**
- * AF-1 rev2 §18.2 — execution input（shape 冻结：字段名 / 类型 / 可选性逐字一致）。
+ * AF-1 rev2 §18.2 — execution input（shape 冻结（含 Amendment 1：+ prompt）：
+ * 字段名 / 类型 / 可选性逐字一致）。
  *
  * 来源规则（AF-4 Impl Contract A-9 · 事实来源唯一性）：本类型由图层的合法来源装配，
  * 不由本文件推导。
@@ -38,6 +39,7 @@ export interface ExecutionRequest {
   model: string;
   thinkingLevel: string;
   context?: ResearchContext;
+  prompt: string;
 }
 
 /**

@@ -589,6 +589,7 @@ interface ExecutionRequest {
     roundId?: string;
     model: string;
     thinkingLevel: string;
+    prompt: string;
     context?: ResearchContext;
 }
 
@@ -720,6 +721,61 @@ O-AF1-1  SEMANTIC SHAPE ADJUDICATED（Q-EP9-1 … Q-EP9-4 CLOSED）
 ⇒ AF-4 Contract 的前置依赖已解除；但在 AF-1 rev2 Contract Review 通过前【不】进入 AF-4 Contract。
 ⇒ 仍未关闭：O-AF1-2（持有粒度 · 实现细节）· O-AF1-3（timeout 数值来源）·
              O-AF1-5（→ AF-4）· O-AF1-6（需运行时取证）· O-AF1-7（→ 与 AF-2/3 共同裁定）
+```
+
+---
+
+### §18.9 AF-1 rev2 · Amendment 1（ExecutionRequest prompt carrier）
+
+```text
+AF-1 rev2 — Amendment 1
+```
+
+```text
+Amendment: 1
+Subject:   ExecutionRequest prompt carrier
+Change:    add required `prompt: string` to §18.2
+Reason:    synchronize AF-1 rev2 with AF-1A Port Amendment ①
+Scope:     §18.2 ExecutionRequest shape only
+```
+
+```text
+【字段语义（冻结）】
+  `ExecutionRequest.prompt` 是由【上游 execution caller】显式提供、随 `ExecutionRequest`
+  【传递】给 ExecutionProvider 的本次执行输入。
+  ⇒ ExecutionProvider 【不】负责生成、推断、改写或替换该 prompt。
+
+【既有禁用规则沿用（不在本 Amendment 重新设计，仅声明不得与之冲突）】
+  ❌ 不得从 `ResearchContext` 推导
+  ❌ 不得从 `taskId` / `runId` / `roundId` 推导
+  ❌ 不得用 `objective` 偷换
+  ❌ 不得以 `JSON.stringify(request)` 作为 prompt
+  ❌ 不得使用 Provider 内置固定业务文本
+  ❌ 不得由 Provider 自行发明业务 prompt
+  （上述六项已在 AF-1C P6 锁定；本 Amendment 只保证语义不与之冲突。）
+
+【§18.3 clarification】
+  §18.2 新增的 `prompt: string` 是【request 携带的输入字段】；
+  它【不】向 `ExecutionHandle` 增加 `prompt()` capability 或方法。
+  §18.3 关于 `ExecutionHandle.prompt()` 的原有禁止项【保持不变】。
+  ⇒ 二分关系：
+        ExecutionRequest  ── `prompt: string`  = 数据字段 / execution input
+        ExecutionHandle   ── `prompt()`       = capability / method（§18.3 明确禁止）
+
+【身份声明（冻结）】
+  This is an Amendment to AF-1 rev2.
+  It does not create rev3 and does not otherwise reopen or revise
+  the rev2 contract semantics.
+  ⇒ 本次属于 AF-1 rev2 的 Amendment 1：不产生 rev3，不重新开放或修改 rev2 的其他契约语义。
+  ⇒ 关系：AF-1 rev2 ── §18.9 Amendment 1 ── §18.2 + `prompt: string`
+```
+
+```text
+✅ 本 Amendment 只改 §18.2 的 `ExecutionRequest` shape（新增 1 个必填字段）。
+✅ 本 Amendment 未改 `execute(handle, request)` 签名；未改 `ExecutionHandle` / `ExecutionOutcome` /
+   `ExecutionOutput` / `ExecutionError` / `ResearchContext`。
+✅ 本 Amendment 未修改 §18.3 本身（仅在本文中追加 clarification）。
+✅ 本 Amendment 未新增任何抽象（`ExecutionInput` / `UniversalSession` / `PromptProvider` / `PromptResolver` 等）。
 ```
 
 ---

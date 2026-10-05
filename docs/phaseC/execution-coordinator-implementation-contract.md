@@ -40,6 +40,24 @@ J-4  P1-F（artifact 持久化失败）：由 AF-4 调用 `fail()` 收口；
      settlement 失败原因必须标记为 **artifact persistence failure**，**不是 Provider failure**。
 ```
 
+```text
+**Amendment 1（rev2 的后续同步修订 · prompt carrier synchronization）:**
+    Subject : ExecutionRequest prompt carrier synchronization
+    Change  : · §4.2 shape 增加 `prompt: string`（位于 `thinkingLevel` 后、`context?` 前）
+              · §4.2 标题同步（不再声明「不新增字段」）
+              · §4.3 A-9 增加 `prompt` 的来源条目
+    Reason  : synchronize AF-4 Implementation with AF-1 rev2 §18.2 Amendment 1
+    Scope   : ExecutionRequest shape + prompt source constraint only
+    Semantics:
+      · prompt 来自 upstream execution caller（显式提供）
+      · AF-4 不生成 / 不推断 / 不改写 / 不替换
+      · 不引入 ExecutionInput / prompt resolver / prompt policy / runtime abstraction
+      · 不改变其他冻结条款（§4.1 / §5–§17 未动）
+    Revision identity:
+      · 本 Amendment 属 `rev2` 的后续同步修订 —— **不**升级为 rev3；
+      · **不**修改 L3 / L15 的 Status 行。
+```
+
 **本轮唯一允许的动作：修订本契约文件（rev2）。不碰代码、不改 R2 / TaskEngine、不实现 Provider、不 commit、不 push。**
 
 ---
@@ -152,7 +170,7 @@ A-3  Coordinator 【不】接受 queued Task，【不】做 readiness / dependen
      `stepRound` / enqueue / start（那些属 R2 + TaskEngine）。
 ```
 
-### §4.2 `ExecutionRequest` 字段冻结（结构 = AF-1 rev2 §18.2，不新增字段）
+### §4.2 `ExecutionRequest` 字段冻结（结构 = AF-1 rev2 §18.2，含 Amendment 1 的 `prompt` 字段）
 
 ```ts
 interface ExecutionRequest {
@@ -161,6 +179,7 @@ interface ExecutionRequest {
     roundId?: string;        // 来自该 Task 的 domain context（可缺省）
     model: string;           // ★ 来自 TaskEngine.start() 建立的 TaskAttempt.model
     thinkingLevel: string;   // ★ 来自同一 TaskAttempt.thinkingLevel
+    prompt: string;           // ★ 上游 execution caller 显式提供
     context?: ResearchContext;  // 可复用既有载体；可由上层提供，缺省即不注入
 }
 ```
@@ -190,6 +209,9 @@ A-9  ★ 事实来源唯一性（不得二次猜测）：除 A-2a 的三字段�
                                   那一条 `TaskAttempt`
                                   （其权威上游仍是 `TaskEngine.start()` 建立的 attempt）
        · context?              ← 由 future integration caller / 上层提供（可选；缺省即不注入）
+       · prompt                ← **上游 execution caller 显式提供**；
+                                 AF-4 **不生成 / 不推断 / 不改写 / 不替换**
+                                 （不得归属给 `TaskEngine` / `TaskAttempt` / `ResearchContext`）
      ⇒ 除上述来源外，**不得**以任何其他方式推导这些 execution facts：
          ❌ 不得重新调用 `ModelRouter.resolve()`
          ❌ 不得猜 `sessionId`（含从 `child-${taskId}` 字符串反推）

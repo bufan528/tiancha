@@ -194,7 +194,7 @@ P-4  该 Task/Attempt 尚未进入终态（settlement 只发生一次；终态�
 
 ## §7 ExecutionRequest
 
-**形状（严格继承 AF-1 rev2 §18.2，不新增字段）：**
+**形状（严格继承 AF-1 rev2 §18.2 · 含 Amendment 1 的 `prompt` carrier）：**
 
 ```ts
 interface ExecutionRequest {
@@ -203,6 +203,7 @@ interface ExecutionRequest {
     roundId?: string;
     model: string;
     thinkingLevel: string;
+    prompt: string;
     context?: ResearchContext;
 }
 ```
@@ -215,6 +216,9 @@ R-2  thinkingLevel ← 来自同一 `TaskAttempt.thinkingLevel`，**不得重新
 R-3  taskId / runId / roundId ← 来自该 Task 的 domain context
 R-4  context       ← 可复用既有 `ResearchContext`（AF-1 rev2 Q-EP9-4）；
                      **不得**由 AF-4 另造第二套 execution context
+R-5  prompt        ← **上游 execution caller 显式提供**；
+                     AF-4 **不生成 / 不推断 / 不改写 / 不替换**
+                     （事实来源唯一性 ⇒ 不得由 `taskId` / `objective` / `context` 推导或猜测）
 ```
 
 **⇒ 禁止形态（会导致 start 与 execute 使用不同模型，并与 Attempt 执行事实脱节）：**
@@ -686,6 +690,40 @@ R2          D-RED-1…D-RED-10（含 D-RED-7 一次 invocation ≤ 一次 dispat
 ✅ 本契约未产生 Claim / Fact / Knowledge / Candidate / 0–100 分
 ✅ 本契约未修改 README / INDEX / HANDOFF；未 commit；未 push
 ✅ 未引入任何 Pi 类型进入 research 层的定义
+```
+
+---
+
+## §20 AF-4 Design · Amendment 1（ExecutionRequest `prompt` carrier）
+
+```text
+Amendment: 1
+Status:    IMPLEMENTED / PENDING REVIEW（【不是】APPROVED / FROZEN —— 待 Contract Review）
+Subject:   ExecutionRequest prompt carrier
+Change:
+  · §7 shape 增加 `prompt: string;`（位于 `thinkingLevel` 后、`context?` 前）
+  · §7 来源约束增加 `R-5`（prompt 的唯一来源）
+  · §7 继承声明同步更新（含 AF-1 rev2 Amendment 1 的 `prompt` carrier）
+Reason:    synchronize AF-4 Design with AF-1 rev2 Amendment 1
+Scope:     ExecutionRequest shape + prompt source constraint only
+Semantics: prompt originates from the upstream execution caller;
+           AF-4 does not generate / infer / rewrite / replace it
+Revision identity:
+  不创建新的 AF-4 contract revision（不产生 rev2；不改写 L3 / L13 的 Status 行）
+```
+
+```text
+【声明（冻结）】
+  · 本 Amendment 只同步 `ExecutionRequest.prompt` 的 shape 与来源约束；
+  · 【不】改变 §8–§19 的任何语义；
+  · 【不】修改 L3 / L13 的 Status 行（AF-4 Design 自身的状态文字滞后属【独立问题】，不在本 Amendment 内处理）；
+  · 【不】引入任何 `ExecutionInput` / prompt resolver / prompt policy / runtime abstraction。
+```
+
+```text
+✅ 本 Amendment 只改 §7（shape / 继承声明 / 来源约束）+ 新增本 §20。
+✅ 本 Amendment 未改 `execute(handle, request)` 调用关系（§8 Provider Invocation 未动）。
+✅ 本 Amendment 未改 Ownership / Invariants / Artifact / Settlement / Failure Boundary。
 ```
 
 ---
