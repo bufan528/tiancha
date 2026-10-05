@@ -1,6 +1,6 @@
 # AF-4 · Execution Coordinator Implementation Contract
 
-> **Status:** rev2 — DOCS-ONLY · **AUTHORIZED TO DRAFT** · **NOT YET APPROVED**（待 Human Contract Review）
+> **Status:** rev2 + Amendment 1 + Amendment 2 + Amendment 3 + Amendment 4 — 🔒 **FROZEN** · DOCS-ONLY
 > **rev2 说明（精确修订，不推翻 rev1）:** 落实 AF-4 Pre-Implementation Audit 的四项接缝裁定，仅改四处 —— §3（D-6 输入来源）· §4（入口与 `DispatchedExecutionContext`）· §8（E-3 settlement 语义）· §9（F-6 artifact 持久化失败收口）；并同步 §14 T-*、§15、§16、§17 的相关表述。**未修改 R2 / TaskEngine / 上游任何契约。**
 > **Scope:** docs-only。把已冻结的 AF-4 设计语义压缩成**可直接执行的工程合同**；**不重复** `execution-coordinator-contract.md`（693 行设计契约）。
 > **上游依据（严格继承，均不修改）:** `docs/phaseC/execution-coordinator-contract.md`（AF-4 Contract rev1 · APPROVED @1e796a5）· `docs/phaseC/execution-provider-contract.md`（AF-1 rev2 · FROZEN @c3fb4d6）· `docs/phaseC/task-engine-failure-boundary-contract.md`（AF-2+AF-3 · FROZEN @eef63ac）· `docs/phaseC/round-execution-driver-contract.md`（R2 · FROZEN @275b84d）· `docs/phaseC/round-lifecycle-contract.md`（FROZEN）· `docs/phaseC/c7b-execution-wiring-contract.md`（rev4 · FROZEN）
@@ -12,7 +12,7 @@
 
 ```text
 AF-4 Contract rev1                       ✅ APPROVED · 🟢 PUBLISHED · 🔒 FROZEN（1e796a5）
-AF-4 Implementation Contract（本文）     🟡 rev2 · AUTHORIZED TO DRAFT · DOCS-ONLY · ❌ NOT YET APPROVED
+AF-4 Implementation Contract（本文）     🔒 rev2 + Amendment 1 + Amendment 2 + Amendment 3 + Amendment 4 · FROZEN · DOCS-ONLY
 AF-4 Pre-Implementation Audit            ❌ FAIL / HOLD（P0-1 · P0-2 · P1-D/E/F/G）
 AF-4 Implementation                      ❌ NOT AUTHORIZED
 AF-1 Provider Implementation             🟡 应先独立立项（AF-4 不实现 Provider）
@@ -59,6 +59,136 @@ J-4  P1-F（artifact 持久化失败）：由 AF-4 调用 `fail()` 收口；
 ```
 
 **本轮唯一允许的动作：修订本契约文件（rev2）。不碰代码、不改 R2 / TaskEngine、不实现 Provider、不 commit、不 push。**
+
+```text
+**Amendment 2（rev2 的后续同步修订 · O-AC-1…O-AC-5 closure）:**
+    Subject : AF-4 O-AC-1…O-AC-5 final decision closure
+    Change  : · 新增 A1…A7（下方）
+              · 新增 §16 R-EC-10（ResearchContext Source Boundary · 硬规则）
+              · 新增 §16 R-4（ResearchContext producer gap 登记）
+    Reason  : 固化 AF-4 Implementation Preflight 对 O-AC-1…O-AC-5 的最终架构裁定，
+              使实现轮不再存在落点 / 数据 / 上下文来源的解释空间
+    Scope   : 落点 + ArtifactKind/schemaVersion + context 来源 + producer gap 登记 only
+    A1  Coordinator final location
+        packages/research/src/runtime/execution-coordinator.ts
+    A2  Coordinator is NOT exported from runtime/index.ts
+        （与 PiExecutionProvider 一致：内部执行协调实现不因存在而成为公共 API）
+    A3  ArtifactKind includes "execution"
+        （兑现 AF-4 Q-EC-1 = CLOSED；中性执行产物，不是 Claim/Fact/Knowledge/PoolItem/Evaluation）
+        · No DB migration required —— `research_artifact.kind` 是未受约束的 `TEXT NOT NULL`
+          （已核查：全仓无 CHECK 约束、无 enum、无 allowed-kind 白名单、migration 不涉及 artifact）
+    A4  execution artifact schemaVersion = "1"
+        （不建立 schemaVersion registry；不修改既有 writer —— "1"/"2"/"candidate-schema/v1" 的历史并存不重构）
+    A5  schemaVersion is metadata only and is NOT part of artifact identity
+        （已核查：identity = `artifact_id` = 随机 UUID；无 content hash / 无 dedupe key /
+          无 kind+schemaVersion 身份 / 无 schemaVersion 相关 UNIQUE）
+    A6  ExecutionRequest.context is upstream-provided ONLY
+        （见 §16 R-EC-10；Coordinator MUST NOT construct / infer / synthesize / serialize /
+          derive ResearchContext from Task fields）
+    A7  The current absence of a ResearchContext producer is a deferred integration gap;
+        AF-4 implementation MUST NOT solve it（见 §16 R-4）
+    Semantics:
+      · 本 Amendment 只固化上述确定性事实，不重新设计 AF-4，不改变 §1–§15 的既有语义
+      · 不新增 Port / 不新增 barrel / 不新增目录 / 不引入 registry / 不引入 factory
+    Revision identity:
+      · 本 Amendment 属 `rev2` 的后续同步修订 —— **不**升级为 rev3；
+      · **不**修改 L3 / L15 的 Status 行。
+```
+
+```text
+**Amendment 3（rev2 的后续同步修订 · Delivery Whitelist Consistency Sync）:**
+    Subject : AF-4 Implementation Contract delivery whitelist ↔ Amendment 2 同步
+    Change  : · §3 D-2 落点更正：application/ → runtime/（对齐 A1 / O-AC-2）
+              · §3 D-4 标记 ALREADY SATISFIED / NO ACTION + 禁止修改 ports/index.ts
+              · §3 D-5 测试落点更正：→ runtime/execution-coordinator.test.ts
+              · §3 D-6 标记 DEFERRED — NO CURRENT AF-4 CALLER（从本 Slice 白名单移除）
+              · §3 D-7 新增 `DispatchedExecutionContext` 位置【提案】（待 Human 裁定）
+              · §3 新增【AUTHORIZED IMPLEMENTATION CANDIDATES】清单
+    Reason  : 把已冻结的最终裁定（Amendment 2 A1/A2 · O-AC-2 · A-2c · O-IC-1）同步到 §3 交付白名单，
+              消除实现授权时的白名单歧义
+    Scope   : §3 交付白名单 + 候选清单 only
+    Semantics:
+      · 这是【契约同步】，不是重新设计：
+        Coordinator 职责 / 输入 / Provider Port / ResearchContext 规则 / Session ownership /
+        lifecycle boundary / scheduler boundary / artifact semantics 均【未改变】
+      · P7 澄清（引用冻结的 §7）：**execution artifact 属于本 Slice** ——
+        D-8 `succeeded` ⇒ 恰好 1 个 execution artifact；D-9 `failed` ⇒ 0 个；
+        且不得借机增加 dedup / index / version registry / migration / reconciliation /
+        cleanup / query API（无 idempotency 设计：artifact_id = 随机 UUID）
+      · ❌ 不新增 Port：`DispatchedExecutionContext` 是 data boundary / execution context，
+        ❌ 不得创建 DispatchedExecutionContextPort / ExecutionCoordinatorPort / ExecutionDispatchPort
+      · ★ D-7 FINAL = 方案 B：`packages/research/src/runtime/dispatched-execution-context.ts`
+        （独立数据边界文件；APPROVED — FINAL；runtime/index.ts 本 Slice MUST NOT export it；
+          No additional execution boundary may be introduced）
+      · ❌ 不修改任何既有契约语义（含 Amendment 1 / Amendment 2 的内容）
+    Revision identity:
+      · 本 Amendment 属 `rev2` 的后续同步修订 —— **不**升级为 rev3；
+      · Amendment 2 已于前一 Gate 完成 Freeze；本 Amendment 3 落盘后为 🟡 PENDING FREEZE。
+```
+
+```text
+**Amendment 4（rev2 的后续同步修订 · Prompt Ingress / entry signature）:**
+    Subject : upstream execution caller 如何把 `prompt` 传入 AF-4 Coordinator
+    Change  : · §4.1 新增 A-2b★（entry 签名加第二个显式参数 `prompt: string`）
+              · §4.3 A-9 的 `prompt` 条目补充 ingress 说明
+              · 新增下方 Prompt Source Rule
+    Reason  : ★ 原冻结契约存在【连接缺口】——
+              §4.2 shape / §4.3 A-9 / R-5 均要求「`ExecutionRequest.prompt` 必须由上游 execution
+              caller 显式提供，AF-4 不生成/不推断/不改写/不替换」，
+              而 §4.1 A-2a/A-2b 的输入面只有 `DispatchedExecutionContext { taskId, attemptId, sessionId }`
+              与单参数 entry ⇒ 【没有任何合法位置承载 prompt】。
+              实现轮依纪律 STOP 并报告，未猜测、未从 Task 推导、未把 prompt 塞进 3-field context。
+    Scope   : prompt 的 ingress（entry 签名）+ provenance only
+    Selected: ★（甲）扩展 entry signature —— `executeDispatchedExecution(context, prompt)`
+              （乙）把 prompt 加入 DispatchedExecutionContext ❌ REJECTED（会破坏 D-7 的最小
+                   dispatch identity boundary，把它从 identity 变成 request carrier）
+              （丙）新增第二个 execution 边界对象（如 DispatchedExecutionInput）❌ REJECTED
+                   （违反 Amendment 3「No additional execution boundary may be introduced」，
+                    并会同时出现 Context / Input / Request 三个相邻数据边界）
+    Effect  :
+              upstream caller
+                    │
+                    └── prompt: string
+                             ↓
+              executeDispatchedExecution(context, prompt)
+                             ↓
+              ExecutionRequest.prompt（原样透传）
+
+    ★ Prompt Source Rule（硬规则 · 必须逐字保留）：
+
+        prompt MUST originate from the upstream execution caller.
+
+        Coordinator MUST:
+          - accept it explicitly;
+          - pass it through unchanged;
+          - assign it to ExecutionRequest.prompt.
+
+        Coordinator MUST NOT:
+          - generate prompt;
+          - infer prompt;
+          - rewrite prompt;
+          - replace prompt;
+          - derive prompt from Task;
+          - derive prompt from TaskInputs;
+          - derive prompt from taskId;
+          - derive prompt from runId;
+          - derive prompt from roundId;
+          - derive prompt from objective;
+          - derive prompt from ResearchContext;
+          - use fixed/default provider text.
+
+    Semantics:
+      · 本 Amendment【只补 ingress】，不放宽任何来源约束（A-9 / R-5 / A6 全部继续成立）
+      · ★ `DispatchedExecutionContext` 仍为【3 字段】—— D-7（APPROVED — FINAL）【不推翻】；
+        仍 ❌ 非 Port / ❌ 非 Service / ❌ 非 Registry / ❌ 非 Adapter；
+        仍 `runtime/index.ts` MUST NOT export it in this Slice
+      · ❌ 不引入 `PromptPort` / `PromptContext` / `ExecutionInputPort` / `PromptProvider` /
+        prompt resolver / prompt policy / runtime abstraction
+      · ❌ 不修改 §1–§17 的其他语义
+    Revision identity:
+      · 本 Amendment 属 `rev2` 的后续同步修订 —— **不**升级为 rev3；
+      · Amendment 3 已于前一 Gate 完成 Freeze；本 Amendment 4 落盘后为 🟡 PENDING FREEZE。
+```
 
 ---
 
@@ -117,25 +247,87 @@ D-1  ★ micro-amendment：既有依赖（existing dependency）· consume only
           · AF-4 仅 **import / consume**
           · AF-4 **不得** create / recreate / redefine / duplicate / modify
           · 本条目【保留在白名单内】，以保持交付面可审计（而非删除）
-D-2  新增  packages/research/src/application/execution-coordinator.ts
+D-2  新增  packages/research/src/runtime/execution-coordinator.ts
           `ExecutionCoordinator`：单 Task coordination entry + 成功/失败两条路径
+          ⇒ ★ Amendment 3 同步：落点由 `application/` 更正为 `runtime/`
+            （对齐 Amendment 2 A1 / O-AC-2 最终裁定；§3 旧条目未及时同步，属契约同步非重新设计）
+          ⇒ ★ `runtime/index.ts` **不导出** Coordinator（Amendment 2 A2）
 D-3  修改  packages/research/src/domain/artifact.ts
           `ArtifactKind` 增加 `"execution"` 单一值（不改既有 6 值）
-D-4  修改  packages/research/src/ports/index.ts
+D-4  既有  packages/research/src/ports/index.ts
           导出 D-1 所指向的既有 ExecutionProvider port
-D-5  新增  packages/research/src/phase-c7-execution-coordinator.test.ts
+          Status : ★ ALREADY SATISFIED / NO ACTION（Amendment 3）
+          Evidence: 该导出由 AF-1A 建立并已发布（`ports/index.ts` 末行
+                    `export * from "./execution-provider.port.js";`）
+          Constraint: ★ AF-4 Slice **MUST NOT** modify `ports/index.ts`
+          ⇒ 「白名单里出现一个文件」≠「本 Slice 必须修改该文件」
+D-5  新增  packages/research/src/runtime/execution-coordinator.test.ts
           测试义务 T-*（§14）
+          ⇒ ★ Amendment 3 同步：落点由 `packages/research/src/phase-c7-execution-coordinator.test.ts`
+            更正为与被测组件同目录（runtime/ 邻接），对齐既有结构（如 `runtime/task-engine.test.ts`）
 D-6  装配  src/cli/tiancha.ts（composition root）
           注入 provider 实现 + coordinator 装配（**不新增 CLI 子命令**，见 §15 O-IC-1）
           ⇒ ★ rev2：本项**只装配既有依赖**。`future integration caller` 归属见 §4.1 A-2c；
              **AF-4 不拥有 dispatch、不重新 start、不创建 registry**；
              Provider implementation 的新增/修改**不属于 AF-4**（见 §0 J-2）
+          Status : ★ Amendment 3：**DEFERRED — NO CURRENT AF-4 CALLER（从本 Slice 白名单移除）**
+          Reason : A-2c 把 caller 定义为 future integration caller；O-IC-1 明确把 caller 选择留在本 Slice 之外。
+                   当前不存在 AF-4 Coordinator 的正式 caller（产品路径走 `TianchaAgentHost`，
+                   研究路径仅 smoke 建 Runtime）⇒ 若为满足本项而改 CLI，等于【人为制造一个 caller】，
+                   并把「实现 Coordinator」与「决定谁驱动 Coordinator」偷偷合并。
+          Constraint: ★ AF-4 implementation **MUST NOT** modify `src/cli/tiancha.ts`
+                      solely to manufacture or establish a caller.
+          Future owner: O-AC-6 / product integration decision。
+
+D-7  新增  `DispatchedExecutionContext`（数据边界类型 · §4.1 A-2a）
+          Location : `packages/research/src/runtime/dispatched-execution-context.ts`
+          Status   : ★ APPROVED — FINAL（D-7 最终裁定 = 方案 B）
+          定义      : `export interface DispatchedExecutionContext { taskId: string; attemptId: string; sessionId: string }`
+                      （`interface` vs `type` 以现有项目类型风格为准；语义不变）
+          Semantics:
+            · data-only execution boundary（Coordinator 的【输入数据边界】）
+            · 字段：taskId · attemptId · sessionId
+            · ❌ 不是 Port · ❌ 不是 Service · ❌ 不是 Registry · ❌ 不是 Adapter
+            · ❌ 不得创建 `DispatchedExecutionContextPort` / `ExecutionCoordinatorPort` /
+              `ExecutionDispatchPort`（Amendment 3 硬约束）
+            · ★ `runtime/index.ts` **MUST NOT** export it in this Slice
+              （与 Coordinator 同理：当前无正式 caller integration boundary，
+                不提前扩大 research runtime public surface；未来 O-AC-6 需要公共出口时再单独决定）
+          Constraint: No additional execution boundary may be introduced.
+          ⇒ 选 B（独立文件）而非 A（定义在 `execution-coordinator.ts` 内）的理由：
+            数据契约不应与执行实现绑定 —— 未来 caller 要构造该上下文时，
+            不应被迫 `import` Coordinator implementation 文件（Coordinator ≠ caller）。
 ```
 
 ```text
 ⛔ 白名单之外不得改动：task-engine.ts · domain/task.ts · domain/task-attempt.ts ·
    domain/round.ts · domain/run.ts · runtime/orchestrator.ts · runtime/model-router.ts ·
    storage/artifact-store.ts（除如实现必须，需单独授权）· 任何既有测试
+```
+
+```text
+【AUTHORIZED IMPLEMENTATION CANDIDATES（Amendment 3 固化 · 供 Implementation Authorization 引用）】
+
+  1. packages/research/src/runtime/dispatched-execution-context.ts              NEW
+        —— `DispatchedExecutionContext`（data boundary；❌ 非 Port；runtime/index.ts 不导出）
+  2. packages/research/src/runtime/execution-coordinator.ts                    NEW
+  3. packages/research/src/runtime/execution-coordinator.test.ts               NEW
+  4. packages/research/src/domain/artifact.ts                                  MODIFY
+        —— ArtifactKind += "execution"（单一值；不改既有 6 值）
+
+  NO ACTION:
+  5. packages/research/src/ports/index.ts        已满足（AF-1A 既有导出）；本 Slice MUST NOT 修改
+
+  DEFERRED:
+  6. src/cli/tiancha.ts                          无当前 caller（A-2c / O-IC-1）；本 Slice MUST NOT 修改
+                                                   以制造 caller；future owner = O-AC-6
+
+  FORBIDDEN（本 Slice 一律不得触碰）:
+  7. runtime/task-engine.ts                    8. runtime/orchestrator.ts
+  9. runtime/session-registry.ts              10. runtime/execution-session.ts
+ 11. ports/*（AF-1 ports 全族）                12. packages/research/src/providers/*
+ 13. ResearchContext producer（G-07）          14. G-05（lifecycle）
+ 15. G-06（model fidelity）                    16. runtime/tiancha-runtime.ts
 ```
 
 ---
@@ -160,6 +352,15 @@ A-2a ★ rev2 · 窄化输入结构（AF-4 只消费这个，不消费完整 sta
      ⇒ 这是 AF-4 的全部输入事实；完整 `{ task, attempt, session }` 对象【不进入 AF-4】。
 A-2b ★ rev2 · entry 语义（单 Execution，不循环）：
          executeDispatchedExecution(context: DispatchedExecutionContext): Promise<void>
+A-2b★ Amendment 4 · entry 签名修正（补 prompt ingress）：
+         executeDispatchedExecution(context: DispatchedExecutionContext, prompt: string): Promise<void>
+     ⇒ ★ 第二个参数是【显式 upstream execution input】，取值即 `ExecutionRequest.prompt`（见 A-9 / R-5）
+     ⇒ 动机：原冻结签名只有 `context`（3 字段：taskId/attemptId/sessionId），
+       【没有任何位置承载 prompt】；而 A-9 / R-5 同时要求「prompt 必须由上游显式提供、
+       AF-4 不得生成/推断/改写/替换」⇒ 二者之间缺少连接（真实的契约缺口）。
+     ⇒ 本修正【只补 ingress】，不放宽任何来源约束；`DispatchedExecutionContext` 仍为 3 字段（D-7 不推翻）。
+     ⇒ ❌ 不得改用：把 prompt 塞进 context / 新增第二个 execution 边界对象
+       （如 DispatchedExecutionInput）/ 从 Task·TaskInputs·objective 推导 prompt。
 A-2c ★ rev2 · 来源责任（谁拥有 start() 返回值）：
          TaskEngine.start() 的返回值 → 【future integration caller】持有
                                      → 投影为 DispatchedExecutionContext
@@ -212,6 +413,9 @@ A-9  ★ 事实来源唯一性（不得二次猜测）：除 A-2a 的三字段�
        · prompt                ← **上游 execution caller 显式提供**；
                                  AF-4 **不生成 / 不推断 / 不改写 / 不替换**
                                  （不得归属给 `TaskEngine` / `TaskAttempt` / `ResearchContext`）
+                                 ★ Amendment 4：ingress = `executeDispatchedExecution(context, prompt)`
+                                   的【第二个显式参数】（见 A-2b★）；
+                                   Coordinator 必须 **原样透传**并赋给 `ExecutionRequest.prompt`。
      ⇒ 除上述来源外，**不得**以任何其他方式推导这些 execution facts：
          ❌ 不得重新调用 `ModelRouter.resolve()`
          ❌ 不得猜 `sessionId`（含从 `child-${taskId}` 字符串反推）
@@ -464,8 +668,9 @@ V-4  node --import tsx src/cli/tiancha.ts research smoke
 
 ```text
 V-5  基线参照：实现前的 full-suite 通过数与 smoke 结果须先记录，实现后不得回归。
-V-6  observable evidence：新测试文件 `packages/research/src/phase-c7-execution-coordinator.test.ts`
-     的测试名必须逐条对应 §14 的 T-* 清单。
+V-6  observable evidence：新测试文件 `packages/research/src/runtime/execution-coordinator.test.ts`
+     （★ Amendment 3 同步：原写 `packages/research/src/phase-c7-execution-coordinator.test.ts`，
+      已随 D-5 落点更正）的测试名必须逐条对应 §14 的 T-* 清单。
 ```
 
 ---
@@ -527,6 +732,37 @@ R-1  ★ rev2 · F-6 已由 J-4 收口：artifact 未落盘 ⇒ 调 `fail()`（r
 R-2  `ResearchTask.outputs` 声明为 `string[]` 而注释写 "ArtifactRefs only"（既有宽泛），
      本契约沿用既有 `complete()` 行为，不做类型改造。
 R-3  `artifacts DB` 与 `TaskEngine` 内存状态的持久性边界不在本契约内（无跨库事务）。
+R-4  ★ Amendment 2（A7）· ResearchContext producer gap（外部集成缺口，本轮【只登记不实现】）
+     事实：`ResearchContext`（`domain/research-context.ts:33-46`）目前【没有生产者】——
+           `ResearchContextProviderPort` 实现 = 0；全仓无任何代码构造 `ResearchContext`；
+           且 `ResearchTask` 缺其必填字段 `objective`（也无 systemPrompt / appendSystemPrompt /
+           agentsFilesOverride），`TaskInputs.question?` 与 `objective` 语义不等价
+           ⇒ 因此【无法】用既有 Task 信息无损构造合法 `ResearchContext`。
+     边界：本缺口属【上游 integration 议题】，AF-4 不承担补齐责任；不得为使 AF-4 可运行而
+           顺手实现 producer / factory / default context（见下方 R-EC-10）。
+     状态：🔴 OPEN GAP（外部）/ ⛔ 不创建契约、不实现（如需立项，另行裁定；候选编号 G-07）
+```
+
+```text
+R-EC-10  ★ ResearchContext Source Boundary（Amendment 2 · 硬规则 · 必须逐字保留）
+
+    ExecutionCoordinator MUST NOT construct or infer ResearchContext.
+
+    If the upstream execution input does not provide context,
+    ExecutionRequest.context MUST remain undefined.
+
+    The Coordinator MUST NOT derive context from:
+      - Task
+      - TaskInputs
+      - taskId
+      - runId
+      - roundId
+      - objective-like fields
+      - JSON serialization
+      - fixed / default ResearchContext values
+
+    The absence of a ResearchContext producer is an external integration gap
+    and is not resolved by AF-4.
 ```
 
 ---
@@ -556,4 +792,4 @@ R-3  `artifacts DB` 与 `TaskEngine` 内存状态的持久性边界不在本契�
 
 ---
 
-**End of contract（rev2 · Implementation Contract）**
+**End of contract（rev2 + Amendment 1 + Amendment 2 + Amendment 3 + Amendment 4 · 🔒 FROZEN · Implementation Contract）**

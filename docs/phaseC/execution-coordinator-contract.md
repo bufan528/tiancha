@@ -720,6 +720,42 @@ Revision identity:
   · 【不】引入任何 `ExecutionInput` / prompt resolver / prompt policy / runtime abstraction。
 ```
 
+---
+
+## §21 AF-4 Design · Amendment 2（prompt ingress / entry signature）
+
+```text
+Amendment: 2
+Status:    🔒 FROZEN（Amendment 2 · prompt ingress / entry signature —— 已经 Contract Review 通过并 Freeze）
+Subject:   prompt ingress —— upstream execution caller 如何把 `prompt` 传入 Coordinato
+Change:
+  · Q-EC-6 的 entry 语义表述精确化（裁定本体不重开）：
+        `executeDispatchedTask(taskId)`
+            ↓
+        `executeDispatchedExecution(context: DispatchedExecutionContext, prompt: string)`
+      ⇒ Q-EC-6 原裁定「定义单 Task coordination entry；caller adapter 可后置；
+        不循环、不调 stepRound、不推进 Round」【全部继续成立】；本 Amendment 只精确化签名形态。
+  · §7 的 `R-5` 来源约束补充 ingress 说明（prompt 的入口 = entry 的第二个显式参数）。
+Reason:    与 AF-4 Implementation Contract Amendment 4 同步 —— 补齐冻结契约中的
+          prompt ingress 连接缺口（原签名只有 3-field context，无任何合法位置承载 prompt，
+          而 §7 / R-5 又要求 prompt 必须由上游显式提供且 AF-4 不得生成/推断/改写/替换）。
+Scope:     entry signature + prompt ingress only
+Selected:  （甲）扩展 entry signature；❌ 不把 prompt 加入 `DispatchedExecutionContext`；
+           ❌ 不新增第二个 execution 边界对象（如 DispatchedExecutionInput）。
+Semantics:
+  · `DispatchedExecutionContext` 仍为【3 字段】：taskId · attemptId · sessionId（D-7 不推翻）
+  · `prompt` MUST originate from the upstream execution caller；
+    Coordinator 必须【显式接受】并【原样透传】给 `ExecutionRequest.prompt`
+  · ❌ Coordinator MUST NOT：generate / infer / rewrite / replace prompt，
+    也不得从 Task · TaskInputs · taskId · runId · roundId · objective · ResearchContext 推导，
+    或使用 fixed/default provider text
+Revision identity:
+  · 不创建新的 AF-4 contract revision（不产生 rev2；不改写 L3 / L13 的 Status 行）；
+  · 【不】改变 §8–§20 的任何语义；
+  · 【不】引入任何 `PromptPort` / `PromptContext` / `ExecutionInputPort` / `PromptProvider` /
+    prompt resolver / prompt policy / runtime abstraction。
+```
+
 ```text
 ✅ 本 Amendment 只改 §7（shape / 继承声明 / 来源约束）+ 新增本 §20。
 ✅ 本 Amendment 未改 `execute(handle, request)` 调用关系（§8 Provider Invocation 未动）。

@@ -9,7 +9,8 @@ export type ArtifactKind =
   | "evidence"
   | "score"
   | "report"
-  | "dossier";
+  | "dossier"
+  | "execution";
 
 /** A locator that resolves an artifact blob to storage. */
 export interface ArtifactLocator {
