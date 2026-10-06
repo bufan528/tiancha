@@ -365,3 +365,60 @@ Q-RED-6  Final-Lock 前文字级防漂移检查（本轮完成，三项均 PASS�
            implementation preflight → implementation separately authorized
 ```
 
+---
+
+## §18 R2 · Amendment 1（Dispatch Result Exposure）
+
+```text
+Amendment: 1
+Status:    🔒 FROZEN（Amendment 1 · Dispatch Result Exposure —— 已经 Contract Review 通过并 Freeze）
+Subject:   Dispatch result exposure —— 把 `TaskEngine.start()` 已产生的执行事实投影进 dispatched result
+Change:
+  ① RoundStepResult 的 dispatched 分支形状扩展（§7）——
+       旧：{ kind: "dispatched"; taskId: string }
+       新：{ kind: "dispatched"; taskId: string; attemptId: string; sessionId: string }
+  ② §7 Step semantics 补充：`engine.start(taskId)` 返回的本次 execution facts
+       被投影进 dispatched result
+  ③ §14 新增 D-RED-11（Dispatched Result Identity Boundary）
+Reason:    未来 Execution Caller 需要把一次 dispatch 的 execution identity
+           （taskId / attemptId / sessionId）投影为 AF-4 的 `DispatchedExecutionContext`；
+           而本契约当前只返回 `taskId`，且 `stepRound()` 丢弃了 `start()` 的返回值
+           ⇒ 执行事实无合法上行通道（`sessionId` 全仓无其他公开读取面 —— 已取证：
+             `TaskEngine.openSessions` 为 private / `TaskAttempt` 不含 sessionId）。
+Scope:     dispatched result 的 identity 字段 + 一条 identity-only 不变式 only
+Selected:  ★（i）平铺（不使用 R2 侧 DTO；❌ 不复用 AF-4 `DispatchedExecutionContext` ——
+              形状虽恰好相同，但架构所有权不同：复用会让下层 R2 反向依赖上层 AF-4 的类型）
+粒度:      ★ 只暴露 opaque `sessionId: string`
+           ❌ 不暴露 `ChildSession` 对象（其含 `close(): Promise<void>`，属 lifecycle capability）
+语义边界:  dispatched 的三字段表达「这次 dispatch 创建了哪一个 attempt / session」，
+           【不是】execution outcome —— 不表达 completed / failed / timeout / aborted /
+           artifact / provider outcome
+           ⇒ 与 AF-4 的 `provider.execute()` → `ExecutionOutcome` → `complete()`/`fail()`
+             之间【无语义重叠】。
+
+D-RED-11 — Dispatched Result Identity Boundary
+
+    The dispatched result exposes execution identity facts only:
+    taskId, attemptId, and sessionId.
+
+    It MUST NOT expose ChildSession, execution capabilities,
+    lifecycle operations, or other session objects.
+
+Semantics:
+  · 不新增 TaskEngine API（D-RED-10 继续成立）
+  · 不新增查询（值直接取自【同一次】 `start()` 的返回值）
+  · 不等待 completion（§7「does not wait for Task completion」继续成立）
+  · 不改变 dispatch 语义（仍只表示"已 dispatch"，不表示完成）
+  · 不承担 `complete()` / `fail()`（§11 / Q-RED-2 继续成立）
+  · ❌ 不借机加入 model / prompt / context / provider / execution outcome /
+    artifact / task object
+Revision identity:
+  · 本 Amendment 属 `rev1` 的后续同步修订 —— **不**升级为 rev2；
+  · **不**重写 §1–§17 的任何冻结文本（Amendment 记录式追加；D-RED-1…D-RED-10 本体未改）；
+  · ★ Freeze 记录：本 Amendment 1 已经 Contract Review PASS（15 项）+ Freeze Gate（1–6 项全 PASS）
+    后冻结 ⇒ 本文档当前有效状态 = **`R2 rev1 + Amendment 1 · 🔒 FROZEN`**；
+  · 【不】修改 L3 / L4 的 Status 行 —— R2 的状态文字滞后（L3 仍写 DESIGN ONLY /
+    L4 基线仍写 `fc19961`）属【独立问题】，后续单独做
+    `R2 Contract Status Synchronization`，不在本 Amendment 内处理。
+```
+
