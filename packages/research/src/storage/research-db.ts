@@ -958,6 +958,11 @@ export class ResearchDb {
     this.addColumnIfMissing("material", "ingest_owner", "ALTER TABLE material ADD COLUMN ingest_owner TEXT");
     this.addColumnIfMissing("material", "ingest_lease_until", "ALTER TABLE material ADD COLUMN ingest_lease_until TEXT");
     this.addColumnIfMissing("material", "ingest_generation", "ALTER TABLE material ADD COLUMN ingest_generation INTEGER NOT NULL DEFAULT 0");
+    // ★ C-1 (docs/phaseC/c1-migration-remediation-contract.md): CREATE TABLE material declares
+    // `ingest_overlaps_json TEXT NOT NULL DEFAULT '[]'`, but the upgrade path omitted it — old DBs then
+    // failed on the first material write ("no column named ingest_overlaps_json"). Attributes mirror the
+    // baseline declaration exactly (C1-MIG-03); SQLite fills existing rows with the DEFAULT (C1-INV-3).
+    this.addColumnIfMissing("material", "ingest_overlaps_json", "ALTER TABLE material ADD COLUMN ingest_overlaps_json TEXT NOT NULL DEFAULT '[]'");
     this.addColumnIfMissing("material", "ingest_blocks_json", "ALTER TABLE material ADD COLUMN ingest_blocks_json TEXT NOT NULL DEFAULT '[]'");
   }
 
