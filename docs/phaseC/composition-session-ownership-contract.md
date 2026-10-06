@@ -571,3 +571,128 @@ Commit / Push                    ⛔ NOT AUTHORIZED
 · 本文件不重写任何已冻结契约（AF-1C / AF-4 / R2 / AF-1）的文本。
 · 本文件不含任何代码、不含 schema、不含 migration、不含 CLI 改动。
 ```
+
+---
+
+## §22 Composition / Session Ownership · Amendment 1（terminology alignment）
+
+```text
+Amendment: 1
+Kind:      ★ Contract Amendment（terminology alignment —— 不是新增规范性概念）
+Status:    🔒 FROZEN（经 Amendment Audit / Draft Review / Final Amendment Review 全 PASS，
+           并获 Human Authorization 后落盘）
+Subject:   G-04 的判定口径 —— 由【源码物理位置】对齐为【semantic responsibility / authorized behavior】
+
+Reason:
+  R-2B-A Amendment 2 已将 G-04 的判定从「源码物理位置」提升为「semantic responsibility /
+  authorized writer behavior」，并明确 R-2B-A 的 capability seam 使
+  `TianchaRuntime.registry.{register,remove}`（作为 owner-side capability binder）在 Runtime 内物理出现。
+  本契约 §1–§21 仍有 6 处沿用「唯一 register 落点 / production writer 只有一个」的物理位置口径，
+  与 R-2B-A Amendment 2 形成契约间口径不一致。
+  ⇒ 本 Amendment 只做术语对齐，不引入新规范概念、不改变任何 ownership / identity / lifecycle 边界。
+
+Scope:
+  仅处理 §2 / §4 / §8 / §15 / §16 中共 6 处与 production registration writer 相关的措辞，
+  以及 5 处旧术语名（Production Registry Writer）的解释覆盖。
+  不改动 §1 / §3 / §5 / §6 / §7 / §9–§14 / §17–§21 的任何文本；
+  不新增条款编号（除本 §22 自身）；不重写任何冻结正文。
+
+Changes（6 处，均以本 Amendment 为准）：
+  ① §2 Terms · 术语名与定义（L74-75）
+       旧：Production Registry Writer（G-04）
+           生产路径上【唯一】调用 `registry.register(sessionId, capability)` 的落点（§8 §D）。
+       新（规范术语）：Production Registration Authority（G-04）
+           生产路径上负责【引入或决定】production registration behavior 的授权责任主体；
+           判定依据为语义责任与授权，而非源码物理位置。
+           ★ G-04 的规范性定义是 production registration behavior authority，
+             不以 `registry.register(...)` 的源码物理位置作为判定依据。
+
+  ② §4 三层责任 · G-04 行（L194）
+       旧：G-04 = production registration（唯一 register 落点）
+       新：G-04 = production registration behavior **authority**（★ 非「唯一源码落点」）
+
+  ③ §8 CSO-D-2（L276）
+       旧：G-04 的落点必须是【生产路径上唯一】的 register 调用点。
+       新：G-04 是唯一被授权【引入 / 决定】production registration behavior 的 Slice。
+           ⇒ 此条为后续 G-04 Gate 的核心判据。
+
+  ④ §8 ★ 验收要求（L277）
+       旧：★ 验收要求：证明 register 的 production writer 只有一个（§15）。
+       新：★ 验收要求：证明不存在第二个【引入 / 决定】production registration behavior 的 Slice；
+           且 —— ★ 必须保留 —— Runtime 作为 owner-side capability binder 物理调用
+           registry primitive（`this.registry.register(...)` / `remove(...)`）【不构成】违反。
+           （否则静态 grep `registry.register(` 会误判 TianchaRuntime 为 G-04。）
+
+  ⑤ §15 CSO-GATE-2（L453）
+       旧：CSO-GATE-2  G-04 Gate 必须证明：register 的 **production writer 只有一个**（唯一落点）。
+       新：CSO-GATE-2  G-04 Gate 必须证明：production registration behavior 的唯一 authority 是 G-04。
+           判定依据 = **semantic responsibility**，而非源码物理位置。
+
+  ⑥ §16 Slice 2（G-04）（L475）
+       旧：· 唯一 register 落点接入生产路径；
+       新：· registration behavior **authority** 接入生产路径（★ 非「唯一源码落点」）。
+
+★ 术语重命名声明（方案 A —— 不改冻结正文，由本 Amendment 覆盖旧术语名）：
+    旧术语：Production Registry Writer（G-04）
+              ⇒ 仅为【历史 / 实现语境中的非规范性描述】，不作为 G-04 authority 的定义依据。
+    新规范术语：Production Registration Authority（G-04）
+              ⇒ G-04 的正式 authority 定义。
+    凡本契约中出现旧术语之处（§2 Terms · §8 §D 标题 · CSO-D-1 · CSO-E-3.2 · §16 Slice 2
+    共 5 处），其【术语名】一律以本 Amendment 的新术语为准。
+    ★ 其条文**规范效力与既有语义保持不变**；涉及 production registration behavior authority
+      的解释，以本 Amendment 对 6 处相关表述的明确对齐为准。
+    ⇒ 规范结论：`registry.register(...)` 的物理出现位置 ≠ G-04 authority。
+
+Non-Changes（本 Amendment 【不】改变任何既有边界）：
+  · CSO-C-1…C-7（SessionRegistry ownership：TianchaRuntime 唯一持有）—— unchanged
+  · CSO-C-2（恰有一个 SessionRegistry）—— unchanged
+  · CSO-C-6（Provider 与 Runtime 同一实例）—— unchanged
+  · CSO-B-1…B-9（Session identity production：由 session creator 产生；三项独立；不可变）—— unchanged
+  · CSO-C-4（Registry 不是 lifecycle owner）—— unchanged
+  · CSO-E-1…E-4（Factory ownership boundary；Factory integration ≠ owns Registry）—— unchanged
+  · CSO-GATE-6（R-2B-A 不得产生新的 production writer；G-04 是唯一允许新增者）—— unchanged
+  · §12 CSO-INV-1…10 —— unchanged
+  · §13 G-05 Boundary —— unchanged
+  · R-2B-A Contract（rev1 + Amendment 1 + Amendment 2）—— unchanged
+  · AF-1C / AF-4 / R2 冻结契约 —— unchanged
+
+Does NOT Authorize:
+  · ❌ G-04 implementation
+  · ❌ G-05 implementation
+  · ❌ G-06 implementation
+  · ❌ G-07 implementation
+  · ❌ 任何新的 production registry writer
+  · ❌ 任何新的 Registry mutation capability
+  · ❌ 任何新的 lifecycle 语义
+  · ❌ 任何新的 identity authority
+  · ❌ 任何 scope expansion
+
+Compatibility / Interpretation:
+  · 本 Amendment 是【语义纠偏】，不是【架构扩展】。
+  · 与本 Amendment 冲突的既有措辞（仅上述 6 处 + 5 处旧术语名）以本 Amendment 为准；
+    其余条文继续有效。
+  · 术语统一后的三概念模型（均已由既有条文覆盖，本 Amendment 不新增条款）：
+        Ownership           = TianchaRuntime（§C）
+        Mutation Authority  = G-04（§D / CSO-GATE-2 · semantic responsibility 口径）
+        Identity Production = Session creator（§B）
+  · 与 R-2B-A Amendment 2 的关系：本 Amendment 是该 Amendment 在 Composition 侧的术语对齐，
+    二者语义一致，不构成新的架构决议。
+
+Reference Note（观察项 · 非规范性）:
+  REGISTERED NOTE — Registry Mutation Authority
+    Composition Contract currently models:
+      A. Registry Ownership（§C）
+      B. Session Identity Production（§B）
+    Registry Mutation Authority is currently expressed through G-04 semantic-authority
+    language rather than a standalone normative concept.
+    No contradiction currently requires a new standalone clause.
+    Revisit only if a future Slice introduces multiple mutation capabilities
+    (e.g. register / remove / replace / invalidate / refresh) or additional registry
+    mutation semantics.
+  ⇒ ★ 本轮【不】新增 `CSO-MA-*` 之类独立条款。
+
+Revision identity:
+  · 本 Amendment 属 rev1 的后续术语对齐修订 —— 不升级为 rev2；
+  · 不重写 §1–§21 的任何冻结文本（Amendment 记录式追加）；
+  · 本 Amendment 不扩大任何 Slice 的 Scope。
+```
