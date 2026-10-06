@@ -24,6 +24,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { ResearchRepository } from "../storage/research-repository.js";
+import { KnowledgeRepository } from "../storage/knowledge-repository.js";
 import { isUnconfirmedEvidence, materialEvidenceIndex } from "./material-confirmation.js";
 import { MethodologyService } from "./methodology-service.js";
 import { poolSlotKey } from "../domain/identity.js";
@@ -34,13 +35,14 @@ import {
   type DecisionInput,
   type EvaluationPolicy,
 } from "../domain/evaluation-policy.js";
-import { isSufficient, sufficiencyFacts } from "../domain/sufficiency.js";
+import { isSufficient, resolveSufficiencyPolicy, sufficiencyFacts } from "../domain/sufficiency.js";
 import type {
   Aggregation,
   DimensionEvalStatus,
   DimensionEvaluation,
   EvaluationCoverage,
   EvidenceSufficiency,
+  InformationRequirement,
   InvestmentEvaluation,
   MethodologyDimension,
   ReserveDecision,
@@ -51,6 +53,12 @@ export interface EvidenceAssessment {
   sufficiency: EvidenceSufficiency;
   evidenceRefs: string[];
   conflictingClaimRefs?: string[];
+  /**
+   * ★ H-1（H1-INV-5）：本次判定实际采用的 sufficiency policy provenance。
+   *   无 requirement ⇒ 二者均为 undefined（无可判据 ⇒ 只能 insufficient_evidence）。
+   */
+  sufficiencyPolicyRef?: string;
+  sufficiencyPolicyVersionId?: string;
 }
 
 export class EvaluationService {
@@ -62,12 +70,24 @@ export class EvaluationService {
 
   // ---- Orchestration ---------------------------------------------------------
 
-  evaluate(subjectKind: "industry" | "company" | "general", subjectId: string): InvestmentEvaluation {
+  evaluate(
+    subjectKind: "industry" | "company" | "general",
+    subjectId: string,
+    knowledgeId: string,
+  ): InvestmentEvaluation {
     const repo = new ResearchRepository(this.db);
     const methodology = new MethodologyService(repo).getActive();
 
+    // ★ H-1（H1-INV-2 / H1-Q-3）：requirement 来源必须与 Pool 侧【同一入口】，
+    //   不得从 Pool 反推、不得另立第二套 discovery。
+    const requirementByDimension = new Map<string, InformationRequirement>(
+      repo.listRequirements(subjectId).map((r) => [r.dimension, r]),
+    );
+
     // ① + ②
-    const dimensionEvaluations = methodology.dimensions.map((dim) => this.evaluateDimension(subjectId, dim));
+    const dimensionEvaluations = methodology.dimensions.map((dim) =>
+      this.evaluateDimension(subjectId, knowledgeId, dim, requirementByDimension),
+    );
     // ③
     const aggregation = this.aggregate(dimensionEvaluations);
 
@@ -127,18 +147,53 @@ export class EvaluationService {
   /**
    * Face ①: is the evidence ENOUGH? Pure judgement — **never** produces a score.
    * Uses the SHARED sufficiency policy (same rule the Pool judges with).
+   *
+   * ★ H-1（H1-INV-1/2/3/4 + H1-INV-6）：
+   *   · current 输入经 `KnowledgeRepository.listCurrentBeliefs()` 取得（C-FIX-12 唯一访问器），
+   *     Evaluation【不】自行判断 `state === "confirmed"`；
+   *   · sufficiency policy 经 `resolveSufficiencyPolicy(requirement)` 解析
+   *     （NEVER 硬编码版本；ref 缺失/未知 ⇒ THROW）；
+   *   · facts / evidenceRefs 来自【同一组】已解析的 current 输入证据（同源，H1-INV-4）；
+   *   · 无 requirement ⇒ 无 policy ⇒ 只能 `insufficient_evidence`（与 Pool 的 partial 语义对齐）。
    */
-  assessEvidence(subjectId: string, dim: MethodologyDimension): EvidenceAssessment {
+  assessEvidence(
+    subjectId: string,
+    knowledgeId: string,
+    dim: MethodologyDimension,
+    requirementByDimension: ReadonlyMap<string, InformationRequirement>,
+  ): EvidenceAssessment {
     const repo = new ResearchRepository(this.db);
+    const knowledge = new KnowledgeRepository(this.db);
     const slotId = poolSlotKey(subjectId, dim.key);
     const slot = repo.getPoolSlot(slotId);
-    const items = slot ? repo.listPoolItems(slotId) : [];
+
+    // ★ H1-INV-1 / H1-INV-3：current cognition 的唯一来源；非 current belief（candidate /
+    //   rejected / revised / conflicting / superseded）不得贡献 sufficiency。
+    const currentClaimRefs = new Set(
+      knowledge
+        .listCurrentBeliefs(knowledgeId)
+        .filter((b) => b.dimension === dim.key)
+        .map((b) => b.claimRef),
+    );
+
+    // ★ H1-INV-4：facts / evidenceRefs / score 必须来自这【同一个】已解析输入集合。
+    const items = (slot ? repo.listPoolItems(slotId) : []).filter((it) =>
+      currentClaimRefs.has(it.claimRef),
+    );
+
+    // ★ H1-INV-2 / H1-INV-6：共享 resolver；无 req ⇒ undefined；ref 缺失/未知 ⇒ THROW。
+    const requirement = requirementByDimension.get(dim.key);
+    const policy = resolveSufficiencyPolicy(requirement);
+    const provenance = {
+      sufficiencyPolicyRef: requirement?.sufficiencyPolicyRef,
+      sufficiencyPolicyVersionId: policy?.versionId,
+    };
 
     const sufficiency = sufficiencyFacts(items);
     const evidenceRefs = items.map((i) => i.claimRef);
 
-    if (!slot || slot.status === "unknown" || items.length === 0) {
-      return { status: "insufficient_evidence", sufficiency, evidenceRefs };
+    if (!slot || items.length === 0) {
+      return { status: "insufficient_evidence", sufficiency, evidenceRefs, ...provenance };
     }
     if (slot.status === "conflicting") {
       return {
@@ -146,19 +201,29 @@ export class EvaluationService {
         sufficiency,
         evidenceRefs,
         conflictingClaimRefs: items.filter((i) => i.relation === "contradicts").map((i) => i.claimRef),
+        ...provenance,
       };
     }
-    if (isSufficient(sufficiency, this.policy.sufficiency)) {
-      return { status: "evaluated", sufficiency, evidenceRefs };
+    if (policy === undefined) {
+      // ★ H1-Q-4：无 requirement ⇒ 无可判据 ⇒ 与 Pool 的 partial 语义对齐（永不 sufficient）。
+      return { status: "insufficient_evidence", sufficiency, evidenceRefs, ...provenance };
     }
-    return { status: "insufficient_evidence", sufficiency, evidenceRefs };
+    if (isSufficient(sufficiency, policy)) {
+      return { status: "evaluated", sufficiency, evidenceRefs, ...provenance };
+    }
+    return { status: "insufficient_evidence", sufficiency, evidenceRefs, ...provenance };
   }
 
   // ---- ② Dimension Evaluation ------------------------------------------------
 
   /** Face ②: score ONLY when face ① says the evidence is sufficient. */
-  evaluateDimension(subjectId: string, dim: MethodologyDimension): DimensionEvaluation {
-    const assessment = this.assessEvidence(subjectId, dim);
+  evaluateDimension(
+    subjectId: string,
+    knowledgeId: string,
+    dim: MethodologyDimension,
+    requirementByDimension: ReadonlyMap<string, InformationRequirement>,
+  ): DimensionEvaluation {
+    const assessment = this.assessEvidence(subjectId, knowledgeId, dim, requirementByDimension);
 
     // ★ §29.14 (5a): split the evidence into CONFIRMED and UNCONFIRMED — a Claim from a material
     // that is not `completed` is not confirmed evidence. It stays VISIBLE (its own optional field)
@@ -174,6 +239,14 @@ export class EvaluationService {
       evidenceRefs: confirmedRefs,
       sufficiency: assessment.sufficiency,
     };
+    // ★ H-1（H1-INV-5）：按 additive / optional 方式记录本次 sufficiency 判定的 provenance。
+    //   无 requirement ⇒ 二者保持 undefined（不压写、不 fallback）。
+    if (assessment.sufficiencyPolicyRef !== undefined) {
+      evaluation.sufficiencyPolicyRef = assessment.sufficiencyPolicyRef;
+    }
+    if (assessment.sufficiencyPolicyVersionId !== undefined) {
+      evaluation.sufficiencyPolicyVersionId = assessment.sufficiencyPolicyVersionId;
+    }
     if (unconfirmedRefs.length > 0) evaluation.unconfirmedEvidenceRefs = unconfirmedRefs;
     if (assessment.conflictingClaimRefs && assessment.conflictingClaimRefs.length > 0) {
       evaluation.conflictingClaimRefs = assessment.conflictingClaimRefs;

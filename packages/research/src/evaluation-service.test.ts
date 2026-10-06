@@ -12,16 +12,76 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
+import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import { EvaluationService } from "./application/evaluation-service.js";
 import { METHODOLOGY_V1 } from "./methodology/methodology-v1.js";
 import { poolSlotKey } from "./domain/identity.js";
-import type { InformationPoolSlot, MethodologyDimension } from "./domain/index.js";
+import { beliefIdFor } from "./domain/knowledge-belief.js";
+import type { DatabaseSync } from "node:sqlite";
+import type { InformationPoolSlot, InformationRequirement, MethodologyDimension } from "./domain/index.js";
 
 function setup() {
   const db = new ResearchDb({ path: ":memory:" });
   const repo = new ResearchRepository(db.db);
   const svc = new EvaluationService(db.db);
   return { db, repo, svc };
+}
+
+/**
+ * ★ H-1（H1-INV-1 / N-1 方案 A）：Evaluation 现要求 caller 显式提供 `knowledgeId`。
+ * 这里为 subject 保证一个 current knowledge anchor，并返回其 id。
+ */
+function ensureKnowledge(repo: ResearchRepository, sid: string): string {
+  const knowledge = new KnowledgeRepository(repo.db);
+  const existing = knowledge.findKnowledgeBySubject("industry", sid);
+  if (existing) return existing.knowledgeId;
+  const knowledgeId = `know-${sid}`;
+  knowledge.upsertKnowledge({
+    knowledgeId,
+    subjectKind: "industry",
+    subjectId: sid,
+    beliefs: [],
+    version: 1,
+    createdAt: "t0",
+    updatedAt: "t0",
+  });
+  return knowledgeId;
+}
+
+/** 读取（必要时建立）subject 的 knowledgeId —— 供 evaluate* 调用使用。 */
+function knowledgeIdFor(db: DatabaseSync, sid: string): string {
+  return ensureKnowledge(new ResearchRepository(db), sid);
+}
+
+/**
+ * ★ H-1（H1-INV-2）：`evaluateDimension` / `assessEvidence` 现要求调用方提供
+ * `requirementByDimension`（与 Pool 同一入口的 requirement 映射）。测试按维度构造一个
+ * 声明 `suf-v1` 的最小 requirement。
+ */
+function requirementMap(sid: string, dimension: string): Map<string, InformationRequirement> {
+  return new Map([
+    [
+      dimension,
+      {
+        requirementId: `req-${sid}-${dimension}`,
+        questionId: "q-test",
+        subjectKind: "industry",
+        subjectId: sid,
+        dimension,
+        description: "test requirement",
+        importance: 1,
+        requiredEvidenceType: "test",
+        sufficiencyPolicyRef: "suf-v1",
+        confirmedCondition: "t",
+        uncertainCondition: "t",
+        unknownCondition: "t",
+        preferredPositionKinds: [],
+        status: "open",
+        createdAt: "t0",
+        updatedAt: "t0",
+      },
+    ],
+  ]);
 }
 
 function dim(key: string): MethodologyDimension {
@@ -36,6 +96,26 @@ function addSlot(repo: ResearchRepository, sid: string, dimension: string, statu
     dimension,
     status,
     coverageJudgement: "t",
+    createdAt: "t0",
+    updatedAt: "t0",
+  });
+  // ★ H-1（H1-INV-2）：`evaluate()` 现从【与 Pool 同一入口】解析该维度的 sufficiency policy。
+  //   测试为该维度 seed 一个声明 `suf-v1` 的 requirement（与 Pool 侧判定对齐）。
+  repo.upsertRequirement({
+    requirementId: `ir-${sid}-${dimension}`,
+    questionId: `q-${sid}-${dimension}`,
+    subjectKind: "industry",
+    subjectId: sid,
+    dimension,
+    description: "test requirement",
+    importance: 3,
+    requiredEvidenceType: "text",
+    sufficiencyPolicyRef: "suf-v1",
+    confirmedCondition: "c",
+    uncertainCondition: "u",
+    unknownCondition: "n",
+    preferredPositionKinds: [],
+    status: "open",
     createdAt: "t0",
     updatedAt: "t0",
   });
@@ -59,14 +139,30 @@ function addItem(
     relation,
     createdAt: "t0",
   });
+  // ★ H-1（H1-INV-3）：同一个 claimRef 必须同时是一条 **current（confirmed）** 信念，
+  //   否则它不计入 sufficiency（这正是 H-1 要修的语义）。历史态由各用例显式构造。
+  const knowledge = new KnowledgeRepository(repo.db);
+  const knowledgeId = ensureKnowledge(repo, sid);
+  knowledge.insertBelief({
+    beliefId: beliefIdFor(knowledgeId, claimRef),
+    knowledgeId,
+    claimRef,
+    sourceRef,
+    dimension,
+    confidence: 0.9,
+    state: "confirmed",
+    historicalRelations: [],
+    createdAt: "t0",
+    updatedAt: "t0",
+  });
 }
 
 const SID = "ind-s4";
 
 describe("S4 EvaluationService (four faces)", () => {
   test("insufficient evidence => status=insufficient_evidence and NO score (T-A5)", () => {
-    const { svc } = setup();
-    const ev = svc.evaluateDimension(SID, dim("market"));
+    const { repo, svc } = setup();
+    const ev = svc.evaluateDimension(SID, knowledgeIdFor(repo.db, SID), dim("market"), requirementMap(SID, "market"));
     assert.equal(ev.status, "insufficient_evidence");
     assert.equal(ev.score, undefined, "no score when evidence is insufficient");
   });
@@ -75,7 +171,7 @@ describe("S4 EvaluationService (four faces)", () => {
     const { repo, svc } = setup();
     addSlot(repo, SID, "market", "partial");
     addItem(repo, SID, "market", "artifact:claim/c1");
-    const ev = svc.evaluateDimension(SID, dim("market"));
+    const ev = svc.evaluateDimension(SID, knowledgeIdFor(repo.db, SID), dim("market"), requirementMap(SID, "market"));
     assert.equal(ev.status, "evaluated");
     assert.equal(typeof ev.score, "number");
     assert.equal(ev.scoreScale, "0-100");
@@ -86,7 +182,7 @@ describe("S4 EvaluationService (four faces)", () => {
     addSlot(repo, SID, "demand", "conflicting");
     addItem(repo, SID, "demand", "artifact:claim/a", "contradicts");
     addItem(repo, SID, "demand", "artifact:claim/b", "contradicts");
-    const ev = svc.evaluateDimension(SID, dim("demand"));
+    const ev = svc.evaluateDimension(SID, knowledgeIdFor(repo.db, SID), dim("demand"), requirementMap(SID, "demand"));
     assert.equal(ev.status, "conflicting");
     assert.equal(ev.score, undefined);
     assert.equal(ev.conflictingClaimRefs?.length, 2);
@@ -101,7 +197,7 @@ describe("S4 EvaluationService (four faces)", () => {
       addItem(repo, SID, d.key, `artifact:claim/${d.key}`);
     }
 
-    const evaluation = svc.evaluate("industry", SID);
+    const evaluation = svc.evaluate("industry", SID, knowledgeIdFor(repo.db, SID));
 
     // T-A6: four faces
     assert.equal(evaluation.coverage.total, 12);
@@ -139,7 +235,7 @@ describe("S4 EvaluationService (four faces)", () => {
       addItem(repo, sid, d.key, `artifact:claim/${d.key}-1`, "consistent", "src-1");
       addItem(repo, sid, d.key, `artifact:claim/${d.key}-2`, "consistent", "src-2");
     }
-    const evaluation = svc.evaluate("industry", sid);
+    const evaluation = svc.evaluate("industry", sid, knowledgeIdFor(repo.db, sid));
     assert.equal(evaluation.criticalFlags["risk"], true);
     assert.equal(evaluation.criticalFlags["key_validation"], true);
     assert.equal(evaluation.decision.decisionStatus, "reserve");
@@ -147,8 +243,8 @@ describe("S4 EvaluationService (four faces)", () => {
   });
 
   test("`insufficient_evidence` is an EVALUATION status; the decision for it is `pending`", () => {
-    const { svc } = setup();
-    const evaluation = svc.evaluate("industry", "ind-s4-empty");
+    const { repo, svc } = setup();
+    const evaluation = svc.evaluate("industry", "ind-s4-empty", knowledgeIdFor(repo.db, "ind-s4-empty"));
     assert.equal(evaluation.coverage.insufficient, 12);
     assert.equal(evaluation.decision.decisionStatus, "pending");
     // the decision enum must never contain the evaluation status word
@@ -162,7 +258,7 @@ describe("S4 EvaluationService (four faces)", () => {
     addSlot(repo, SID, "market", "partial");
     addItem(repo, SID, "market", "artifact:claim/c1");
 
-    const assessment = svc.assessEvidence(SID, dim("market"));
+    const assessment = svc.assessEvidence(SID, knowledgeIdFor(repo.db, SID), dim("market"), requirementMap(SID, "market"));
     assert.equal(assessment.status, "evaluated");
     assert.equal((assessment as unknown as { score?: number }).score, undefined, "no score on face ①");
     assert.equal(assessment.evidenceRefs.length, 1);

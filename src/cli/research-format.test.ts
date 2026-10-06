@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   ResearchDb,
   ResearchRepository,
+  KnowledgeRepository,
   SqliteArtifactStore,
   EchoDataProvider,
   OpportunityDiscoveryService,
@@ -26,6 +27,17 @@ import {
   toJson,
   type PoolSlotView,
 } from "./research-format.js";
+import type { DatabaseSync } from "node:sqlite";
+
+/**
+ * ★ H-1（N-1 方案 A）：Evaluation 要求 caller 显式提供 `knowledgeId`。
+ * 缺失即报错（不静默传空，否则 current 输入退化为空集、测试覆盖静默失效）。
+ */
+function knowledgeIdFor(db: DatabaseSync, sid: string): string {
+  const k = new KnowledgeRepository(db).findKnowledgeBySubject("industry", sid);
+  if (!k) throw new Error(`test fixture: no knowledge for industry ${sid} (H-1 requires current beliefs)`);
+  return k.knowledgeId;
+}
 
 async function seed() {
   const db = new ResearchDb({ path: ":memory:" });
@@ -42,7 +54,7 @@ async function seed() {
       { statement: "demand a", dimension: "demand", sourceRef: "s2" },
     ],
   });
-  const evaluation = new EvaluationService(db.db).evaluate("industry", sid);
+  const evaluation = new EvaluationService(db.db).evaluate("industry", sid, knowledgeIdFor(db.db, sid));
   const priorities = new PriorityService(db.db).currentPriorities(sid);
   const pool: PoolSlotView[] = repo.listPoolSlots(sid).map((slot) => ({
     slot,

@@ -18,13 +18,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
+import { KnowledgeRepository } from "./storage/knowledge-repository.js";
+import type { DatabaseSync } from "node:sqlite";
 import { SqliteArtifactStore, type ArtifactStore } from "./storage/artifact-store.js";
 import { EchoDataProvider } from "./providers/echo-data-provider.js";
 import { MaterialVersionService } from "./application/material-version-service.js";
 import { CandidateExtractionService, ExplicitBlockExtractor } from "./application/candidate-extraction-service.js";
 import { CandidateReviewService } from "./application/candidate-review-service.js";
 import { CandidateProjectionService } from "./application/candidate-projection-service.js";
-import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
 import { EvaluationService } from "./application/evaluation-service.js";
 import { ReportService } from "./application/report-service.js";
@@ -95,6 +96,16 @@ const opened: Env[] = [];
 after(() => {
   for (const e of opened) e.close();
 });
+
+/**
+ * ★ H-1（N-1 方案 A）：Evaluation 要求 caller 显式提供 `knowledgeId`。
+ * 缺失即报错（不静默传空，否则 current 输入退化为空集、测试覆盖静默失效）。
+ */
+function knowledgeIdFor(db: DatabaseSync, sid: string): string {
+  const k = new KnowledgeRepository(db).findKnowledgeBySubject("industry", sid);
+  if (!k) throw new Error(`test fixture: no knowledge for industry ${sid} (H-1 requires current beliefs)`);
+  return k.knowledgeId;
+}
 
 async function env(rawText: string = RAW): Promise<Env> {
   const dir = mkdtempSync(join(tmpdir(), "tiancha-c6e-"));
@@ -227,7 +238,11 @@ describe("T-C6-4 / T-C6-7 — C6 semantics reach the Report", () => {
     e.review.confirm(factId, { operator: "analyst", relation: "SUPPORT" });
     await e.projection.project(factId, { operator: "analyst" });
 
-    const evaluation = new EvaluationService(e.db.db).evaluate("industry", e.industryId);
+    const evaluation = new EvaluationService(e.db.db).evaluate(
+      "industry",
+      e.industryId,
+      knowledgeIdFor(e.db.db, e.industryId), // ★ H-1：显式 knowledgeId
+    );
 
     // the coverage is a SUFFICIENCY summary (evaluated / insufficient / conflicting) — not a rating
     const c = evaluation.coverage;

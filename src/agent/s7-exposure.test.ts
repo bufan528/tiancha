@@ -19,6 +19,7 @@ import assert from "node:assert/strict";
 import {
   ResearchDb,
   ResearchRepository,
+  KnowledgeRepository,
   SqliteArtifactStore,
   EchoDataProvider,
   OpportunityDiscoveryService,
@@ -34,6 +35,17 @@ import {
 } from "@tiancha/research";
 import { buildResearchTools } from "./research-tools.js";
 import { EVIDENCE_INSUFFICIENT, dimensionStatusLabel, formatEvaluationHuman } from "../cli/research-format.js";
+import type { DatabaseSync } from "node:sqlite";
+
+/**
+ * ★ H-1（N-1 方案 A）：Evaluation 要求 caller 显式提供 `knowledgeId`。
+ * 缺失即报错（不静默传空，否则 current 输入退化为空集、测试覆盖静默失效）。
+ */
+function knowledgeIdFor(db: DatabaseSync, sid: string): string {
+  const k = new KnowledgeRepository(db).findKnowledgeBySubject("industry", sid);
+  if (!k) throw new Error(`test fixture: no knowledge for industry ${sid} (H-1 requires current beliefs)`);
+  return k.knowledgeId;
+}
 
 const S7_TOOLS = ["research_pool_show", "research_evaluate", "research_priority", "research_report"] as const;
 const B5_TOOLS = [
@@ -153,7 +165,7 @@ describe("S7 capability exposure", () => {
 
   test("T-A12-4: research_evaluate reads exactly the latest stored evaluation", async () => {
     const { byName, db, sid } = await setup();
-    const ev = new EvaluationService(db.db).evaluate("industry", sid); // a HUMAN-side write
+    const ev = new EvaluationService(db.db).evaluate("industry", sid, knowledgeIdFor(db.db, sid)); // a HUMAN-side write
     assert.equal(countEvals(db), 1);
     const { parsed } = await call(byName.get("research_evaluate"), "S7 行业");
     assert.deepEqual(parsed, ev);
@@ -197,7 +209,7 @@ describe("S7 capability exposure", () => {
     assert.equal(dimensionStatusLabel("insufficient_evidence"), "证据不足");
 
     // (c) the rendered evaluation contains no forbidden wording either
-    const ev = new EvaluationService(db.db).evaluate("industry", sid);
+    const ev = new EvaluationService(db.db).evaluate("industry", sid, knowledgeIdFor(db.db, sid));
     const human = formatEvaluationHuman(ev);
     assert.ok(human.includes("证据不足"), "the evaluation renders 证据不足");
     for (const w of FORBIDDEN) assert.ok(!human.includes(w), `human output must not contain "${w}"`);

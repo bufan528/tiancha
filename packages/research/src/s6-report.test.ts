@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
 import { KnowledgeRepository } from "./storage/knowledge-repository.js";
+import type { DatabaseSync } from "node:sqlite";
 import { SqliteArtifactStore } from "./storage/artifact-store.js";
 import { ReportRepository } from "./storage/report-repository.js";
 import { ReportService } from "./application/report-service.js";
@@ -44,8 +45,18 @@ async function seed() {
       { statement: "risk b", dimension: "risk", relationHint: { kind: "CONFLICT" } },
     ],
   });
-  new EvaluationService(db.db).evaluate("industry", sid);
+  new EvaluationService(db.db).evaluate("industry", sid, knowledgeIdFor(db.db, sid)); // ★ H-1：显式 knowledgeId
   return { db, repo, sid };
+}
+
+/**
+ * ★ H-1（N-1 方案 A）：Evaluation 要求 caller 显式提供 `knowledgeId`。
+ * 缺失即报错（不静默传空，否则 current 输入退化为空集、测试覆盖静默失效）。
+ */
+function knowledgeIdFor(db: DatabaseSync, sid: string): string {
+  const k = new KnowledgeRepository(db).findKnowledgeBySubject("industry", sid);
+  if (!k) throw new Error(`test fixture: no knowledge for industry ${sid} (H-1 requires current beliefs)`);
+  return k.knowledgeId;
 }
 
 /** A whole-state “source of truth” fingerprint — must be identical across a projection. */

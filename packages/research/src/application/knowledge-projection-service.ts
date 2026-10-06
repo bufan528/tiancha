@@ -34,7 +34,7 @@ import {
   isCurrentBelief,
   isEvolvableBeliefState,
 } from "../domain/index.js";
-import { isSufficient, sufficiencyFacts, sufficiencyPolicies, type SufficiencyPolicy } from "../domain/sufficiency.js";
+import { isSufficient, resolveSufficiencyPolicy, sufficiencyFacts } from "../domain/sufficiency.js";
 import { PriorityService } from "./priority-service.js";
 import type {
   Claim,
@@ -813,29 +813,6 @@ export const CLAIM_REF_PREFIX = "artifact:claim/";
  */
 export function normalizeClaimRef(ref: string): string {
   return ref.startsWith(CLAIM_REF_PREFIX) ? ref : CLAIM_REF_PREFIX + ref;
-}
-
-/**
- * S4.5-R1: resolve the sufficiency policy the Pool must judge with, from the
- * Requirement's `sufficiencyPolicyRef`. NEVER a hard-coded version:
- *   - no requirement         -> undefined (nothing to judge against; the slot can
- *                               only reach `partial`, never `sufficient`)
- *   - ref missing / unknown  -> THROW (silently falling back to a default would make
- *                               the recorded provenance a lie)
- */
-function resolveSufficiencyPolicy(req?: InformationRequirement): SufficiencyPolicy | undefined {
-  if (!req) return undefined;
-  const ref = req.sufficiencyPolicyRef;
-  if (!ref) {
-    throw new Error(`requirement ${req.requirementId} has no sufficiencyPolicyRef (S4.5-R1)`);
-  }
-  const policy = sufficiencyPolicies.get(ref);
-  if (!policy) {
-    throw new Error(
-      `unknown sufficiency policy version '${ref}' referenced by requirement ${req.requirementId}`,
-    );
-  }
-  return policy;
 }
 
 /** S4.5: a slot status maps 1:1 to a gap category. `null` = sufficient = no gap. */

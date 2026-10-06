@@ -233,8 +233,23 @@ export async function runResearchCommand(sub: string, rest: string[], deps: Rese
 export async function runEvaluate(name: string | undefined, options: ResearchCliOptions, deps: ResearchCliDeps): Promise<number> {
   const ind = resolveIndustry(name, options, deps, "evaluate");
   if (!ind) return 1;
+  // ★ H-1（N-1 方案 A / H1-INV-1）：knowledgeId 必须由 caller 显式提供 ——
+  //   Evaluation 不接受 subjectId 的隐式 knowledge 解析，也不得 fallback（H1-INV-6 精神）。
+  //   ★ knowledge 的 current anchor 经 `findKnowledgeBySubject` 取得 ——
+  //     **不得**读 `Industry.currentKnowledgeId`：它是 DEPRECATED 的 legacy 列
+  //     （domain/industry-knowledge.ts 头注 / contract §2.4 P4：「Phase C never reads it」，
+  //      否则会形成「current」的第二 SoT）。
+  //   该 subject 无 knowledge ⇒ 确定性失败，绝不猜测或取「最新」。
+  const knowledgeId = new KnowledgeRepository(deps.repo.db).findKnowledgeBySubject(
+    "industry",
+    ind.industryId,
+  )?.knowledgeId;
+  if (!knowledgeId) {
+    deps.err(`industry ${ind.industryId} 尚无 current knowledge（未投影过任何信念），无法评估`);
+    return 1;
+  }
   // R3: the CLI is the ONLY place that appends a new InvestmentEvaluation.
-  const evaluation = deps.evaluation.evaluate("industry", ind.industryId);
+  const evaluation = deps.evaluation.evaluate("industry", ind.industryId, knowledgeId);
   deps.out(options.json ? toJson(evaluation) : formatEvaluationHuman(evaluation, dimensionNames(deps)));
   return 0;
 }

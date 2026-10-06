@@ -18,6 +18,7 @@
  */
 
 import { PolicyRegistry } from "./policy-registry.js";
+import type { InformationRequirement } from "./information-requirement.js";
 
 export interface SufficiencyPolicy {
   policyId: string;
@@ -73,3 +74,31 @@ export function isSufficient(facts: SufficiencyFacts, policy: SufficiencyPolicy)
 
 export const sufficiencyPolicies = new PolicyRegistry<SufficiencyPolicy>("sufficiency");
 sufficiencyPolicies.register(SUFFICIENCY_POLICY_V1);
+
+/**
+ * ★ H-1（docs/phaseC/h1-sufficiency-remediation-contract.md · H1-INV-2 / H1-7-10）：
+ * 从 Requirement 的 `sufficiencyPolicyRef` 解析本次判定必须使用的 SufficiencyPolicy。
+ *
+ * 这是【共享的唯一】resolver：Pool（KnowledgeProjectionService）与 Evaluation（EvaluationService）
+ * 都必须经它解析。NEVER a hard-coded version：
+ *   - 无 requirement      → undefined（没有任何可判据；对应 slot 只能 `partial`，永不 `sufficient`）
+ *   - ref 缺失 / 未知     → **THROW**（静默 fallback 到默认版本会让记录的 provenance 变成谎言）
+ *
+ * 纯函数：不访问 DB、不依赖任何 Service、无副作用、不改 PolicyRegistry / 版本语义。
+ * 该函数由 `application/knowledge-projection-service.ts` 中原有的同名局部函数【迁移】而来，
+ * 语义逐字保持不变（H1-7-10：允许纯 resolver 下沉到既有 domain 语义位置）。
+ */
+export function resolveSufficiencyPolicy(req?: InformationRequirement): SufficiencyPolicy | undefined {
+  if (!req) return undefined;
+  const ref = req.sufficiencyPolicyRef;
+  if (!ref) {
+    throw new Error(`requirement ${req.requirementId} has no sufficiencyPolicyRef (S4.5-R1)`);
+  }
+  const policy = sufficiencyPolicies.get(ref);
+  if (!policy) {
+    throw new Error(
+      `unknown sufficiency policy version '${ref}' referenced by requirement ${req.requirementId}`,
+    );
+  }
+  return policy;
+}

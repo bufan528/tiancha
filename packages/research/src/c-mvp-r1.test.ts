@@ -29,6 +29,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
 import { KnowledgeRepository } from "./storage/knowledge-repository.js";
+import type { DatabaseSync } from "node:sqlite";
 import {
   SqliteArtifactStore,
   type ArtifactStore,
@@ -132,6 +133,17 @@ async function setup(industryName = "R1 行业"): Promise<Fixture> {
 
 function submit(materials: MaterialIngestService, sid: string) {
   return materials.ingest({ subjectKind: "industry", subjectId: sid, title: "纪要", text: MATERIAL });
+}
+
+/**
+ * ★ H-1（N-1 方案 A）：Evaluation 现要求 caller 显式提供 `knowledgeId`。
+ * 测试里同一入口取该 subject 的 current knowledge。**缺失即报错**（而不是静默传空，
+ * 否则 H1-INV-1 的 current 输入会退化为空集、测试覆盖静默失效）。
+ */
+function knowledgeIdFor(db: DatabaseSync, sid: string): string {
+  const k = new KnowledgeRepository(db).findKnowledgeBySubject("industry", sid);
+  if (!k) throw new Error(`test fixture: no knowledge for industry ${sid} (H-1 requires current beliefs)`);
+  return k.knowledgeId;
 }
 
 /** Whole-subject CONTENT fingerprint: nothing moved ⟺ nothing was written. */
@@ -576,8 +588,6 @@ after(() => {
 // overwrite the new one) and the ORPHAN CLAIM SCAN a残骸 retry must run before writing anything.
 // ---------------------------------------------------------------------------
 
-import type { DatabaseSync } from "node:sqlite";
-
 /** Simulates a SECOND process taking the lease over while the first one is still working. */
 class LeaseStealingStore implements ArtifactStore {
   private calls = 0;
@@ -786,7 +796,12 @@ describe("C-MVP-R1 · 5a: unconfirmed material evidence is never counted as conf
           `T-R1-16: ${id} must NOT be listed as recent (confirmed) evidence`,
         );
       }
-      const evaluation = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      const evaluation = new EvaluationService(t.db.db).evaluate(
+        "industry",
+        t.sid,
+        // ★ H-1（N-1 方案 A）：Evaluation 现需显式 knowledgeId。
+        knowledgeIdFor(t.db.db, t.sid),
+      );
       for (const dim of evaluation.dimensionEvaluations) {
         for (const id of projected) {
           assert.ok(
@@ -819,7 +834,11 @@ describe("C-MVP-R1 · 5a: unconfirmed material evidence is never counted as conf
         finished.material.claimRefs.length,
         "T-R1-17: once COMPLETED, every Claim of the material counts as evidence again",
       );
-      const afterEval = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      const afterEval = new EvaluationService(t.db.db).evaluate(
+        "industry",
+        t.sid,
+        knowledgeIdFor(t.db.db, t.sid), // ★ H-1：显式 knowledgeId
+      );
       assert.equal(
         afterEval.dimensionEvaluations.flatMap((d) => d.unconfirmedEvidenceRefs ?? []).length,
         0,
@@ -906,7 +925,11 @@ describe("C-MVP-R1 · 5a crash window and conservative downgrade (§29.15)", () 
           `T-R1-18: ${id} must not be counted as confirmed evidence during the window`,
         );
       }
-      const evaluation = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      const evaluation = new EvaluationService(t.db.db).evaluate(
+        "industry",
+        t.sid,
+        knowledgeIdFor(t.db.db, t.sid), // ★ H-1：显式 knowledgeId
+      );
       for (const dim of evaluation.dimensionEvaluations) {
         for (const id of claimIds) {
           assert.ok(
@@ -950,7 +973,11 @@ describe("C-MVP-R1 · 5a crash window and conservative downgrade (§29.15)", () 
           `T-R1-19: ${id} is not attributable while the残骸 is unresolved — it must NOT be confirmed`,
         );
       }
-      const evaluation = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      const evaluation = new EvaluationService(t.db.db).evaluate(
+        "industry",
+        t.sid,
+        knowledgeIdFor(t.db.db, t.sid), // ★ H-1：显式 knowledgeId
+      );
       const confirmedRefs = evaluation.dimensionEvaluations.flatMap((d) => d.evidenceRefs);
       for (const id of claimIds) {
         assert.ok(!confirmedRefs.includes(`artifact:claim/${id}`), `T-R1-19: ${id} withheld`);
@@ -1069,7 +1096,11 @@ describe("C-MVP-R1 · orphan scan reach and ambiguity (§29.15)", () => {
           `T-R1-21: ${ref} must NOT be counted as confirmed while the ambiguity is unresolved`,
         );
       }
-      const afterEval = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      const afterEval = new EvaluationService(t.db.db).evaluate(
+        "industry",
+        t.sid,
+        knowledgeIdFor(t.db.db, t.sid), // ★ H-1：显式 knowledgeId
+      );
       const confirmedRefs = afterEval.dimensionEvaluations.flatMap((d) => d.evidenceRefs);
       for (const ref of legacyRefs) {
         assert.ok(!confirmedRefs.includes(ref), `T-R1-21: ${ref} withheld from the confirmed refs`);
@@ -1189,7 +1220,11 @@ describe("C-MVP-R1 · an un-attributable overlap keeps the subject conservative 
         !after.sections.recentEvidence.includes(legacyRef),
         "T-R1-24: the un-owned Claim is withheld from recent (confirmed) evidence",
       );
-      const afterEval = new EvaluationService(t.db.db).evaluate("industry", t.sid);
+      const afterEval = new EvaluationService(t.db.db).evaluate(
+        "industry",
+        t.sid,
+        knowledgeIdFor(t.db.db, t.sid), // ★ H-1：显式 knowledgeId
+      );
       assert.ok(
         !afterEval.dimensionEvaluations.flatMap((d) => d.evidenceRefs).includes(legacyRef),
         "T-R1-24: …and withheld from the confirmed evidence of every dimension",

@@ -40,6 +40,17 @@ export interface DimensionEvaluation {
    */
   unconfirmedEvidenceRefs?: string[];
   sufficiency: EvidenceSufficiency;
+  /**
+   * ★ H-1（H1-INV-5）：本维度 sufficiency 判定实际采用的 policy provenance。
+   *   `sufficiencyPolicyRef`      = requirement 声明的引用（如 `suf-v1`）
+   *   `sufficiencyPolicyVersionId` = 经 PolicyRegistry 解析出的版本（如 `suf-v1`）
+   * ★ 它【独立于】`InvestmentEvaluation.evaluationPolicyVersionId`（eval-* 评分规则）——
+   *   二者属不同 policy domain，不得互相压写。
+   * optional / additive（与 `unconfirmedEvidenceRefs` 同模式）：不破坏既有消费者，
+   * 且经既有 JSON 列 `dimension_evaluations_json` 往返，无需 schema migration。
+   */
+  sufficiencyPolicyRef?: string;
+  sufficiencyPolicyVersionId?: string;
   /** Present only for `conflicting`. */
   conflictingClaimRefs?: string[];
 }

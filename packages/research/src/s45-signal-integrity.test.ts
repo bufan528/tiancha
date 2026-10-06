@@ -25,7 +25,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { ResearchDb } from "./storage/research-db.js";
 import { ResearchRepository } from "./storage/research-repository.js";
+import { KnowledgeRepository } from "./storage/knowledge-repository.js";
 import { SqliteArtifactStore } from "./storage/artifact-store.js";
+import type { DatabaseSync } from "node:sqlite";
 import { KnowledgeProjectionService } from "./application/knowledge-projection-service.js";
 import { OpportunityDiscoveryService } from "./application/opportunity-discovery-service.js";
 import { EvaluationService } from "./application/evaluation-service.js";
@@ -48,6 +50,34 @@ function setup() {
 }
 
 const NOW = "2026-01-01T00:00:00.000Z";
+
+/**
+ * ★ H-1（N-1 方案 A）：Evaluation 要求 caller 显式提供 `knowledgeId`。
+ * 缺失即报错（不静默传空，否则 current 输入退化为空集、测试覆盖静默失效）。
+ */
+function knowledgeIdFor(db: DatabaseSync, sid: string): string {
+  const k = new KnowledgeRepository(db).findKnowledgeBySubject("industry", sid);
+  if (!k) throw new Error(`test fixture: no knowledge for industry ${sid} (H-1 requires current beliefs)`);
+  return k.knowledgeId;
+}
+
+/** ★ H-1：为 subject seed 一个【空的】current knowledge anchor（不建任何信念）。 */
+function knowledgeIdForSeed(db: DatabaseSync, sid: string): string {
+  const knowledge = new KnowledgeRepository(db);
+  const existing = knowledge.findKnowledgeBySubject("industry", sid);
+  if (existing) return existing.knowledgeId;
+  const knowledgeId = `know-${sid}`;
+  knowledge.upsertKnowledge({
+    knowledgeId,
+    subjectKind: "industry",
+    subjectId: sid,
+    beliefs: [],
+    version: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
+  return knowledgeId;
+}
 
 function mkSlot(subjectId: string, dimension: string, status: InformationPoolSlot["status"]): InformationPoolSlot {
   return {
@@ -214,7 +244,7 @@ describe("S4.5-B: minimum business reachability (Evaluation is not an orphan)", 
     assert.equal(repo.listGaps(sid).filter((g) => g.status === "open").length, 11);
 
     // EvaluationService runs on the SAME real chain (not an isolated unit)
-    const evaluation = new EvaluationService(db.db).evaluate("industry", sid);
+    const evaluation = new EvaluationService(db.db).evaluate("industry", sid, knowledgeIdFor(db.db, sid));
     const market = evaluation.dimensionEvaluations.find((d) => d.dimension === "market")!;
     assert.equal(market.status, "evaluated");
     assert.equal(typeof market.score, "number");
@@ -233,7 +263,15 @@ describe("S4.5-C: policy provenance", () => {
     const discovery = new OpportunityDiscoveryService(repo, new EchoDataProvider(), artifacts);
     const res = await discovery.ingestMaterial({ materialText: "x", industryName: "固态电池" });
 
-    const evaluation = new EvaluationService(db.db).evaluate("industry", res.industry.industryId);
+    // ★ H-1（N-1 方案 A）：evaluate() 需要 current knowledge anchor。
+    //   本用例只验证「记录的方法学/策略版本」，不依赖证据 ⇒ seed 一个空 anchor。
+    knowledgeIdForSeed(db.db, res.industry.industryId);
+
+    const evaluation = new EvaluationService(db.db).evaluate(
+      "industry",
+      res.industry.industryId,
+      knowledgeIdFor(db.db, res.industry.industryId),
+    );
     assert.ok(evaluation.methodologyVersionId, "methodology version recorded");
     assert.equal(evaluation.evaluationPolicyVersionId, EVALUATION_POLICY_V1.versionId);
     assert.equal(evaluation.aggregationPolicyVersionId, AGGREGATION_POLICY_V1.versionId);
