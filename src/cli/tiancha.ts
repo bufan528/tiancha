@@ -25,7 +25,8 @@ import {
 // --- Research kernel imports ------------------------------------------------
 import {
   TianchaRuntime,
-  SessionRegistry,
+  type SessionRegistrationCapability,
+  type SessionUnregistrationCapability,
   type AgentSessionFactoryPort,
   type ModelResolverPort,
   type EventBusPort,
@@ -120,7 +121,10 @@ async function resolveModel(): Promise<ModelResolverPort> {
  *   因为 Pi AgentSession 只有同步 dispose() / async abort()，没有 close()）。
  *   本轮不得因需要 remove 就把它升级成 dispose()/abort()。
  */
-function buildAgentSessionFactory(registry: SessionRegistry): AgentSessionFactoryPort {
+function buildAgentSessionFactory(
+  register: SessionRegistrationCapability,
+  unregister: SessionUnregistrationCapability,
+): AgentSessionFactoryPort {
   const cwd = process.cwd();
   return {
     async create(opts: ChildSessionOptions): Promise<ChildSession> {
@@ -145,7 +149,7 @@ function buildAgentSessionFactory(registry: SessionRegistry): AgentSessionFactor
 
       // ★ AF-1C IC-6-2：唯一【注册】调用点 —— 同一栈帧内配对 sessionId 与 capability。
       const sessionId = `child-${opts.taskId}`;
-      registry.register(sessionId, new PiSessionCapabilityAdapter(result.session));
+      register(sessionId, new PiSessionCapabilityAdapter(result.session));
 
       const s = result.session as unknown as { close?: () => Promise<void> } | undefined;
       return {
@@ -155,7 +159,7 @@ function buildAgentSessionFactory(registry: SessionRegistry): AgentSessionFactor
           // ★ G-05：沿用既有 close 语义（no-op），不升级为 dispose/abort。
           await s?.close?.();
           // ★ AF-1C IC-6-3：唯一【生命周期】调用点 —— 先关底层 session，后移除映射。
-          registry.remove(sessionId);
+          unregister(sessionId);
         },
       };
     },
@@ -172,17 +176,16 @@ async function cmdResearchSmoke(): Promise<void> {
 
   const bus: EventBusPort = createEventBus() as unknown as EventBusPort;
   const modelResolver = await resolveModel();
-  // ★ AF-1C IC-7-1（优先级 1）：composition root 直接持有【同一个】SessionRegistry 实例，
-  //   并把最小能力交给 factory。该实例与将来交给 PiExecutionProvider 的必须是同一个（IC-7-1.1）。
-  const registry = new SessionRegistry();
-  const factory = buildAgentSessionFactory(registry);
-
+  // ★ R-2B-A：SessionRegistry 由 TianchaRuntime（composition root）创建并持有
+  //   （AF-1C AI-5-1）；Runtime 只把【最小受控能力】交给 factory composition（R2BA-Q1），
+  //   CLI 不再创建或持有 registry。该实例与将来交给 PiExecutionProvider 的必须是同一个（IC-7-1.1）。
   const runtime = new TianchaRuntime({
     cwd: process.cwd(),
     eventDbPath,
     artifactDbPath,
     eventBus: bus,
-    agentSessionFactory: factory,
+    agentSessionFactory: (register, unregister) =>
+      buildAgentSessionFactory(register, unregister),
     modelResolver,
   });
   console.log("  [ok] TianchaRuntime assembled + Ports injected");
