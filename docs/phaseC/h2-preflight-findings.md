@@ -285,3 +285,79 @@ R6-ERR（Readiness Preflight 的 SoT Legality Check）
                                H2-04（名称相似 ≠ 语义相同）
   Flow            : Experience → Proposal → Review → Human Gate → Methodology v1
 ```
+
+---
+
+## §14 Erratum（append-only · 不修改 §10 原文）
+
+```text
+Erratum ID  : E-1
+Raised at   : R6-ERR SoT Legality Check Proposal Review（只读）
+Affects     : §10 R10 — H2-01 的 Reachability 行
+Nature      : 客观事实错误（取证方法缺陷所致）· 非 Git/内容缺陷
+Rule        : append-only —— §10 原文保持不变，本 §14 为唯一更正来源
+```
+
+### E-1 原记录（§10 · H2-01）
+
+```text
+Reachability: 生产调用者 = 0 · 测试调用者 = 0（仅定义 @ :381）
+              ⇒ 当前不存在合法生产调用路径
+```
+
+### E-1 更正
+
+```text
+❌ 原记录「测试调用者 = 0」错误
+✅ 实测：supersedeClaim 全仓共 2 处命中（递归正确取证）
+     [PROD] packages/research/src/application/opportunity-discovery-service.ts:381   （定义）
+     [test] packages/research/src/foundation.test.ts:169                            （调用）
+   foundation.test.ts:162  describe("T9 old claim never overwritten")
+   foundation.test.ts:163  test("supersede retains old claim (temporalRelation=old) and adds new current")
+   foundation.test.ts:180  assert.equal((oldAfter!.blob as Claim).temporalRelation, "old")
+   foundation.test.ts:181  assert.equal((newAfter!.blob as Claim).temporalRelation, "current")
+```
+
+### E-1 根因（取证方法缺陷，非项目缺陷）
+
+```text
+当时的命令：Select-String -Path 'packages/research/src/**/*.ts','src/**/*.ts'
+PowerShell 的 `**` 只展开一层 ⇒ 实际匹配 packages/research/src/<dir>/*.ts
+⇒ 位于 packages/research/src/ 直下的 foundation.test.ts（0 层）被遗漏
+⇒ 得出「测试调用者 = 0」的错误结论
+```
+
+### E-1 仍然成立的断言
+
+```text
+✅ 生产调用者 = 0 —— 不变（opportunity-discovery-service.ts:381 仅为定义）
+⇒ H2-01 的最终 Disposition 【不变】：🟡 REGISTERED / NOT REACHABLE
+⇒ 不开 remediation（结论未变）
+```
+
+### E-1 修正后的语义描述
+
+```text
+原描述：dead code / unwired API
+更正为：contract-covered（T9）+ test-covered + production-unwired
+  即：存在已冻结的契约行为（T9：旧 claim 保留为 temporalRelation="old"、新 claim 为 "current"）
+      且被测试守护，但尚无生产接线。
+```
+
+### E-1 方法论含义（纳入 R6-ERR Case 5）
+
+```text
+★ 本勘误同时构成 R6-ERR 的第 5 个真实案例，证明：
+    「测试覆盖 ≠ 生产接线」以及「合法 SoT 与运行可达性正交」
+  Semantic Authority  ⟂  Runtime Reachability
+  ⇒ 二者独立判定 + 联合报告；不得由 Reachability 反推 SoT Legality。
+```
+
+### E-1 勘误范围
+
+```text
+✅ 本 §14 为唯一更正来源（append-only）
+❌ 未修改 §10 原文
+❌ 未 amend c950cd4 · 未 rebase · 未 force
+❌ 未修改任何生产代码 / 测试 / 契约
+```
