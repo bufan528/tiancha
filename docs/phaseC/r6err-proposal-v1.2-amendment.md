@@ -551,7 +551,8 @@ v1.2  【规范性修订 —— 本 Amendment 文件，v1.1 原文不动】
 ❌ 修改代码 / 测试 / schema / Methodology / Version / Human Gate
 ❌ 修改 H-1 ～ H-6 任何已发布记录
 ❌ 任何 WATCH 修复 / legacy cleanup / subject-kind 重构 / AD-R6-1 实施
-❌ git add / Stage · commit · push（本文件当前仍为 untracked 工作树文件，未 stage、未 commit）
+❌ push（本文件已按 R6ERR-AUTH-03 完成 Stage、按 R6ERR-AUTH-04 完成本地 Commit；
+   已完成 Stage / 本地 Commit ≠ 授权 Push、Formal Freeze 或 Implementation）
 ```
 
 ---
@@ -783,11 +784,32 @@ rev6（本版）  —— 依【E-3 复审 REVISE】修订 §7.2 两项（**E-1 /
 ★ 状态（当前有效状态）：**ACCEPTED — rev6 / NOT EFFECTIVE / NOT FROZEN**
    · 依据 **R6ERR-AUTH-01**（Amendment Acceptance，已签发）：Amendment 内容已正式接受
    · 依据 **R6ERR-AUTH-02**：保留独立文件；当前状态标记已更新为本行
+   · 依据 **R6ERR-AUTH-03**（单文件 Stage）：已完成 —— 本文件已进入暂存区并完成暂存审计
+   · 依据 **R6ERR-AUTH-04**（条件式本地 Commit）：已完成 —— 已建立本地 Git 历史
    ★ Acceptance ≠ Amendment 生效；≠ Formal Freeze；≠ Implementation 授权
-   ★ 下一阶段仍须【分别】独立授权：落盘后的 Git 固化（git add / commit / push）、
-     Formal Freeze / Human Gate、Implementation Contract / Preflight / Implementation
+   ★ Stage / 本地 Commit 的完成，同样 ≠ Push 授权、≠ Formal Freeze、≠ Amendment 生效、≠ Implementation 授权
+   ★ 仍须【分别】独立授权：Push · Formal Freeze / Human Gate · Amendment 生效 ·
+     Implementation Contract / Preflight / Implementation
 ★ 本修订记录本身【不构成】生效、Freeze 或实现授权
 ★ rev6 未改变任何规则语义（仅统一计数口径与补间接依赖证明）
 ★ rev6 未改动 §7.1 的 E-1 / E-2，亦未重开 A–D
 ★ 上述 rev1–rev5 各段中的「DRAFT / NOT ACCEPTED」状态为其【当时的历史事实】，不追溯改写
+
+────────────────────────────────────────────────────────────────────
+◆ 接受后的非规范性状态事实修正（POST-ACCEPTANCE STATUS FACT RECONCILIATION）
+   依据授权：R6ERR-AUTH-05（Accepted Amendment 状态事实修正工作包）
+   性质：**非规范性**修改 —— 不进入 Amendment 修订历史，不编号为 rev7，
+         不构成新的规范内容，不改变任何决策规则 / 诊断语义 / 兼容性证据 / 统计口径
+   原因：AUTH-03（Stage）与 AUTH-04（本地 Commit）执行后，
+         §8 末行与 §10 原「下一阶段仍须…Git 固化」表述所描述的 Git 事实已过时
+   范围：仅修正【当前状态陈述】两处（§8 末行 + §10 当前状态块）；
+         rev1–rev5 历史记录与 §0 Baseline（制定时基线）作为历史事实保留
+   修正内容：
+     · §8 末行：删去「本文件当前仍为 untracked 工作树文件，未 stage、未 commit」的过时描述，
+       改为「push 仍禁止；已完成 Stage / 本地 Commit ≠ 授权 Push / Freeze / Implementation」
+     · §10 当前状态块：补记 AUTH-03（Stage 已完成）与 AUTH-04（本地 Commit 已完成），
+       并将「仍须独立授权」清单收敛为 Push / Formal Freeze / 生效 / Implementation
+   未改变：§7.1 矩阵与 R5 分支 · §7.2 的 40 项核验范围与分类 · §9 的 26 项内容修订计数 ·
+           §0 的 `ACCEPTED — rev6 / NOT EFFECTIVE / NOT FROZEN` 状态标记
+   ★ 本记录不构成生效、Freeze、Push 或实现授权
 ```
