@@ -1066,4 +1066,143 @@ rev6（本版）  —— 依【E-3 复审 REVISE】修订 §7.2 两项（**E-1 /
    【五、防自引用】
      本记录**不写入**本次 AUTH-11 Commit 自身的 Commit ID、最终文件 SHA-256 或最终 blob。
      相关凭证只在提交后的交付报告中记录。
+
+────────────────────────────────────────────────────────────────────
+◆ EFFECTIVITY EVENT RECORD · EFF-01（授权：R6ERR-AUTH-15）
+   【4.1 身份与前序关系】
+     事件编号：EFF-01（唯一；追加前已只读查重，确认未占用）
+     独立授权编号：R6ERR-AUTH-15（Effectivity Event Execution，已签发）
+     事件类型：EFFECTIVITY
+     记录日期：2026-10-09
+     对象路径：docs/phaseC/r6err-proposal-v1.2-amendment.md
+     对象版本：R6-ERR Proposal v1.2 Amendment **rev6**
+     原始 v1.1 绑定身份：commit=1435a7c7d66acdb19cf2c3babbe2e3e7c7ec83e0 ·
+                        path=docs/phaseC/r6err-proposal-refinement-record.md ·
+                        blob=d7cd3c2ff28ff0e5713035df7f5018ac9aecc373
+     原冻结对象：commit=7f31bb8bbd6174005fdf0c41a1f7a6d5e9029308 ·
+                blob=67923f368af7dc1378390273b36ebdab88e79abc
+
+     ★ 前序治理关系（本条事件的前置状态承接自以下有效治理记录）：
+       · **R6ERR-AUTH-10** —— 前序**有效生命周期状态转换记录**来源：
+         确立 R-STATE-1′…5 生命周期元规则、D-9-1…D-9-9 裁定，
+         并载明当前状态向量（当时 Effectivity = NOT EFFECTIVE）。
+       · **R6ERR-AUTH-11** —— AUTH-10 治理效力的**正式澄清规则**：
+         明确 AUTH-10 的治理裁定与 R-STATE 规则具有治理约束力（非仅供参考）。
+       · **R6ERR-AUTH-12** —— 当前已发布基线的**发布核验证据**：
+         远端 `main` 经实测指向 `421011e8add4f128dc2b2626ba973a1709036108`。
+       · **R6ERR-AUTH-14** —— 本次 `PASS WITH CONDITIONS` Gate 裁定
+         及 C-1 解释性裁定的**依据**。
+       ★ 本事件的事件前状态，即承接自 AUTH-10 所载状态向量，
+         并依 AUTH-11 的效力澄清与 AUTH-12 的发布核验构成当前有效基线。
+       ★ **AUTH-14 本身不是 Effectivity 状态转换事件**，仅为 Gate 审议与解释性裁定。
+
+   【4.2 事件前状态与目标状态（完整向量）】
+     事件前状态：
+       Acceptance                   = `ACCEPTED — rev6`
+       Freeze                       = `FROZEN — rev6`
+       Effectivity                  = `NOT EFFECTIVE`
+       Implementation Authorization = `NOT AUTHORIZED`
+       Publication                  = `PUBLISHED`
+       当前远端 main                 = `421011e8add4f128dc2b2626ba973a1709036108`
+       SC-EX-01                     = `REGISTERED / NOT RATIFIED`
+       原始 v1.1                     = `PROPOSED / NOT FROZEN`
+
+     目标状态：
+       Acceptance                   = `ACCEPTED — rev6`
+       Freeze                       = `FROZEN — rev6`
+       Effectivity                  = `EFFECTIVE`（**仅在本事件规定的发布核验条件满足后**）
+       Implementation Authorization = `NOT AUTHORIZED`
+       Publication                  = `PUBLISHED`
+                                      （远端 ref **必须在本事件成功发布核验后**
+                                        指向本事件 Commit）
+       SC-EX-01                     = `REGISTERED / NOT RATIFIED`
+       原始 v1.1                     = `PROPOSED / NOT FROZEN`
+
+     ★ 状态变化：
+       治理状态目标变化 = `Effectivity: NOT EFFECTIVE → EFFECTIVE`（条件满足后）
+       Publication 状态仍为 `PUBLISHED`，但其**远端 `main` 指针会随本事件的成功发布而改变**；
+       该 ref 指针的改变是本事件**发布凭证的组成部分**，
+       **不得**将其错误写成"完全不变的值"。
+       Acceptance / Freeze / Implementation Authorization / SC-EX-01 的登记性质
+       及原始 v1.1 状态**均不发生变化**。
+
+     ★ 防自引用：本记录**不预填**未来 Commit ID、最终 blob 或最终 SHA-256；
+       实际凭证在提交之后**单独生成**。
+
+   【4.3 C-1 · 解释性裁定的落实（引 AUTH-14，不扩大范围）】
+     「对本 Amendment，§0 的 `Status` 与 `Frozen` 字段，以及 §8 中描述当前授权状态的
+       相关文字，按其冻结时点的状态快照理解。它们不构成对独立 Human Gate 后续生效授权的
+       永久禁止，也不覆盖其后依 AUTH-10/AUTH-11 形成的有效生命周期状态转换记录。
+       当前 Effectivity 状态依 R-STATE-1′，以最新有效且已进入规范 `main` 提交链的
+       状态转换记录为准。」
+     ★ 该解释**不得**被描述为 R-STATE-3 原文已经逐字列举这些字段；
+       R-STATE-3 原文列举的是「§0 的 Acceptance history、历史 Acceptance 记录与
+       FORMAL FREEZE RECORD 中的状态陈述」三类。
+     ★ 该解释**不改变** §0 / §8 或任何既有 R-STATE 条文，
+       且**不追认** AUTH-06 期间的超范围修改。
+
+   【4.4 C-2 · 权威来源声明及其生效边界】
+     「本事件**仅在**完成授权、形成独立 Commit，并经指定远端 `main` 发布核验成功后生效。
+       自该核验成功时点起，R6-ERR 的 Effectivity 当前状态以本记录为准。
+       §0 的 `Status` 与 `Frozen` 字段，以及 §8 中描述当前授权状态的相关文字，
+       按 R6ERR-AUTH-14 的解释性裁定理解为冻结时点的状态快照；
+       它们不构成对独立 Human Gate 后续生效授权的永久禁止，
+       也不覆盖其后有效的生命周期状态转换记录。
+       当前 Effectivity 依 R-STATE-1′，以最新有效且已进入规范 `main` 提交链的
+       状态转换记录为准。」
+     ★ **不得**将本声明理解为「本地追加或本地 Commit 一完成，Amendment 就已经生效」。
+       在**远端发布核验成功之前**，当前状态**仍是 `NOT EFFECTIVE`**。
+
+   【4.5 C-3 · SC-EX-01 不追认声明（逐字）】
+     「本裁定仅认定 SC-EX-01 不构成 Amendment 生效的阻断条件；不构成对 AUTH-06
+       期间 §8 超范围改动的追认，亦不改变 SC-EX-01 的登记性质。」
+     SC-EX-01 = `REGISTERED / NOT RATIFIED`
+     ★ 不得将 SC-EX-01 描述为已解决、已追认、已消除或不再需要审计。
+
+   【4.6 C-4 · 生效触发条件及非追溯约束】
+     生效触发条件 =
+       独立授权已签发
+       + 本事件记录 append-only 追加并形成独立 Commit
+       + 后续获得独立 Push 授权
+       + 指定远端 `main` 经独立只读核验严格指向本事件 Commit
+     实际生效时点 =
+       约定发布核验成功的 **UTC 时点**
+     ★ 本记录**只写上述触发条件，不预先填入实际生效 UTC 时间**。
+     ★ **不得**将生效时间追溯到 Acceptance、Formal Freeze、此前 Push 或申请准备日期。
+     ★ 实际核验成功后，由**独立发布凭证**记录实际 Commit ID、唯一父提交、文件路径、
+       最终 SHA-256、最终 blob、远端 ref、核验结果及对应 UTC 时间。
+
+   【4.7 C-5 · 范围绑定（逐项）】
+     本次 Effectivity 的目标生效范围 = 已接受并冻结的 rev6 规范性增量，严格限于：
+       N1  §3   节点类别与优先级原则（GATE 应一致地先于 RESOLVER）
+       N2  §3   L3 / L6 的许可维度差异
+       N3  §3   L5 职责限定（RESOLVER 不承担阻断；UNCLEAR 不得遮蔽 GATE 的 deny）
+       N4  §3.1 确定性短路顺序 R1 → R2(L3) → R4(L6) → R3(L5) → R5 → R6
+       N5  §3.1 SoT Decision 规范语义定义及 ILLEGAL 的当前范围限定
+       N6  §3.1 INV-AXIS-1（决策与诊断分离）
+       N7  §3.1 CF-2（`unspecified ≠ allow`）
+       N8  §4   两轴独立性与完整性声明
+       N9  命名约定 L1–L6 / R1–R6 / §Rx 编号区分及引用纪律
+     明确排除：
+       · 原始 v1.1 的**全部条款**（其状态继续为 `PROPOSED / NOT FROZEN`）
+       · §6、§7（含 §7.1 / §7.2 / §7.2.1 / §7.2.2 / §7.3）、§8、§9、§10 的任何规范内容
+       · 任何代码、测试、schema、Methodology、Version、Human Gate 机制或其他实现内容
+       · 对 §9 的 26 项计数、§7.2 的 40 项口径的任何修改；不重开 A–E / §7.2 / §9 审查
+     ★ 特别说明：本事件记录位于 §10 末尾，但它是**生命周期治理元数据**，
+       **不代表**将 §10 纳入本次规范性生效范围，也**不代表**对 §10 既有内容作任何改写。
+
+   【4.8 C-6 · Non-Changes】
+     · **不改变** §9 的 26 项规范内容修改计数
+     · **不改变** §7.2 的 40 项核验口径
+     · **不改写** 任何既有冻结文字或历史 §10 记录
+     · **不改变** 原冻结 Commit、blob 或冻结前指纹
+     · **不改变** 原始 v1.1 的 `PROPOSED / NOT FROZEN` 状态
+     · **不追认** SC-EX-01
+     · **不授权** Implementation
+     · **不重开** A–E、§7.2 或 §9 审查
+     · **不修改** 代码、测试、schema、Methodology 或其他实现材料
+     · **不授权** Push、标签、发布或其他额外仓库操作
+
+   ★ 本记录不写入其自身 Commit ID、最终 blob 或最终 SHA-256（防自引用）。
+   ★ 在独立 Push 授权并成功发布核验之前，当前 Effectivity **仍为 `NOT EFFECTIVE`**。
 ```
