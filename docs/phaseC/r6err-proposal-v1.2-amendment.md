@@ -2,7 +2,11 @@
 
 ```text
 Kind              : AMENDMENT（限定性规范修订）
-Status            : ACCEPTED — rev6 / NOT EFFECTIVE / NOT FROZEN
+Status            : FROZEN — rev6 / ACCEPTED / NOT EFFECTIVE / IMPLEMENTATION NOT AUTHORIZED
+Frozen            : YES — rev6 · AUTH=R6ERR-AUTH-06
+                    · Bound v1.1: commit=1435a7c7d66acdb19cf2c3babbe2e3e7c7ec83e0
+                    · blob=d7cd3c2ff28ff0e5713035df7f5018ac9aecc373
+                    · Pre-freeze HEAD=2e0451c5ca33b2a28cba590b0858964e0d4047ac
 Acceptance        : R6ERR-AUTH-01（Amendment Acceptance，已签发）—— 内容已正式接受；
                     ★ Acceptance ≠ Amendment 生效；≠ Formal Freeze；≠ Implementation 授权
 Amends            : docs/phaseC/r6err-proposal-refinement-record.md（v1.1 · PROPOSED / NOT FROZEN）
@@ -543,16 +547,19 @@ v1.2  【规范性修订 —— 本 Amendment 文件，v1.1 原文不动】
 ## §8 明确不授权
 
 ```text
-❌ 本 Amendment 生效（当前状态 = ACCEPTED — rev6 / NOT EFFECTIVE / NOT FROZEN；
-   R6ERR-AUTH-01 仅接受内容，未使 Amendment 生效）
-❌ Formal Freeze / Human Gate 冻结确认（仍须独立授权）
+❌ 本 Amendment 生效（当前状态 = FROZEN — rev6 / ACCEPTED / NOT EFFECTIVE / IMPLEMENTATION NOT AUTHORIZED；
+   R6ERR-AUTH-01 仅接受内容、R6ERR-AUTH-06 仅完成 Formal Freeze，均未使 Amendment 生效）
+❌ 冻结快照的后续修改 / 解冻（依 D-4，须独立授权；FROZEN 标记不得删除或弱化）
+❌ 任何超出 R6ERR-AUTH-06 范围的 Freeze 后续治理动作（须独立授权）
 ❌ Implementation Contract / Preflight / Implementation（仍须独立授权）
-❌ 修改【原始 v1.1】的原文（本文件为独立新文件；原始 v1.1 不动）
+❌ 修改【原始 v1.1】的原文（本文件为独立新文件；原始 v1.1 不动，且不随本文件冻结）
 ❌ 修改代码 / 测试 / schema / Methodology / Version / Human Gate
 ❌ 修改 H-1 ～ H-6 任何已发布记录
 ❌ 任何 WATCH 修复 / legacy cleanup / subject-kind 重构 / AD-R6-1 实施
-❌ push（本文件已按 R6ERR-AUTH-03 完成 Stage、按 R6ERR-AUTH-04 完成本地 Commit；
-   已完成 Stage / 本地 Commit ≠ 授权 Push、Formal Freeze 或 Implementation）
+❌ push（本文件已按 R6ERR-AUTH-03 完成 Stage、按 R6ERR-AUTH-04 完成本地 Commit、
+   按 R6ERR-AUTH-06 完成**本地** Formal Freeze；
+   已完成 Stage / 本地 Commit / Formal Freeze ≠ 授权 Push；
+   本地 Commit / Freeze ≠ 已发布；Freeze ≠ Amendment 生效；Freeze ≠ Implementation 授权）
 ```
 
 ---
@@ -812,4 +819,40 @@ rev6（本版）  —— 依【E-3 复审 REVISE】修订 §7.2 两项（**E-1 /
    未改变：§7.1 矩阵与 R5 分支 · §7.2 的 40 项核验范围与分类 · §9 的 26 项内容修订计数 ·
            §0 的 `ACCEPTED — rev6 / NOT EFFECTIVE / NOT FROZEN` 状态标记
    ★ 本记录不构成生效、Freeze、Push 或实现授权
+
+────────────────────────────────────────────────────────────────────
+◆ FORMAL FREEZE RECORD（R6ERR-AUTH-06）
+   授权编号：R6ERR-AUTH-06（Formal Freeze，已签发）
+   冻结对象：本文件（docs/phaseC/r6err-proposal-v1.2-amendment.md）已接受的 rev6 规范内容
+   冻结范围：§0 的 Status / Frozen 元数据 + §8 的状态一致性校准 + 本冻结记录；
+             §1–§7 规范内容（含 §7.1 矩阵与 R5 分支）· §7.2 的 40 项与分类 ·
+             §9 的 26 项规范内容修改计数 —— 均未改变
+   冻结前基线（Pre-freeze，已实际核验）：
+     · HEAD        = 2e0451c5ca33b2a28cba590b0858964e0d4047ac
+     · 父提交       = aa120fa700e76a883b9b3fe296485d61f729a72f
+     · 文件 SHA-256 = 9bbde65d9a539bd4ce13db70b28a34073d1bac4c3a62644313558240fe6df5ed
+     · 文件 Git blob = 979109479233b6abc0541f49ec27001b37c0e19a
+   Bound base v1.1（被修订的父文档；本冻结【不】传递到它）：
+     commit = 1435a7c7d66acdb19cf2c3babbe2e3e7c7ec83e0
+     path   = docs/phaseC/r6err-proposal-refinement-record.md
+     blob   = d7cd3c2ff28ff0e5713035df7f5018ac9aecc373
+     status = PROPOSED / NOT FROZEN（继续维持，不因本冻结而改变）
+   发布状态：★ **尚未 Push** —— 本次 Freeze 仅在本地完成；Push 为独立 Gate，须另行授权
+   效力边界：
+     ★ Freeze ≠ Amendment 生效（当前 NOT EFFECTIVE；生效须独立授权）
+     ★ Freeze ≠ Implementation 授权（当前 IMPLEMENTATION NOT AUTHORIZED）
+     ★ 本地 Commit / Freeze ≠ 已发布
+   快照性质说明：
+     §10 的「接受后的非规范性状态事实修正」（R6ERR-AUTH-05）属于本次冻结的完整文件快照的一部分，
+     但它**不是第 27 项规范变更**，也**不构成 rev7**；§9 的规范变更计数**仍为 26 项**。
+   后续纪律（依 D-4）：
+     · 冻结提交所标识的 rev6 内容不得被静默覆盖、删除或重写；
+     · 规范修订必须以【独立编号的 Amendment 或 Erratum】追加，并载明原因 / 范围 /
+       Non-Changes / 兼容性影响 / 所需的人审·接受·冻结授权；
+     · 非规范性审计记录只可 append-only 追加，不得追溯改写历史；
+     · 无默许解冻机制：如需撤销或纠正冻结决定，须另行明确授权并留痕，
+       不得直接删除或弱化 FROZEN 标记。
+   ★ 防自引用（依 D-3）：本记录**不**写入本次 Freeze 提交自身的 commit ID，
+     也**不**写入冻结后的最终文件 SHA-256 —— 该二者仅记载于提交后的冻结凭证报告中。
+   ★ 本记录不构成 Push、Amendment 生效或 Implementation 的授权。
 ```
