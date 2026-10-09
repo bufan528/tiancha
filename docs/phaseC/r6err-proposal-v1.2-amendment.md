@@ -1019,4 +1019,51 @@ rev6（本版）  —— 依【E-3 复审 REVISE】修订 §7.2 两项（**E-1 /
 
    ★ 本记录本身**不构成** Effectivity 事件，**不改变**当前状态向量；
      **不构成** Push、Amendment 生效、Implementation 或任何后续修改的授权。
+
+────────────────────────────────────────────────────────────────────
+◆ AUTH-10 术语解释与效力澄清（R6ERR-AUTH-11）
+   【记录身份】
+     · 授权编号：R6ERR-AUTH-11
+     · 相关裁定：R6ERR-AUTH-10
+     · 记录性质：正式治理效力解释记录
+     · 绑定对象：R6-ERR Proposal v1.2 Amendment rev6
+     · 绑定原冻结提交：7f31bb8bbd6174005fdf0c41a1f7a6d5e9029308
+     · 绑定原冻结 blob：67923f368af7dc1378390273b36ebdab88e79abc
+
+   【一、对 AUTH-10 中「非规范性」的正式解释】
+     AUTH-10 第 L902 行所使用的「非规范性」，**仅表示**该记录不构成新的 Amendment
+     规范内容版本，不增加 §9 的规范内容修改计数，不构成 rev7。
+     该用语**不表示** AUTH-10 所载正式治理裁定及生命周期元规则不具有治理约束力，
+     也**不表示**这些规则仅供参考。
+
+   【二、AUTH-10 的治理效力】
+     AUTH-10 中经正式裁定的治理决定及 R-STATE-1′ 至 R-STATE-5，是后续 R6-ERR
+     治理工作的**正式规则**。后续相关工作**必须遵循**；如需变更、替代或废止，
+     必须通过独立、明确授权的治理裁定，并遵守 append-only、原始冻结对象可追溯
+     及既有记录不得追溯改写的纪律。
+     本记录澄清 AUTH-10 的既有意图，不创设 Amendment 新规范内容，不取代后续各项独立 Human Gate。
+
+   【三、效力边界】
+     本记录：
+       · 不构成 Amendment rev7；
+       · 不改变 §9 的 26 项规范内容修改计数；
+       · 不修改 §1–§7 的规范决策规则；
+       · 不追认 SC-EX-01；
+       · 不宣布 Amendment 生效；
+       · 不授权 Implementation；
+       · 不修改 AUTH-10、§0、§1–§9 或任何既有历史记录；
+       · 不改变原冻结提交、原冻结 blob 或现有状态向量。
+
+   【四、当前状态向量保持不变】
+     · Acceptance                   = `ACCEPTED — rev6`
+     · Freeze                       = `FROZEN — rev6`
+     · Effectivity                  = `NOT EFFECTIVE`
+     · Implementation Authorization = `NOT AUTHORIZED`
+     · Publication                  = 以已核实的远端 `main` 为准
+     · SC-EX-01                     = `REGISTERED / NOT RATIFIED`
+     · 原始 v1.1                     = `PROPOSED / NOT FROZEN`
+
+   【五、防自引用】
+     本记录**不写入**本次 AUTH-11 Commit 自身的 Commit ID、最终文件 SHA-256 或最终 blob。
+     相关凭证只在提交后的交付报告中记录。
 ```
