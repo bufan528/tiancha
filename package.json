@@ -16,7 +16,9 @@
     "tiancha": "node --import tsx src/cli/tiancha.ts",
     "typecheck": "tsc --noEmit",
     "typecheck:research": "npm --prefix packages/research run typecheck",
-    "test:research": "node --import tsx --test packages/research/src/**/*.test.ts"
+    "test": "node --import tsx --test \"packages/research/src/**/*.test.ts\" \"src/**/*.test.ts\"",
+    "test:research": "node --import tsx --test \"packages/research/src/**/*.test.ts\"",
+    "test:agent": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.86.1",

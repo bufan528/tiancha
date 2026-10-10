@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-%E2%89%A522.19-339933.svg)](https://nodejs.org/)
 [![Status](https://img.shields.io/badge/Phase%20C%20C5--D%20done-green.svg)](#开发路线)
-[![Tests](https://img.shields.io/badge/tests-411%20passing-brightgreen.svg)](#开发)
+[![Tests](https://img.shields.io/badge/tests-722%20passing-brightgreen.svg)](#开发)
 
 Tiancha 把一级市场投资人「**找行业 → 建认知 → 补缺口 → 去调研 → 沉淀**」的日常工作流，原生内化进一个有长期记忆、自然语言为入口的研究 Agent。**Tiancha 本身就是一个完整的 Agent**，研究系统藏在 Agent 后面，用户不需要知道 ResearchState / Question / Pool / TaskGraph 这些内部模型。
 
@@ -69,7 +69,7 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 | `tiancha methodology propose <file.json> --rationale <文本>` | 提出方法论修订提案（**不生效**），输出一次性审批凭据 |
 | `tiancha methodology decide <candidateId> (--approve\|--reject) --operator <名>` | **人工**审批；approve 才激活新版本 |
 | `tiancha research smoke` | 运行时自检 |
-| `tiancha research evaluate <行业>` | 产出并落库一次投资评估（**唯一可写的 research 命令**） |
+| `tiancha research evaluate <行业>` | 产出并落库一次投资评估（**唯一写入 `InvestmentEvaluation` 的 research 命令**；其余写入入口见 `material add` / `target add` / `proposal generate`） |
 | `tiancha research pool <行业>` | 查看信息池槽位与条目（只读） |
 | `tiancha research priority <行业>` | 查看研究优先级（只读） |
 | `tiancha research report <行业>` | 生成只读投影 + 物化 Markdown 到 `~/.tiancha/reports/` |
@@ -90,8 +90,8 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 
 > 上述 `research` 命令均支持 `--json`（输出格式切换，与文本渲染同一结果）。
 
-**研究工具（19 个）**：主模型按语义自行选择调用（**无关键词分类器**）——
-`research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list / research_methodology_show / research_methodology_list / research_methodology_propose / research_pool_show / research_evaluate / research_priority / research_report / research_material_add / research_chain_show / research_need_list / research_target_list / research_diligence_show / research_plan_show`。
+**研究工具（21 个）**：主模型按语义自行选择调用（**无关键词分类器**）——
+`research_industry_ingest / research_industry_show / research_state_show / research_question_list / research_gap_list / research_next_action_list / research_methodology_show / research_methodology_list / research_methodology_propose / research_pool_show / research_evaluate / research_priority / research_report / research_candidate_list / research_material_list / research_material_add / research_chain_show / research_need_list / research_target_list / research_diligence_show / research_plan_show`。
 > **没有** `research_methodology_decide`：模型只能提案，激活必须由人通过 CLI 完成。
 > **Agent 权限边界**：`research_evaluate` 读已落库的评估、绝不触发重算；`research_report` 只追加投影；`research_material_add` 只写用户提供的材料（不评估、不改优先级）；B5 的 4 个工具（链/需求/对象/准备）**只读已生成的产物**，未生成时提示由研究者执行 CLI —— Agent **不投影链条、不录入对象、不生成提纲**。
 
@@ -176,9 +176,14 @@ npm run tiancha -- ask "人形机器人现在研究到哪了？"
 npx tsc --noEmit                                  # 根类型检查
 npm --prefix packages/research run typecheck      # 研究包类型检查
 npm run build:cli                                 # esbuild 产出 dist/cli/tiancha.js
-node --import tsx --test packages/research/src/*.test.ts src/agent/*.test.ts src/cli/*.test.ts   # 469 tests
+npm test                                          # 全量：722 tests / 164 suites（packages/research/src/** + src/**）
+npm run test:research                             # 只跑研究包：604 tests
+npm run test:agent                                # 只跑根 src/**：118 tests
 node --import tsx src/cli/tiancha.ts research smoke
 ```
+
+> **测试脚本必须把 `**` 加引号交给 Node 自己展开**。写成不带引号的 `packages/research/src/*.test.ts` 会漏掉
+> `src/runtime/` 与 `src/providers/` 下的 4 个测试文件（实测 81/85 文件、623 tests），全量从 **704 静默降到 623** —— 且退出码仍是 0。
 
 > PowerShell 下 SQLite 的 `ExperimentalWarning` 写在 stderr，会显示 `NativeCommandError` —— **不是失败**。
 > ~~已知 flaky~~ **`C1-29` 与 `C1-02` 已修**：前者改断言单调性（不再比较同毫秒 wall-clock 字符串），后者改断言"id 不含当前时间片段"（不再用 `/\d{10,}/`，见 `docs/phaseC/implementation-contract.md` §29.12.4 / §29.13.4）。
